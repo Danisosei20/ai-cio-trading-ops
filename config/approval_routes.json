@@ -90,8 +90,8 @@
       ]
     },
     "health_slack": {
-      "enabled": false,
-      "channel_id": ""
+      "enabled": true,
+      "channel_id": "${HEALTH_SLACK_CHANNEL_ID}"
     },
     "phone": {
       "enabled": false,
