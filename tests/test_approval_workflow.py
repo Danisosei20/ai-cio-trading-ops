@@ -12,7 +12,7 @@ from robinhood_tools.notifications import JsonDeliveryLog, delivery_attempt
 
 class ApprovalWorkflowTests(unittest.TestCase):
     def test_learning_journal_includes_market_signals_and_outcomes(self):
-        journal_script = Path.home() / ".codex/skills/ai-cio-portfolio-manager/scripts/update_journal.py"
+        journal_script = Path("scripts/update_journal.py")
         with tempfile.TemporaryDirectory() as directory:
             journal = Path(directory) / "journal.csv"
             result = subprocess.run(
@@ -37,12 +37,22 @@ class ApprovalWorkflowTests(unittest.TestCase):
             self.assertEqual(row["retry_count"], 2)
 
     def test_health_check_does_not_post(self):
-        result = subprocess.run(
-            [sys.executable, "scripts/health_check.py", "--available-tools", "slack._slack_send_message", "--robinhood-read-ok"],
-            check=False, capture_output=True, text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("no message posted", result.stdout)
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env.test"
+            env.write_text(
+                "TIMEZONE=America/New_York\nSLACK_CHANNEL_ID=C_TEST\n"
+                "HEALTH_SLACK_CHANNEL_ID=C_HEALTH_TEST\nAPPROVAL_WINDOW_MINUTES=120\n"
+                "ROBINHOOD_ACCOUNT_NICKNAME=Test\nINVESTMENT_OBJECTIVE=Testing\n"
+                "RISK_TOLERANCE=moderate\nTAX_CONTEXT=test\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, "scripts/health_check.py", "--config", "config/approval_routes.example.json",
+                 "--env-file", str(env), "--available-tools", "slack._slack_send_message", "--robinhood-read-ok"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("no message posted", result.stdout)
 
     def test_renderer_marks_slack_as_notification_only(self):
         result = subprocess.run(

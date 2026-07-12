@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "robinhood-trading-tools"
 version = "0.1.0"
@@ -9,10 +13,13 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "ruff>=0.9,<1", "mypy>=1.14,<2", "coverage>=7,<8", "pip-audit>=2.7,<3"]
+dev = ["pytest>=9.0.3,<10", "ruff>=0.9,<1", "mypy>=1.14,<2", "coverage>=7,<8", "pip-audit>=2.7,<3"]
 
 [project.scripts]
 cio = "robinhood_tools.cli:main"
+
+[tool.setuptools]
+packages = ["robinhood_tools"]
 
 [tool.ruff]
 line-length = 120

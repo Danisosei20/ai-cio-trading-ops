@@ -36,21 +36,40 @@ class Calendar:
 
 
 class ProductionHardeningTests(unittest.TestCase):
+    def build_test_settings(self, directory):
+        env = Path(directory) / ".env.test"
+        env.write_text(
+            "TIMEZONE=America/New_York\n"
+            "SLACK_CHANNEL_ID=C_TEST\n"
+            "HEALTH_SLACK_CHANNEL_ID=C_HEALTH_TEST\n"
+            "APPROVAL_WINDOW_MINUTES=120\n"
+            "ROBINHOOD_ACCOUNT_NICKNAME=Test\n"
+            "INVESTMENT_OBJECTIVE=Testing\n"
+            "RISK_TOLERANCE=moderate\n"
+            "TAX_CONTEXT=test\n"
+            "TRADING_MODE=paper_auto\n"
+            "TRADING_ENABLED=false\n",
+            encoding="utf-8",
+        )
+        return build_settings("config/approval_routes.example.json", env)
+
     def test_live_kill_switch_defaults_off(self):
-        settings = build_settings()
-        self.assertEqual(settings.mode, "paper_auto")
-        self.assertFalse(settings.trading_enabled)
-        with self.assertRaisesRegex(PolicyViolation, "kill switch"):
-            settings.require_live_trading()
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.build_test_settings(directory)
+            self.assertEqual(settings.mode, "paper_auto")
+            self.assertFalse(settings.trading_enabled)
+            with self.assertRaisesRegex(PolicyViolation, "kill switch"):
+                settings.require_live_trading()
 
     def test_production_service_factory_enforces_kill_switch(self):
-        settings = build_settings()
-        backend = PaperTradingBackend([Account("paper", "Paper", True)], {"AAPL": Decimal("200")})
-        universe = Sp500Snapshot(frozenset({"AAPL"}), datetime.now(timezone.utc).isoformat(), "https://spglobal.com/sp500")
-        service = build_live_service(backend, settings=settings, sp500_snapshot=universe)
-        request = EquityOrderRequest("paper", "AAPL", "buy", "market", "gfd", notional=Decimal("100"))
-        with self.assertRaisesRegex(PolicyViolation, "kill switch"):
-            service.place_equity_order(request, review_id="x", approval_id="x", confirmed=True)
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.build_test_settings(directory)
+            backend = PaperTradingBackend([Account("paper", "Paper", True)], {"AAPL": Decimal("200")})
+            universe = Sp500Snapshot(frozenset({"AAPL"}), datetime.now(timezone.utc).isoformat(), "https://spglobal.com/sp500")
+            service = build_live_service(backend, settings=settings, sp500_snapshot=universe)
+            request = EquityOrderRequest("paper", "AAPL", "buy", "market", "gfd", notional=Decimal("100"))
+            with self.assertRaisesRegex(PolicyViolation, "kill switch"):
+                service.place_equity_order(request, review_id="x", approval_id="x", confirmed=True)
 
     def test_paper_backend_never_needs_connector(self):
         backend = PaperTradingBackend([Account("paper", "Paper", True)], {"AAPL": Decimal("200")})
