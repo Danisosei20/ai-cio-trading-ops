@@ -23,7 +23,19 @@ class ApprovalWorkflowTests(unittest.TestCase):
             content = journal.read_text()
             self.assertIn("relative_volume", content)
             self.assertIn("excess_return_20d", content)
+            self.assertIn("target_or_review_condition", content)
             self.assertIn("1.2x", content)
+
+    def test_learning_journal_rejects_an_old_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory) / "journal.csv"
+            journal.write_text("symbol,outcome\nAAPL,up\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "scripts/update_journal.py", str(journal), "--symbol", "MSFT"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("schema mismatch", result.stderr.lower())
 
     def test_failed_slack_delivery_is_recorded_without_execution(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -2,6 +2,11 @@
 
 The goal is maximum automation without uncontrolled trading.
 
+Keep one active task per ticker for the entire trade lifecycle. Research, approval routing, placement,
+reconciliation, exit monitoring, sale review, and the terminal Slack result belong to that ticker task;
+do not create a second task for the same trade. A separate daily scheduler may start or resume a ticker
+task, and a monthly reporting automation may aggregate completed lifecycle and learning records.
+
 The daily CIO automation may:
 
 - Read authorized Robinhood portfolio/account data.
