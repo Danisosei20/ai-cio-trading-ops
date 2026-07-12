@@ -1,0 +1,88 @@
+{
+  "mode": "send",
+  "timezone": "${TIMEZONE}",
+  "approval_window_minutes": "${APPROVAL_WINDOW_MINUTES}",
+  "personal_context": {
+    "account_nickname": "${ROBINHOOD_ACCOUNT_NICKNAME}",
+    "investment_objective": "${INVESTMENT_OBJECTIVE}",
+    "risk_tolerance": "${RISK_TOLERANCE}",
+    "tax_context": "${TAX_CONTEXT}"
+  },
+  "investment_policy": {
+    "strategy_version": "v1",
+    "purchase_universe": "sp500_current_constituents_only",
+    "membership_max_age_hours": 24,
+    "require_live_quote": true,
+    "require_current_news": true,
+    "minimum_independent_research_sources": 2,
+    "require_volume_liquidity_analysis": true,
+    "require_execution_quality_analysis": true,
+    "require_trend_volatility_event_analysis": true,
+    "learning_checkpoints_trading_days": [1, 5, 20],
+    "minimum_observations_before_policy_change": 10,
+    "automatic_profit_sales": false,
+    "profitable_positions_action": "review_take_profit_then_request_codex_approval"
+  },
+  "risk_limits": {
+    "max_position_weight": 0.10,
+    "max_sector_weight": 0.30,
+    "minimum_cash_weight": 0.05,
+    "max_daily_approved_capital_usd": 5000,
+    "max_pending_approvals": 3,
+    "max_bid_ask_spread_pct": 0.005,
+    "max_order_pct_average_daily_volume": 0.001
+  },
+  "runtime": {
+    "database_path": "outputs/cio.db",
+    "dashboard_path": "outputs/dashboard.html",
+    "structured_logging": true,
+    "broker_reconciliation_required_after_uncertain_failure": true,
+    "database_schema_version": 2,
+    "lifecycle_lease_seconds": 300,
+    "backup_before_migration": true,
+    "audit_retention_days": 2555,
+    "delivery_retention_days": 365
+  },
+  "schedule": {
+    "enabled": true,
+    "time_local": "09:45",
+    "timezone": "${TIMEZONE}",
+    "weekdays_only": true,
+    "require_official_market_calendar_open_day": true,
+    "skip_message_when_market_closed": true
+  },
+  "slack_reply_monitor": {
+    "enabled": true,
+    "mode": "same_active_task_event_scoped",
+    "window_minutes_after_message": 10,
+    "reject_when_window_expires_without_response": true,
+    "cleanup_after_terminal_state": true,
+    "read_channel_and_threads": true,
+    "deduplicate_by_channel_and_message_ts": true,
+    "safe_test_commands": ["YES", "NO", "$amount", "quantity shares", "TEST SIZE $amount", "TEST SHARES quantity", "TEST REJECT"],
+    "no_may_reject_linked_pending_approval": true,
+    "yes_requests_sizing_but_never_approves": true,
+    "execution_commands_from_slack": "always_block"
+  },
+  "channels": {
+    "slack": {
+      "enabled": true,
+      "channel_id": "${SLACK_CHANNEL_ID}",
+      "required_tools": [
+        "slack._slack_send_message"
+      ]
+    },
+    "phone": {
+      "enabled": false,
+      "method": "",
+      "to": ""
+    }
+  },
+  "rules": {
+    "send_no_action_summary": true,
+    "send_trade_approval_requests": true,
+    "never_place_without_confirmed_approval": true,
+    "allowed_account_policy": "agentic_allowed_only",
+    "default_trade_action": "review_only"
+  }
+}

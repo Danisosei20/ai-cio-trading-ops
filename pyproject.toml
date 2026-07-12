@@ -1,0 +1,29 @@
+[project]
+name = "robinhood-trading-tools"
+version = "0.1.0"
+description = "Safety-gated Robinhood trading tool definitions and service layer."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "ruff>=0.9,<1", "mypy>=1.14,<2", "coverage>=7,<8", "pip-audit>=2.7,<3"]
+
+[project.scripts]
+cio = "robinhood_tools.cli:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+source = ["robinhood_tools"]
+
+[tool.coverage.report]
+fail_under = 75

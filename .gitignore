@@ -1,0 +1,17 @@
+# Personal configuration and secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime state
+outputs/
+*.approval-ledger.json
+*.delivery-log.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.coverage
+htmlcov/
