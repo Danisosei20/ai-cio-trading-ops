@@ -6,6 +6,12 @@ The project helps review a portfolio, research eligible stocks, prepare broker o
 
 See [ROADMAP.md](ROADMAP.md) for completed capabilities, remaining operational proof, and the recommended path to a limited live pilot.
 
+For unattended Slack reply monitoring, create a dedicated Slack app and keep its bot token only in
+`SLACK_BOT_TOKEN` in the local environment. Grant the minimum bot scopes needed by the adapter:
+`channels:history` (or `groups:history` for a private channel) and `chat:write`. Invite the app only to
+the configured `SLACK_CHANNEL_ID`. `SlackWebApiReplyHost` rejects every other channel, reads only the
+linked thread through `conversations.replies`, and exposes no broker or execution operations.
+
 ## What This Project Does
 
 - Reads authorized Robinhood account and portfolio information.
