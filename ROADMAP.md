@@ -41,8 +41,8 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Record Slack delivery attempts, retries, failures, and message identifiers.
 - [x] Provide a non-posting configuration and capability health check.
 - [x] Implement safe `YES`, `NO`, dollar-size, share-size, timeout, and blocked-execution parsing.
-- [ ] Run and record an end-to-end health-channel test message.
-- [ ] Verify the same task detects a real Slack reply without the operator asking Codex to check.
+- [x] Run and record an end-to-end health-channel test message.
+- [x] Verify the same task detects a real Slack reply without the operator asking Codex to check.
 - [ ] Verify timeout, duplicate reply, connector failure, and task-restart behavior with the real Slack connector.
 
 ## 4. Paper-trading proof
