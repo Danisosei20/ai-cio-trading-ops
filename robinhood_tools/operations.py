@@ -154,3 +154,12 @@ def fills_total(fills: list[dict]) -> tuple[Decimal, Decimal, Decimal]:
     proceeds = sum((Decimal(row["quantity"]) * Decimal(row["price"]) for row in fills), Decimal("0"))
     fees = sum((Decimal(row["fee"]) for row in fills), Decimal("0"))
     return quantity, proceeds, fees
+
+
+def apply_losing_exit_cooldown(database: CioDatabase, *, symbol: str, realized_profit: Decimal,
+                               thesis_invalidated: bool, starts_on: str, expires_on: str) -> bool:
+    if realized_profit < 0 and thesis_invalidated:
+        database.add_symbol_cooldown(symbol, reason="losing exit with invalidated thesis",
+                                     starts_on=starts_on, expires_on=expires_on)
+        return True
+    return False

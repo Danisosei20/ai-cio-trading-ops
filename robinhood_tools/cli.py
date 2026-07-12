@@ -40,6 +40,8 @@ def main(argv=None) -> int:
     sub.add_parser("clean-reply-windows")
     sub.add_parser("emergency-stop")
     sub.add_parser("emergency-resume")
+    audit = sub.add_parser("export-audit")
+    audit.add_argument("destination")
 
     args = parser.parse_args(argv)
     settings = build_settings(args.config, args.env_file)
@@ -95,6 +97,10 @@ def main(argv=None) -> int:
     elif args.command == "emergency-resume":
         database.set_emergency_kill(False)
         print(json.dumps({"emergency_kill": "off"}))
+    elif args.command == "export-audit":
+        from .reporting import export_audit_bundle
+        output, digest = export_audit_bundle(database.audit_export(), args.destination)
+        print(json.dumps({"output": str(output), "sha256": digest}))
     return 0
 
 

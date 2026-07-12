@@ -564,6 +564,13 @@ class CioDatabase:
                         (datetime.now(timezone.utc).date().isoformat(),),
                     ).fetchone()[0]}
 
+    def audit_export(self) -> dict:
+        tables = ("approvals", "audit_events", "exit_plans", "learning_checkpoints", "deliveries",
+                  "daily_runs", "processed_slack_messages", "slack_reply_windows", "trade_lifecycles",
+                  "order_fills", "strategy_observations", "dashboard_snapshots", "symbol_cooldowns")
+        with self.connect() as db:
+            return {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")] for table in tables}
+
     def _row(self, db, approval_id):
         row = db.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not row:
