@@ -10,7 +10,7 @@ from pathlib import Path
 from robinhood_tools.adapters import RetryingNotifier
 from robinhood_tools.database import CioDatabase
 from robinhood_tools.errors import PolicyViolation
-from robinhood_tools.market_calendar import MarketSession, require_open_session
+from robinhood_tools.market_calendar import MarketSession, add_trading_days, require_open_session, trading_days_until
 from robinhood_tools.models import Account, EquityOrderRequest
 from robinhood_tools.paper import PaperTradingBackend
 from robinhood_tools.portfolio import TaxLot, rank_lots_for_tax_aware_sale, wash_sale_warning
@@ -79,6 +79,8 @@ class ProductionHardeningTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyViolation, "closed"):
             require_open_session(Calendar(False), date.today())
         self.assertTrue(require_open_session(Calendar(True), date.today()).is_open)
+        self.assertEqual(add_trading_days(Calendar(True), date(2026, 7, 13), 5), date(2026, 7, 18))
+        self.assertEqual(trading_days_until(Calendar(True), date(2026, 7, 13), date(2026, 7, 18)), 5)
 
     def test_tax_lot_ranking_and_wash_sale_warning(self):
         loss = TaxLot("AAPL", date.today() - timedelta(days=500), Decimal("1"), Decimal("220"), Decimal("200"))

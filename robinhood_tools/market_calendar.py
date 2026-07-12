@@ -31,3 +31,32 @@ def require_open_session(provider: ExchangeCalendarProvider, day: date) -> Marke
     if not session.is_open:
         raise PolicyViolation(f"U.S. equity market is closed: {session.reason or day.isoformat()}.")
     return session
+
+
+def add_trading_days(provider: ExchangeCalendarProvider, start: date, count: int) -> date:
+    if count < 0:
+        raise PolicyViolation("Trading-day count cannot be negative.")
+    current = start
+    added = 0
+    from datetime import timedelta
+    while added < count:
+        current += timedelta(days=1)
+        session = provider.session(current)
+        session.validate()
+        if session.is_open:
+            added += 1
+    return current
+
+
+def trading_days_until(provider: ExchangeCalendarProvider, start: date, end: date) -> int:
+    if end < start:
+        return -trading_days_until(provider, end, start)
+    from datetime import timedelta
+    current = start
+    count = 0
+    while current < end:
+        current += timedelta(days=1)
+        session = provider.session(current)
+        session.validate()
+        count += int(session.is_open)
+    return count

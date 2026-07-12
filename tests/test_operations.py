@@ -6,9 +6,11 @@ from decimal import Decimal
 from pathlib import Path
 
 from robinhood_tools.database import CioDatabase
+from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.migrations import CURRENT_SCHEMA_VERSION, migrate_database
 from robinhood_tools.models import EquityOrderRequest, Order, OrderReview
 from robinhood_tools.operations import (
+    apply_losing_exit_cooldown,
     monitor_slack_replies_once,
     monitor_slack_reply_window,
     poll_until_terminal,
@@ -71,6 +73,16 @@ class OperationsTests(unittest.TestCase):
             result = migrate_database(root / "cio.db", backup_path=root / "backup.db")
             self.assertEqual(result["schema_version"], CURRENT_SCHEMA_VERSION)
             self.assertEqual(migrate_database(root / "cio.db")["integrity"], "ok")
+
+    def test_losing_invalidated_exit_creates_cooldown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = CioDatabase(Path(directory) / "cio.db")
+            self.assertTrue(apply_losing_exit_cooldown(
+                db, symbol="AAPL", realized_profit=Decimal("-2"), thesis_invalidated=True,
+                starts_on="2026-07-13", expires_on="2026-07-20",
+            ))
+            with self.assertRaises(PolicyViolation):
+                db.require_no_symbol_cooldown("AAPL", today="2026-07-15")
 
     def test_event_monitor_routes_size_without_user_returning_to_codex(self):
         with tempfile.TemporaryDirectory() as directory:
