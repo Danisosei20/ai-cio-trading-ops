@@ -14,6 +14,9 @@ dev = ["pytest>=8,<9", "ruff>=0.9,<1", "mypy>=1.14,<2", "coverage>=7,<8", "pip-a
 [project.scripts]
 cio = "robinhood_tools.cli:main"
 
+[tool.setuptools]
+packages = ["robinhood_tools"]
+
 [tool.ruff]
 line-length = 120
 
