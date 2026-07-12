@@ -179,10 +179,13 @@ robinhood_tools/
   universe.py                   Current S&P 500 membership validation
   workflow.py                   End-to-end CIO workflow coordinator
 scripts/
+  encrypted_backup.sh            Encrypts database backups without committing them
   check_required_tools.py       Checks configured Slack capabilities
   dashboard.py                  Generates the read-only local dashboard
   health_check.py               Non-posting route and access health check
   render_approval_message.py    Produces complete approval-notification text
+  secret_scan.py                Rejects credential-like content in tracked files
+  update_journal.py             Appends schema-validated strategy observations
 tests/                           Unit and workflow safety tests
 mcp.json                        Robinhood MCP server configuration
 Makefile                        Common test and health commands
@@ -330,9 +333,11 @@ make dashboard
 
 The output defaults to `outputs/dashboard.html` and summarizes approval states and overdue learning checkpoints. The `outputs/` directory is ignored by Git.
 
-## Morning Review
+## Automated Reviews
 
-The previous recurring AI CIO automations were removed. A morning review can be run manually in the current Codex task. It should check an official current U.S. exchange calendar before doing work, and skip exchange holidays or special closures without posting to Slack.
+The operating setup includes a daily AI-CIO review and a monthly performance report. These are Codex automations, not credential-bearing processes in this repository; recreate or inspect them in Codex when installing on another machine. A review can also be run manually in the current Codex task. Daily runs must check an official current U.S. exchange calendar and skip exchange holidays or special closures without posting to Slack.
+
+The daily review owns the complete lifecycle for a selected ticker in one task: research, broker preview, Slack notification and event-scoped reply monitoring, matching Codex approval, placement, reconciliation, exit review, and final profit/loss notification. It must not create another task for the same trade. The monthly report summarizes realized and unrealized performance, benchmark-relative outcomes, execution quality, risk-limit events, and overdue learning checkpoints. Neither automation may weaken the live approval gate.
 
 On an open day it performs a read-only portfolio and market review, then sends one readable Slack summary with:
 
@@ -396,6 +401,8 @@ Learning fields include:
 - Lessons and error attribution
 
 Durable policy should not change after one winner or loser. The configured process requires at least 10 comparable observations and a repeated pattern before changing a scoring weight or rule.
+
+Append a portable observation with `python3 scripts/update_journal.py outputs/learning.csv --symbol AAPL ...`. The helper enforces the complete documented CSV schema and refuses to append to an incompatible older header. When durable workflow behavior changes, update this README and the installed `ai-cio-portfolio-manager` skill in the same change, then validate both.
 
 ## Live-Use Checklist
 
