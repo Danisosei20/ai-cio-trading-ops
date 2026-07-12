@@ -24,6 +24,11 @@
     "profitable_positions_action": "review_take_profit_then_request_codex_approval"
   },
   "risk_limits": {
+    "max_order_value_usd": 25,
+    "minimum_cash_reserve_usd": 50,
+    "max_open_positions": 1,
+    "max_daily_loss_usd": 5,
+    "max_weekly_loss_usd": 10,
     "max_position_weight": 0.10,
     "max_sector_weight": 0.30,
     "minimum_cash_weight": 0.05,
@@ -32,9 +37,21 @@
     "max_bid_ask_spread_pct": 0.005,
     "max_order_pct_average_daily_volume": 0.001
   },
+  "entry_controls": {
+    "earnings_blackout_trading_days": 5,
+    "loss_cooldown_trading_days": 5,
+    "require_data_quality_score": 100,
+    "risk_on_minimum_score": 90,
+    "neutral_minimum_score": 93,
+    "risk_off_minimum_score": 97
+  },
   "runtime": {
     "database_path": "outputs/cio.db",
     "dashboard_path": "outputs/dashboard.html",
+    "paper_database_path": "outputs/paper/cio.db",
+    "paper_dashboard_path": "outputs/paper/dashboard.html",
+    "live_database_path": "outputs/live/cio.db",
+    "live_dashboard_path": "outputs/live/dashboard.html",
     "structured_logging": true,
     "broker_reconciliation_required_after_uncertain_failure": true,
     "database_schema_version": 2,
@@ -71,6 +88,10 @@
       "required_tools": [
         "slack._slack_send_message"
       ]
+    },
+    "health_slack": {
+      "enabled": true,
+      "channel_id": "${HEALTH_SLACK_CHANNEL_ID}"
     },
     "phone": {
       "enabled": false,

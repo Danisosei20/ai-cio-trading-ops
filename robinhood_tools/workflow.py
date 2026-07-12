@@ -58,6 +58,8 @@ class CioWorkflow:
         exit_plan: ExitPlan,
     ) -> tuple[ApprovalRecordLike, OrderReview]:
         correlation_id = str(uuid.uuid4())
+        self.database.require_not_killed()
+        self.database.require_no_symbol_cooldown(request.symbol, today=date.today().isoformat())
         if request.side != "buy":
             raise PolicyViolation("prepare_purchase accepts buy requests only.")
         candidate.validate(
@@ -125,6 +127,7 @@ class CioWorkflow:
         return run_key
 
     def execute_approved(self, request: EquityOrderRequest, *, approval_id: str, review_id: str, confirmed: bool) -> Order:
+        self.database.require_not_killed()
         order = self.service.place_equity_order(
             request, approval_id=approval_id, review_id=review_id, confirmed=confirmed
         )
@@ -273,6 +276,7 @@ class CioWorkflow:
             f"- Reward/risk: **{candidate.reward_risk}:1**\n\n"
             f"**Sources**\n" + "\n".join(f"- [{source.title}]({source.url})" for source in snapshot.sources) + "\n\n"
             f"**Approval**\nApproval ID: `{approval_id}`\n"
+            f"Order fingerprint: `{self.database.get(approval_id).order_fingerprint[:12]}`\n"
             f"Approve only in Codex with this exact ID. **A Slack reply does not authorize execution.**"
         )
 

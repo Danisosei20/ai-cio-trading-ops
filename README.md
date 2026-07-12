@@ -254,9 +254,33 @@ python3 -m robinhood_tools.cli approvals
 python3 -m robinhood_tools.cli dashboard
 python3 -m robinhood_tools.cli backup outputs/backups/cio.db
 python3 -m robinhood_tools.cli support-bundle outputs/support.zip
+python3 -m robinhood_tools.cli emergency-stop
+python3 -m robinhood_tools.cli emergency-resume
 ```
 
 There is intentionally no casual `buy` command.
+
+### Small-account safety profile
+
+The checked-in policy limits new orders to $25, preserves at least $50 cash, permits one open position,
+stops new entries after $5 daily or $10 weekly realized loss, blocks entries within five days of earnings,
+and applies a five-trading-day cooldown after an invalidated loss. Risk-off markets require a higher candidate
+score, and all critical data inputs must be present and fresh.
+
+`emergency-stop` durably blocks new reviews and placements. It does not cancel orders or liquidate positions.
+Only an explicit operator action may call `emergency-resume`. Paper and live modes use separate databases and
+dashboards under `outputs/paper/` and `outputs/live/`. Approval messages include a short immutable order
+fingerprint so changed parameters are visible.
+
+### Recovery and immutable audit
+
+Back up the database before every migration. Export approvals, research snapshots, fills, lifecycle events,
+and learning records with `export_audit_bundle`; the adjacent SHA-256 file detects changes. Encrypt backups
+using operating-system or organization-approved encrypted storage and never commit them.
+
+Test recovery quarterly on a clean machine: install from the lockfile, restore the correct paper or live
+database, run `cio migrate`, verify integrity, resume unexpired Slack monitors, render the dashboard, and keep
+live trading disabled until every check passes.
 
 `daily-review` is safe without host adapters: it claims exactly one run per account/date and reports
 `No Action Recommended`. In the connected host, supply the orchestrator with current screened ideas;

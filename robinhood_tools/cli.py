@@ -38,6 +38,8 @@ def main(argv=None) -> int:
     acknowledged.add_argument("--message-ts", required=True)
     sub.add_parser("expire-reply-windows")
     sub.add_parser("clean-reply-windows")
+    sub.add_parser("emergency-stop")
+    sub.add_parser("emergency-resume")
 
     args = parser.parse_args(argv)
     settings = build_settings(args.config, args.env_file)
@@ -87,6 +89,12 @@ def main(argv=None) -> int:
         print(json.dumps({"rejected_approval_ids": database.reject_expired_reply_windows()}))
     elif args.command == "clean-reply-windows":
         print(json.dumps({"deleted_windows": database.cleanup_terminal_reply_windows()}))
+    elif args.command == "emergency-stop":
+        database.set_emergency_kill(True)
+        print(json.dumps({"emergency_kill": "on"}))
+    elif args.command == "emergency-resume":
+        database.set_emergency_kill(False)
+        print(json.dumps({"emergency_kill": "off"}))
     return 0
 
 

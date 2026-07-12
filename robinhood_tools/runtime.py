@@ -39,13 +39,21 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
     mode = aliases.get(mode, mode)
     if mode not in {"research_only", "paper_auto", "live_approval"}:
         raise PolicyViolation("TRADING_MODE must be research_only, paper_auto, or live_approval.")
+    database_path = Path(config["runtime"]["database_path"])
+    dashboard_path = Path(config["runtime"]["dashboard_path"])
+    if mode == "paper_auto":
+        database_path = Path(config["runtime"].get("paper_database_path", "outputs/paper/cio.db"))
+        dashboard_path = Path(config["runtime"].get("paper_dashboard_path", "outputs/paper/dashboard.html"))
+    elif mode == "live_approval":
+        database_path = Path(config["runtime"].get("live_database_path", "outputs/live/cio.db"))
+        dashboard_path = Path(config["runtime"].get("live_dashboard_path", "outputs/live/dashboard.html"))
     return RuntimeSettings(
         mode=mode,
         trading_enabled=env.get("TRADING_ENABLED", "false").lower() == "true",
         channel_id=config["channels"]["slack"]["channel_id"],
         approval_window_minutes=int(config["approval_window_minutes"]),
-        database_path=Path(config["runtime"]["database_path"]),
-        dashboard_path=Path(config["runtime"]["dashboard_path"]),
+        database_path=database_path,
+        dashboard_path=dashboard_path,
         risk_limits=RiskLimits(
             max_position_weight=Decimal(str(risk["max_position_weight"])),
             max_sector_weight=Decimal(str(risk["max_sector_weight"])),
@@ -54,6 +62,11 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
             max_pending_approvals=int(risk["max_pending_approvals"]),
             max_spread_pct=Decimal(str(risk["max_bid_ask_spread_pct"])),
             max_order_pct_avg_volume=Decimal(str(risk["max_order_pct_average_daily_volume"])),
+            max_order_value=Decimal(str(risk.get("max_order_value_usd", "999999999"))),
+            min_cash_dollars=Decimal(str(risk.get("minimum_cash_reserve_usd", "0"))),
+            max_open_positions=int(risk.get("max_open_positions", 999999)),
+            max_daily_loss=Decimal(str(risk.get("max_daily_loss_usd", "999999999"))),
+            max_weekly_loss=Decimal(str(risk.get("max_weekly_loss_usd", "999999999"))),
         ),
     )
 

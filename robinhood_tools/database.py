@@ -104,10 +104,21 @@ class CioDatabase:
                 CREATE TABLE IF NOT EXISTS dashboard_snapshots (
                     account_label TEXT PRIMARY KEY, observed_at TEXT NOT NULL, payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS system_controls (
+                    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS symbol_cooldowns (
+                    symbol TEXT PRIMARY KEY, reason TEXT NOT NULL,
+                    starts_on TEXT NOT NULL, expires_on TEXT NOT NULL
+                );
                 """
             )
             if db.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 0:
                 db.execute("INSERT INTO schema_version VALUES (1)")
+            db.execute(
+                "INSERT OR IGNORE INTO system_controls VALUES('emergency_kill','off',?)",
+                (datetime.now(timezone.utc).isoformat(),),
+            )
             columns = {row[1] for row in db.execute("PRAGMA table_info(processed_slack_messages)")}
             if "acknowledged_at" not in columns:
                 db.execute("ALTER TABLE processed_slack_messages ADD COLUMN acknowledged_at TEXT")
@@ -500,6 +511,35 @@ class CioDatabase:
             rows = db.execute("SELECT * FROM dashboard_snapshots ORDER BY account_label").fetchall()
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
 
+    def set_emergency_kill(self, enabled: bool) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO system_controls VALUES('emergency_kill',?,?)",
+                ("on" if enabled else "off", datetime.now(timezone.utc).isoformat()),
+            )
+
+    def require_not_killed(self) -> None:
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM system_controls WHERE key='emergency_kill'").fetchone()
+        if row and row["value"] == "on":
+            raise PolicyViolation("Emergency kill switch is active; new reviews and placements are disabled.")
+
+    def add_symbol_cooldown(self, symbol: str, *, reason: str, starts_on: str, expires_on: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO symbol_cooldowns VALUES(?,?,?,?)",
+                (symbol.upper(), reason, starts_on, expires_on),
+            )
+
+    def require_no_symbol_cooldown(self, symbol: str, *, today: str) -> None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT reason,expires_on FROM symbol_cooldowns WHERE symbol=? AND expires_on>=?",
+                (symbol.upper(), today),
+            ).fetchone()
+        if row:
+            raise PolicyViolation(f"{symbol.upper()} is in cooldown through {row['expires_on']}: {row['reason']}")
+
     def dashboard(self) -> dict:
         with self.connect() as db:
             statuses = {row["status"]: row["count"] for row in db.execute(
@@ -515,7 +555,14 @@ class CioDatabase:
             return {"approval_statuses": statuses, "overdue_learning_checkpoints": overdue,
                     "active_leases": leases, "reconciliation_required": reconciliation,
                     "failed_slack_deliveries": failed_deliveries,
-                    "portfolio_snapshots": self.dashboard_snapshots()}
+                    "portfolio_snapshots": self.dashboard_snapshots(),
+                    "emergency_kill": db.execute(
+                        "SELECT value FROM system_controls WHERE key='emergency_kill'"
+                    ).fetchone()[0],
+                    "active_cooldowns": db.execute(
+                        "SELECT count(*) FROM symbol_cooldowns WHERE expires_on>=?",
+                        (datetime.now(timezone.utc).date().isoformat(),),
+                    ).fetchone()[0]}
 
     def _row(self, db, approval_id):
         row = db.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
