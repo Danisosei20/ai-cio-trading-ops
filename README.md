@@ -4,6 +4,8 @@ A safety-gated support layer for an AI Chief Investment Officer workflow using R
 
 The project helps review a portfolio, research eligible stocks, prepare broker order reviews, send approval notifications, and learn from outcomes. It is intentionally designed to stop before real execution unless every approval requirement is satisfied.
 
+See [ROADMAP.md](ROADMAP.md) for completed capabilities, remaining operational proof, and the recommended path to a limited live pilot.
+
 ## What This Project Does
 
 - Reads authorized Robinhood account and portfolio information.
@@ -155,6 +157,7 @@ docs/
   approval_automation.md        Daily CIO and approval workflow
   robinhood_trading_tools.md    Robinhood adapter and safety details
   slack_required_tools.md       Slack tool and destination requirements
+ROADMAP.md                      Evidence-based delivery and operating roadmap
 robinhood_tools/
   analysis.py                   Market snapshots, source controls, candidates, exit plans
   approvals.py                  Durable approval ledger and order fingerprints
