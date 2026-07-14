@@ -27,7 +27,7 @@ audit:
 	python3 -m pip_audit
 
 restore-drill:
-	python3 scripts/restore_drill.py outputs/backups/cio.db
+	python3 -m scripts.restore_drill outputs/backups/cio.db
 
 skill-check:
 	python3 scripts/sync_ai_cio_skill.py check
