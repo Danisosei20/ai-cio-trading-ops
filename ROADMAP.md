@@ -65,7 +65,10 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Require a thesis, counterargument, probability, catalysts, risk/reward, and invalidation condition.
 - [x] Preserve reproducible market snapshots and source evidence.
 - [x] Persist content-addressed decision provenance with model, prompt, policy, snapshot, and evidence timestamps.
+- [x] Require provider identity, effective time, observation time, and content hash for decision evidence.
 - [x] Reject replay evidence that was not observable and effective at the original decision time.
+- [x] Record strategy experiments and paper runs with replay, code, policy, parameter, dataset, artifact, and metric provenance.
+- [x] Gate research acceptance on at least 10 observations and recorded human review without changing live authority.
 - [x] Persist source-specific freshness manifests that identify stale and missing inputs.
 - [x] Require at least 10 comparable observations before changing durable policy.
 - [ ] Add sector-benchmark returns and factor/correlation exposure to outcome analysis.
@@ -111,12 +114,13 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Pin and enforce the direct CI toolchain versions, audited transitive security floors, and dependency updates.
 - [x] Provide automated, non-destructive restore verification for integrity, schema, and required tables.
 - [x] Add local operational severity checks for reconciliation, drift, stale runs, delivery, health, and learning failures.
+- [x] Reject unknown, missing, or stale runtime configuration fields and schema-version drift.
 - [ ] Pin all transitive dependencies with hashes in a reproducible lockfile.
 - [ ] Perform and document a clean-machine restore drill.
 - [ ] Perform and document an encrypted-backup restoration drill.
 - [ ] Demonstrate real health-route alerts for a missed scheduled run, stale data, failed reconciliation, and overdue learning checkpoints.
 - [x] Add an operator runbook covering startup, shutdown, emergency stop, recovery, and common failures.
-- [ ] Upgrade GitHub Actions when Node.js 24-compatible major releases are available.
+- [x] Upgrade GitHub Actions to Node.js 24-compatible major releases.
 - [ ] Repair or remove the unreliable third-party `Continuous AI: Test` status check.
 
 ## 9. Limited live pilot

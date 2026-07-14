@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from decimal import Decimal
@@ -70,9 +71,30 @@ class OperationsTests(unittest.TestCase):
     def test_migration_is_repeatable_and_backup_is_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = migrate_database(root / "cio.db", backup_path=root / "backup.db")
+            database_path = root / "cio.db"
+            backup_path = root / "backup.db"
+            with sqlite3.connect(database_path) as database:
+                database.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+                database.execute("INSERT INTO schema_version VALUES (?)", (CURRENT_SCHEMA_VERSION - 1,))
+                database.execute("CREATE TABLE legacy_record (value TEXT NOT NULL)")
+                database.execute("INSERT INTO legacy_record VALUES ('preserved')")
+
+            result = migrate_database(database_path, backup_path=backup_path)
             self.assertEqual(result["schema_version"], CURRENT_SCHEMA_VERSION)
-            self.assertEqual(migrate_database(root / "cio.db")["integrity"], "ok")
+            self.assertEqual(result["backup"], str(backup_path))
+            with sqlite3.connect(backup_path) as backup:
+                self.assertEqual(backup.execute("SELECT version FROM schema_version").fetchone()[0],
+                                 CURRENT_SCHEMA_VERSION - 1)
+                self.assertIsNone(backup.execute(
+                    "SELECT name FROM sqlite_master WHERE name='research_experiments'"
+                ).fetchone())
+            with sqlite3.connect(database_path) as migrated:
+                self.assertEqual(migrated.execute("SELECT version FROM schema_version").fetchone()[0],
+                                 CURRENT_SCHEMA_VERSION)
+                self.assertIsNotNone(migrated.execute(
+                    "SELECT name FROM sqlite_master WHERE name='research_experiments'"
+                ).fetchone())
+            self.assertEqual(migrate_database(database_path)["integrity"], "ok")
 
     def test_losing_invalidated_exit_creates_cooldown(self):
         with tempfile.TemporaryDirectory() as directory:

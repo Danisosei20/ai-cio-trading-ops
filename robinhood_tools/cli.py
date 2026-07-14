@@ -24,6 +24,8 @@ def main(argv=None) -> int:
     sub.add_parser("approvals")
     sub.add_parser("dashboard")
     sub.add_parser("lifecycles")
+    experiments = sub.add_parser("research-experiments")
+    experiments.add_argument("--limit", type=int, default=25)
     migrate = sub.add_parser("migrate")
     migrate.add_argument("--backup")
     migrate.add_argument("--database")
@@ -79,6 +81,8 @@ def main(argv=None) -> int:
         print(settings.dashboard_path)
     elif args.command == "lifecycles":
         print(json.dumps(database.list_trade_lifecycles(), indent=2))
+    elif args.command == "research-experiments":
+        print(json.dumps(database.list_research_experiments(args.limit), indent=2))
     elif args.command == "migrate":
         from .migrations import migrate_database
         target_database = Path(args.database) if args.database else settings.database_path

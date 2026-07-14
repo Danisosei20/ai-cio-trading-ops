@@ -5,6 +5,8 @@ A safety-gated support layer for an AI Chief Investment Officer workflow using R
 The project helps review a portfolio, research eligible stocks, prepare broker order reviews, send approval notifications, and learn from outcomes. It is intentionally designed to stop before real execution unless every approval requirement is satisfied.
 
 See [ROADMAP.md](ROADMAP.md) for completed capabilities, remaining operational proof, and the recommended path to a limited live pilot.
+See [docs/upstream_review.md](docs/upstream_review.md) for the Qlib, NautilusTrader, LEAN, and OpenBB comparison
+and the patterns deliberately adopted or rejected.
 
 For unattended Slack reply monitoring, create a dedicated Slack app and keep both OAuth tokens only in
 the local environment: a user token in `SLACK_USER_TOKEN` for `conversations.replies`, and a bot token
@@ -143,8 +145,10 @@ flowchart TD
 ## System Components
 
 - `MarketSnapshot` captures a reproducible, hashed set of quotes, volume, liquidity, trend, volatility, event risk, and sourced research.
-- `DecisionRecord` preserves immutable model, prompt, policy, snapshot, score, rationale, and source-time provenance without creating trading authority.
+- `DecisionRecord` preserves immutable model, prompt, policy, snapshot, score, rationale, provider, effective-time, observation-time, and content-hash provenance without creating trading authority.
 - `ReplaySnapshot` rejects observations that were unavailable at decision time, providing a look-ahead-bias guard for historical replay.
+- `ResearchExperiment` records Qlib-style strategy hypotheses and paper runs with replay, dataset, artifact,
+  parameter, policy, and code provenance; acceptance requires at least ten observations and a human reviewer.
 - `TradeCandidate` fails closed when data is stale, critical signals are missing, source quality is inadequate, score is below the purchase hurdle, or reward/risk is insufficient.
 - `RiskLimits` enforces position, sector, cash-reserve, daily-capital, pending-approval, spread, and market-impact limits.
 - `CioWorkflow` connects validation, portfolio risk, broker review, approval persistence, Slack delivery, exit plans, audit events, and learning schedules.
@@ -171,6 +175,7 @@ config/
 docs/
   approval_automation.md        Daily CIO and approval workflow
   operator_runbook.md           Startup, shutdown, emergency, recovery, and restore procedures
+  upstream_review.md            Primary-source comparison with similar open-source systems
   robinhood_trading_tools.md    Robinhood adapter and safety details
   slack_required_tools.md       Slack tool and destination requirements
 ROADMAP.md                      Evidence-based delivery and operating roadmap
@@ -182,6 +187,7 @@ robinhood_tools/
   governance.py                 Immutable decision provenance and content-addressed IDs
   observability.py              Local operational status and severity checks
   replay.py                     Point-in-time replay evidence validation
+  research.py                   Immutable experiment, run, metric, and promotion records
   daily_controls.py             Freshness, broker drift, watchdog, daily changes, and notice rendering
   health.py                     Fixed-route Slack health notifier for local operations
   adapters.py                   Credential-free host integration boundaries and Slack retries
@@ -284,6 +290,7 @@ python3 -m robinhood_tools.cli watchdog --account-label Agentic --database outpu
 python3 -m robinhood_tools.cli recovery-plan
 python3 -m robinhood_tools.cli shadow-recommendations
 python3 -m robinhood_tools.cli lifecycles
+python3 -m robinhood_tools.cli research-experiments
 python3 -m robinhood_tools.cli approvals
 python3 -m robinhood_tools.cli dashboard
 python3 -m robinhood_tools.cli backup outputs/backups/cio.db
@@ -334,6 +341,10 @@ ticker lifecycle. Broker and market credentials never enter the CLI or repositor
 - `live_approval`: live reviews and placements, with the kill switch plus matching per-order Codex approval.
 
 Legacy `paper` and `live` values normalize to `paper_auto` and `live_approval`.
+
+Configuration is strict in runtime startup. Unknown, misspelled, missing, or stale keys fail closed, and the
+configured database schema version must match the code. This prevents a typo from silently disabling a safety
+setting.
 
 ### Restart and fill safety
 
@@ -477,6 +488,12 @@ Learning fields include:
 - Lessons and error attribution
 
 Durable policy should not change after one winner or loser. The configured process requires at least 10 comparable observations and a repeated pattern before changing a scoring weight or rule.
+
+Strategy research is registered separately from trading. An experiment records its baseline, proposed version,
+Git commit, policy and parameter hashes, point-in-time replay digest, expected benefit, and rollback criteria.
+Only paper-status experiments accept runs. Each run must include dataset/artifact hashes and excess-return,
+drawdown, turnover, and slippage metrics. Research acceptance requires the configured observation minimum and
+a recorded human reviewer; it never changes live policy or creates broker authority automatically.
 
 Append a portable observation with `python3 scripts/update_journal.py outputs/learning.csv --symbol AAPL ...`. The helper enforces the complete documented CSV schema and refuses to append to an incompatible older header. When durable workflow behavior changes, update this README and the installed `ai-cio-portfolio-manager` skill in the same change, then validate both.
 

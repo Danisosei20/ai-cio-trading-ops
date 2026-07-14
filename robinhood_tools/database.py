@@ -11,9 +11,10 @@ from .approvals import ApprovalRecord, order_fingerprint
 from .errors import PolicyViolation
 from .governance import DecisionRecord
 from .models import EquityOrderRequest, OrderReview
+from .research import ResearchExperiment, ResearchRun
 
 
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 5
 
 
 class CioDatabase:
@@ -152,6 +153,23 @@ class CioDatabase:
                     policy_version TEXT NOT NULL, payload TEXT NOT NULL,
                     CHECK(recommendation IN ('hold','add','trim','sell','no_action')),
                     CHECK(score BETWEEN 0 AND 100)
+                );
+                CREATE TABLE IF NOT EXISTS research_experiments (
+                    experiment_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+                    status TEXT NOT NULL, strategy_version TEXT NOT NULL,
+                    baseline_version TEXT NOT NULL, minimum_observations INTEGER NOT NULL,
+                    replay_snapshot_sha256 TEXT NOT NULL, approved_by TEXT,
+                    status_updated_at TEXT NOT NULL, payload TEXT NOT NULL,
+                    CHECK(status IN ('proposed','paper','accepted','rejected','rolled_back')),
+                    CHECK(minimum_observations >= 10)
+                );
+                CREATE TABLE IF NOT EXISTS research_experiment_runs (
+                    run_id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL, market_regime TEXT NOT NULL,
+                    observation_count INTEGER NOT NULL, payload TEXT NOT NULL,
+                    FOREIGN KEY(experiment_id) REFERENCES research_experiments(experiment_id),
+                    CHECK(market_regime IN ('risk_on','neutral','risk_off')),
+                    CHECK(observation_count > 0)
                 );
                 """
             )
@@ -715,6 +733,110 @@ class CioDatabase:
         result["payload"] = json.loads(result["payload"])
         return result
 
+    def record_research_experiment(self, experiment: ResearchExperiment) -> str:
+        payload = experiment.canonical_payload()
+        experiment_id = experiment.experiment_id
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO research_experiments VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (experiment_id, experiment.created_at.isoformat(), "proposed", experiment.strategy_version,
+                 experiment.baseline_version, experiment.minimum_observations,
+                 experiment.replay_snapshot_sha256, None, now, self._json(payload)),
+            )
+        return experiment_id
+
+    def research_experiment(self, experiment_id: str) -> dict:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT *, (SELECT coalesce(sum(observation_count),0) FROM research_experiment_runs "
+                "WHERE experiment_id=research_experiments.experiment_id) AS observations "
+                "FROM research_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+        if not row:
+            raise PolicyViolation(f"Research experiment {experiment_id!r} was not found.")
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def list_research_experiments(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT e.experiment_id,e.created_at,e.status,e.strategy_version,e.baseline_version,"
+                "e.minimum_observations,e.approved_by,coalesce(sum(r.observation_count),0) AS observations "
+                "FROM research_experiments e LEFT JOIN research_experiment_runs r "
+                "ON r.experiment_id=e.experiment_id GROUP BY e.experiment_id "
+                "ORDER BY e.created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_research_run(self, run: ResearchRun) -> str:
+        payload = run.canonical_payload()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            experiment = db.execute(
+                "SELECT status FROM research_experiments WHERE experiment_id=?", (run.experiment_id,)
+            ).fetchone()
+            if not experiment:
+                db.execute("ROLLBACK")
+                raise PolicyViolation("Research run references an unknown experiment.")
+            if experiment["status"] != "paper":
+                db.execute("ROLLBACK")
+                raise PolicyViolation("Research runs may only be recorded while an experiment is in paper status.")
+            db.execute(
+                "INSERT OR IGNORE INTO research_experiment_runs VALUES(?,?,?,?,?,?)",
+                (run.run_id, run.experiment_id, run.observed_at.isoformat(), run.market_regime,
+                 run.observation_count, self._json(payload)),
+            )
+            db.execute("COMMIT")
+        return run.run_id
+
+    def transition_research_experiment(
+        self, experiment_id: str, status: str, *, approved_by: str | None = None,
+    ) -> dict:
+        allowed = {
+            "proposed": {"paper", "rejected"},
+            "paper": {"accepted", "rejected"},
+            "accepted": {"rolled_back"},
+            "rejected": set(),
+            "rolled_back": set(),
+        }
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status,minimum_observations FROM research_experiments WHERE experiment_id=?",
+                (experiment_id,),
+            ).fetchone()
+            if not row:
+                db.execute("ROLLBACK")
+                raise PolicyViolation(f"Research experiment {experiment_id!r} was not found.")
+            if status not in allowed[row["status"]]:
+                db.execute("ROLLBACK")
+                raise PolicyViolation(f"Research experiment cannot transition from {row['status']} to {status}.")
+            if status == "accepted":
+                observations = int(db.execute(
+                    "SELECT coalesce(sum(observation_count),0) FROM research_experiment_runs WHERE experiment_id=?",
+                    (experiment_id,),
+                ).fetchone()[0])
+                if observations < int(row["minimum_observations"]):
+                    db.execute("ROLLBACK")
+                    raise PolicyViolation(
+                        f"Research acceptance requires {row['minimum_observations']} paper observations; "
+                        f"found {observations}."
+                    )
+                if not approved_by or not approved_by.strip():
+                    db.execute("ROLLBACK")
+                    raise PolicyViolation("Research acceptance requires a recorded human approver.")
+            db.execute(
+                "UPDATE research_experiments SET status=?,approved_by=?,status_updated_at=? WHERE experiment_id=?",
+                (status, approved_by.strip() if approved_by else None,
+                 datetime.now(timezone.utc).isoformat(), experiment_id),
+            )
+            db.execute("COMMIT")
+        return self.research_experiment(experiment_id)
+
     def strategy_observation_count(self, *, strategy_version: str, error_category: str) -> int:
         with self.connect() as db:
             return int(db.execute(
@@ -777,10 +899,14 @@ class CioDatabase:
             failed_deliveries = db.execute("SELECT count(*) FROM deliveries WHERE status='failed'").fetchone()[0]
             shadow_count = db.execute("SELECT count(*) FROM shadow_equity_recommendations").fetchone()[0]
             drift_count = db.execute("SELECT coalesce(sum(drift_count),0) FROM broker_state_snapshots").fetchone()[0]
+            experiment_statuses = {row["status"]: row["count"] for row in db.execute(
+                "SELECT status, count(*) AS count FROM research_experiments GROUP BY status"
+            )}
             return {"approval_statuses": statuses, "overdue_learning_checkpoints": overdue,
                     "active_leases": leases, "reconciliation_required": reconciliation,
                     "failed_slack_deliveries": failed_deliveries,
                     "shadow_recommendations": shadow_count,
+                    "research_experiment_statuses": experiment_statuses,
                     "broker_drift_findings": drift_count,
                     "portfolio_snapshots": self.dashboard_snapshots(),
                     "emergency_kill": db.execute(
@@ -797,7 +923,7 @@ class CioDatabase:
                   "order_fills", "strategy_observations", "dashboard_snapshots", "symbol_cooldowns",
                   "daily_run_checkpoints", "shadow_equity_recommendations", "daily_review_states",
                   "freshness_manifests", "broker_state_snapshots", "broker_events", "health_alerts",
-                  "decision_records")
+                  "decision_records", "research_experiments", "research_experiment_runs")
         with self.connect() as db:
             return {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")] for table in tables}
 

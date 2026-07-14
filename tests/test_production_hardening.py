@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import zipfile
@@ -36,7 +37,7 @@ class Calendar:
 
 
 class ProductionHardeningTests(unittest.TestCase):
-    def build_test_settings(self, directory):
+    def build_test_settings(self, directory, config_path="config/approval_routes.example.json"):
         env = Path(directory) / ".env.test"
         env.write_text(
             "TIMEZONE=America/New_York\n"
@@ -51,7 +52,16 @@ class ProductionHardeningTests(unittest.TestCase):
             "TRADING_ENABLED=false\n",
             encoding="utf-8",
         )
-        return build_settings("config/approval_routes.example.json", env)
+        return build_settings(config_path, env)
+
+    def test_database_schema_config_drift_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = json.loads(Path("config/approval_routes.example.json").read_text(encoding="utf-8"))
+            config["runtime"]["database_schema_version"] -= 1
+            config_path = Path(directory) / "stale-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(PolicyViolation, "Configured database schema"):
+                self.build_test_settings(directory, config_path)
 
     def test_live_kill_switch_defaults_off(self):
         with tempfile.TemporaryDirectory() as directory:

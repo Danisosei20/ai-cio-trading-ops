@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from .database import CioDatabase
+from .database import CioDatabase, DATABASE_SCHEMA_VERSION
 from .errors import PolicyViolation
 from .risk import RiskLimits
 from .service import RobinhoodTradingService
-from .settings import load_config, load_env
+from .settings import load_config, load_env, validate_config_shape
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,12 @@ class RuntimeSettings:
 
 def build_settings(config_path="config/approval_routes.json", env_path=".env") -> RuntimeSettings:
     config = load_config(config_path, env_path)
+    validate_config_shape(config)
+    configured_schema = int(config["runtime"]["database_schema_version"])
+    if configured_schema != DATABASE_SCHEMA_VERSION:
+        raise PolicyViolation(
+            f"Configured database schema {configured_schema} does not match code schema {DATABASE_SCHEMA_VERSION}."
+        )
     env = load_env(env_path)
     risk = config["risk_limits"]
     mode = env.get("TRADING_MODE", "research_only").lower()

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from robinhood_tools.errors import PolicyViolation
-from robinhood_tools.settings import load_config
+from robinhood_tools.settings import load_config, validate_config_shape
 
 
 class PersonalSettingsTests(unittest.TestCase):
@@ -34,6 +34,16 @@ class PersonalSettingsTests(unittest.TestCase):
             config.write_text(json.dumps({"channel": "${CHANNEL}"}))
             with self.assertRaisesRegex(PolicyViolation, "CHANNEL"):
                 load_config(config, root / ".env")
+
+    def test_full_config_rejects_unknown_or_missing_fields(self):
+        root = Path(__file__).resolve().parents[1]
+        raw = json.loads(root.joinpath("config/approval_routes.example.json").read_text())
+        raw["risk_limits"]["max_order_values_usd"] = 25
+        with self.assertRaisesRegex(PolicyViolation, "unknown fields: max_order_values_usd"):
+            validate_config_shape(raw)
+        del raw["risk_limits"]["max_order_value_usd"]
+        with self.assertRaisesRegex(PolicyViolation, "missing required fields: max_order_value_usd"):
+            validate_config_shape(raw)
 
 
 if __name__ == "__main__":
