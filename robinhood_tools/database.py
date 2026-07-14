@@ -9,10 +9,11 @@ from pathlib import Path
 
 from .approvals import ApprovalRecord, order_fingerprint
 from .errors import PolicyViolation
+from .governance import DecisionRecord
 from .models import EquityOrderRequest, OrderReview
 
 
-DATABASE_SCHEMA_VERSION = 3
+DATABASE_SCHEMA_VERSION = 4
 
 
 class CioDatabase:
@@ -143,6 +144,14 @@ class CioDatabase:
                 CREATE TABLE IF NOT EXISTS health_alerts (
                     alert_key TEXT PRIMARY KEY, status TEXT NOT NULL, attempted_at TEXT NOT NULL,
                     completed_at TEXT, error TEXT
+                );
+                CREATE TABLE IF NOT EXISTS decision_records (
+                    decision_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+                    recommendation TEXT NOT NULL, score INTEGER NOT NULL,
+                    model_name TEXT NOT NULL, model_version TEXT NOT NULL,
+                    policy_version TEXT NOT NULL, payload TEXT NOT NULL,
+                    CHECK(recommendation IN ('hold','add','trim','sell','no_action')),
+                    CHECK(score BETWEEN 0 AND 100)
                 );
                 """
             )
@@ -685,6 +694,27 @@ class CioDatabase:
                  error_category, datetime.now(timezone.utc).isoformat()),
             )
 
+    def record_decision(self, record: DecisionRecord) -> str:
+        """Persist immutable decision provenance; this does not create an approval."""
+        payload = record.canonical_payload()
+        decision_id = record.decision_id
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO decision_records VALUES(?,?,?,?,?,?,?,?)",
+                (decision_id, record.created_at.isoformat(), record.recommendation, record.score,
+                 record.model_name, record.model_version, record.policy_version, self._json(payload)),
+            )
+        return decision_id
+
+    def decision_record(self, decision_id: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM decision_records WHERE decision_id=?", (decision_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
     def strategy_observation_count(self, *, strategy_version: str, error_category: str) -> int:
         with self.connect() as db:
             return int(db.execute(
@@ -766,7 +796,8 @@ class CioDatabase:
                   "daily_runs", "processed_slack_messages", "slack_reply_windows", "trade_lifecycles",
                   "order_fills", "strategy_observations", "dashboard_snapshots", "symbol_cooldowns",
                   "daily_run_checkpoints", "shadow_equity_recommendations", "daily_review_states",
-                  "freshness_manifests", "broker_state_snapshots", "broker_events", "health_alerts")
+                  "freshness_manifests", "broker_state_snapshots", "broker_events", "health_alerts",
+                  "decision_records")
         with self.connect() as db:
             return {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")] for table in tables}
 

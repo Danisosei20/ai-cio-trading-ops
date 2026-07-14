@@ -20,6 +20,7 @@ def main(argv=None) -> int:
     parser.add_argument("--env-file", default=".env")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("health")
+    sub.add_parser("operations-status")
     sub.add_parser("approvals")
     sub.add_parser("dashboard")
     sub.add_parser("lifecycles")
@@ -65,6 +66,11 @@ def main(argv=None) -> int:
             "database": database.integrity_check(), "mode": settings.mode,
             "live_trading_enabled": settings.trading_enabled,
         }, indent=2))
+    elif args.command == "operations-status":
+        from .observability import evaluate_operational_status
+        status = evaluate_operational_status(database)
+        print(json.dumps(status.as_dict(), indent=2))
+        return {"healthy": 0, "safe_stopped": 1, "degraded": 1, "critical": 2}[status.state]
     elif args.command == "approvals":
         print(json.dumps(database.list_approvals(), indent=2))
     elif args.command == "dashboard":

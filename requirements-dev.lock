@@ -1,5 +1,11 @@
-coverage==7.6.10
-mypy==1.14.1
-pip-audit==2.7.3
-pytest==8.3.5
-ruff==0.9.10
+# Exact direct CI tools plus minimum fixed versions for audited transitive packages.
+# Regenerate with Python 3.11 and hashes before marking the full transitive-lock roadmap item complete.
+coverage==7.10.7
+filelock==3.20.3
+msgpack==1.2.1
+mypy==1.19.1
+pip-audit==2.9.0
+pytest==9.0.3
+requests==2.33.0
+ruff==0.15.21
+urllib3==2.7.0

@@ -143,6 +143,8 @@ flowchart TD
 ## System Components
 
 - `MarketSnapshot` captures a reproducible, hashed set of quotes, volume, liquidity, trend, volatility, event risk, and sourced research.
+- `DecisionRecord` preserves immutable model, prompt, policy, snapshot, score, rationale, and source-time provenance without creating trading authority.
+- `ReplaySnapshot` rejects observations that were unavailable at decision time, providing a look-ahead-bias guard for historical replay.
 - `TradeCandidate` fails closed when data is stale, critical signals are missing, source quality is inadequate, score is below the purchase hurdle, or reward/risk is insufficient.
 - `RiskLimits` enforces position, sector, cash-reserve, daily-capital, pending-approval, spread, and market-impact limits.
 - `CioWorkflow` connects validation, portfolio risk, broker review, approval persistence, Slack delivery, exit plans, audit events, and learning schedules.
@@ -151,6 +153,7 @@ flowchart TD
 - Uncertain broker failures enter `reconciliation_required`; they are not retried blindly.
 - Structured JSON logs include correlation and approval IDs while excluding credential-like fields.
 - Host adapter protocols provide market data, portfolio data, Robinhood, and Slack access without moving connector credentials into this repository.
+- `operations-status` classifies database, reconciliation, drift, stale-run, delivery, health-route, learning, and emergency-stop state.
 - Daily-run keys prevent duplicate morning summaries and approvals for the same account/date.
 - Daily-run checkpoints allow stale interrupted screens to resume without rerunning a completed screen step.
 - A standalone launchd watchdog reads automation completion memory outside the Desktop privacy boundary and sends one deduplicated health alert after a missed run.
@@ -167,6 +170,7 @@ config/
   approval_routes.example.json  Example configuration
 docs/
   approval_automation.md        Daily CIO and approval workflow
+  operator_runbook.md           Startup, shutdown, emergency, recovery, and restore procedures
   robinhood_trading_tools.md    Robinhood adapter and safety details
   slack_required_tools.md       Slack tool and destination requirements
 ROADMAP.md                      Evidence-based delivery and operating roadmap
@@ -175,6 +179,9 @@ robinhood_tools/
   approvals.py                  Durable approval ledger and order fingerprints
   auth.py                       Connector authorization checks
   database.py                   Transactional SQLite approval and audit database
+  governance.py                 Immutable decision provenance and content-addressed IDs
+  observability.py              Local operational status and severity checks
+  replay.py                     Point-in-time replay evidence validation
   daily_controls.py             Freshness, broker drift, watchdog, daily changes, and notice rendering
   health.py                     Fixed-route Slack health notifier for local operations
   adapters.py                   Credential-free host integration boundaries and Slack retries
@@ -200,6 +207,7 @@ scripts/
   check_required_tools.py       Checks configured Slack capabilities
   dashboard.py                  Generates the read-only local dashboard
   health_check.py               Non-posting route and access health check
+  restore_drill.py              Non-destructive database restore verification
   install_watchdog.py           Installs the privacy-safe launchd watchdog and Keychain token
   standalone_watchdog.py        Dependency-free missed-run checker used outside Desktop
   render_approval_message.py    Produces complete approval-notification text
@@ -270,6 +278,7 @@ Install the project or use the module directly:
 
 ```bash
 python3 -m robinhood_tools.cli health
+python3 -m robinhood_tools.cli operations-status
 python3 -m robinhood_tools.cli daily-review --account-label Agentic
 python3 -m robinhood_tools.cli watchdog --account-label Agentic --database outputs/live/cio.db
 python3 -m robinhood_tools.cli recovery-plan
@@ -306,6 +315,10 @@ using operating-system or organization-approved encrypted storage and never comm
 Test recovery quarterly on a clean machine: install from the lockfile, restore the correct paper or live
 database, run `cio migrate`, verify integrity, resume unexpired Slack monitors, render the dashboard, and keep
 live trading disabled until every check passes.
+
+Use `python3 scripts/restore_drill.py BACKUP.db` for a non-destructive first-line restore verification. It
+restores to a temporary location and checks integrity, schema, required tables, and source immutability. Follow
+the full startup, incident, encrypted-backup, and credential procedures in `docs/operator_runbook.md`.
 
 `daily-review` is safe without host adapters: it claims exactly one run per account/date, persists restart
 checkpoints, records a shadow no-action observation, and reports `No Action Recommended`. In the connected
@@ -359,7 +372,10 @@ broker activity.
 
 ## CI and Quality
 
-GitHub Actions runs unit/integration tests, Ruff, mypy, coverage, configuration validation, and local secret scanning. Run the dependency-free local subset with:
+GitHub Actions installs the exact top-level development tool versions and audited transitive security floors
+in `requirements-dev.lock`, then runs
+unit/integration tests, Ruff, mypy, coverage, configuration validation, dependency audit, and local secret
+scanning. Dependabot checks Python and GitHub Actions dependencies weekly. Run the dependency-free local subset with:
 
 ```bash
 make ci

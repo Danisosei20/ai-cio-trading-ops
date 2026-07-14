@@ -1,6 +1,6 @@
 # AI-CIO Trading Operations Roadmap
 
-Last reviewed: 2026-07-12
+Last reviewed: 2026-07-13
 
 This roadmap tracks the path from a safety-gated prototype to a dependable AI-CIO trading operation. A checked item means repository code, tests, configuration, or CI provides evidence of completion. Connector-dependent and market-dependent work remains unchecked until it has been demonstrated end to end.
 
@@ -64,6 +64,8 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Score business quality, growth, financial strength, valuation, market confirmation, execution risk, and portfolio fit.
 - [x] Require a thesis, counterargument, probability, catalysts, risk/reward, and invalidation condition.
 - [x] Preserve reproducible market snapshots and source evidence.
+- [x] Persist content-addressed decision provenance with model, prompt, policy, snapshot, and evidence timestamps.
+- [x] Reject replay evidence that was not observable and effective at the original decision time.
 - [x] Persist source-specific freshness manifests that identify stale and missing inputs.
 - [x] Require at least 10 comparable observations before changing durable policy.
 - [ ] Add sector-benchmark returns and factor/correlation exposure to outcome analysis.
@@ -106,11 +108,14 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Render action-first notices with daily changes, data timestamps, and monitoring-only watchlists.
 - [x] Provide market-calendar boundaries and trading-day calculations.
 - [x] Run tests, lint, type checking, dependency audit, configuration validation, and secret scanning in CI.
-- [ ] Pin all dependencies in a reproducible lockfile.
+- [x] Pin and enforce the direct CI toolchain versions, audited transitive security floors, and dependency updates.
+- [x] Provide automated, non-destructive restore verification for integrity, schema, and required tables.
+- [x] Add local operational severity checks for reconciliation, drift, stale runs, delivery, health, and learning failures.
+- [ ] Pin all transitive dependencies with hashes in a reproducible lockfile.
 - [ ] Perform and document a clean-machine restore drill.
 - [ ] Perform and document an encrypted-backup restoration drill.
 - [ ] Demonstrate real health-route alerts for a missed scheduled run, stale data, failed reconciliation, and overdue learning checkpoints.
-- [ ] Add an operator runbook covering startup, shutdown, emergency stop, recovery, and common failures.
+- [x] Add an operator runbook covering startup, shutdown, emergency stop, recovery, and common failures.
 - [ ] Upgrade GitHub Actions when Node.js 24-compatible major releases are available.
 - [ ] Repair or remove the unreliable third-party `Continuous AI: Test` status check.
 
@@ -132,7 +137,7 @@ Do not start this phase until the paper-readiness report is approved.
 2. Run one current-data, open-market paper lifecycle from research through exit notification.
 3. Run controlled end-to-end health alerts for missed-run, stale-data, reconciliation, and overdue-checkpoint failures.
 4. Test forced restart, timeout, partial-fill, and reconciliation recovery with the real connectors.
-5. Write the operator runbook and complete a clean-machine restore drill.
+5. Perform and document clean-machine and encrypted-backup restore drills using the verification tool.
 6. Collect 20 paper recommendations and at least 10 closed outcomes, including shadow observations.
 7. Review calibration, benchmark-relative results, exits, and failure patterns.
 8. Approve or reject a tightly limited live pilot based on documented evidence.
