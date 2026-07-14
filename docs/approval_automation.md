@@ -14,6 +14,7 @@ The daily CIO automation may:
 - Produce a portfolio health dashboard.
 - Identify `No Action Recommended`, or prepare a trade thesis.
 - Send an approval notification through Slack.
+- Record one separate paper-only shadow-equity candidate or shadow no-action observation.
 
 The daily CIO automation must not:
 
@@ -22,6 +23,8 @@ The daily CIO automation must not:
 - Treat Slack delivery as trade approval by itself.
 - Trade a non-agentic account.
 - Default an account when multiple accounts exist.
+- Create a broker review or approval from shadow-equity activity.
+- Continue when required freshness evidence or broker-state reconciliation is incomplete.
 
 ## Approval Channel
 
@@ -72,6 +75,11 @@ Every approval request should include:
 - Required market data disclosure
 - Clear Codex approval instruction
 
+Every daily notice, including no-action notices, starts with `ACTION`, `WHAT YOU SHOULD DO`, `WHY`,
+`NEXT REVIEW`, and `LIVE TRADING`. Follow those fields with `CHANGED SINCE YESTERDAY` and source-specific
+`DATA AS OF` timestamps. Candidates blocked from execution must appear only under
+`WATCHLIST ONLY — NOT A BUY RECOMMENDATION`.
+
 Suggested Codex approval phrase:
 
 ```text
@@ -87,7 +95,7 @@ Phone routing is disabled. Slack mobile push notifications are the phone notific
 Use this as the Codex automation prompt:
 
 ```text
-Use $ai-cio-portfolio-manager to run the daily CIO portfolio review. Read the full authorized Robinhood portfolio, including cost basis and unrealized gains. Purchase candidates must be verified current S&P 500 constituents using membership evidence no more than 24 hours old. Obtain a current broker quote and research current news, current company or SEC material, and at least one additional reliable source. Evaluate current and average volume, relative volume, dollar liquidity, bid/ask spread, order-size impact, trend, relative strength, volatility, drawdown, upcoming earnings/events, invalidation level, target/review condition, and expected execution quality. Update the dashboard and journal, and recommend No Action unless an idea clears the policy hurdle. Review profitable positions for thesis, valuation, concentration, taxes, and position-specific targets; profit alone is not an automatic sell instruction. If a trade qualifies, run review-only first and send the configured Slack approval notification to the channel resolved from `SLACK_CHANNEL_ID` in the same task, including symbol, current/intended price, volume and liquidity signals, event risk, rationale, and research links. Slack notification is not execution approval. Only after explicit approval in Codex with the matching approval ID and unchanged reviewed order parameters may a real Robinhood placement or sale be called. At 1, 5, and 20 trading days, update the journal with outcome, S&P 500 benchmark return, excess return, thesis accuracy, and execution slippage; only change durable rules after repeated documented evidence.
+Use $ai-cio-portfolio-manager to run the daily equity CIO portfolio review; options remain prohibited. Resume unexpired Slack monitors and the durable recovery plan first. Reconcile positions, open orders, fills, dividends, corporate actions, and uncertain approvals before recommendations. Require a source-specific freshness manifest with timestamps for broker state, quotes, volume/spreads, regime inputs, earnings/events, S&P 500 membership, and research. Read the full authorized Robinhood portfolio, including cost basis, settled and unsettled cash, pending-order commitments, and unrealized gains. Purchase candidates must be verified current S&P 500 constituents using membership evidence no more than 24 hours old. Obtain a current broker quote and research current news, current company or SEC material, and at least one additional reliable source. Evaluate current and average volume, relative volume, dollar liquidity, bid/ask spread, order-size impact, trend, relative strength, volatility, drawdown, upcoming earnings/events, invalidation level, target/review condition, and expected execution quality. Update the dashboard and journal, and recommend No Action unless an idea clears the policy hurdle. Separately record at most one paper-only shadow candidate that clears research rules, or shadow no action; shadow activity never creates an approval or broker call. Lead Slack with ACTION, WHAT YOU SHOULD DO, WHY, NEXT REVIEW, LIVE TRADING, CHANGED SINCE YESTERDAY, and DATA AS OF. Review profitable positions for thesis, valuation, concentration, taxes, and position-specific targets; profit alone is not an automatic sell instruction. If a live trade qualifies, run review-only first and send the configured Slack approval notification to the channel resolved from `SLACK_CHANNEL_ID` in the same task. Slack notification is not execution approval. Only after explicit approval in Codex with the matching approval ID and unchanged reviewed order parameters may a real Robinhood placement or sale be called. At 1, 5, and 20 trading days, update live and shadow outcomes with S&P 500 benchmark return, excess return, thesis accuracy, and execution slippage; only change durable rules after repeated documented evidence.
 ```
 
 For Slack mobile push setup, see `docs/slack_required_tools.md`. Slack is a notification route unless a validated Slack reply-reading approval loop is added.
@@ -97,6 +105,11 @@ Known operational note: Slack send tools may require a task explicitly opened wi
 ## Health Check
 
 Run `python3 scripts/health_check.py --available-tools slack._slack_send_message --robinhood-read-ok` after the host has independently verified Robinhood read access. This validates configuration and capabilities without posting a Slack message. Use an explicitly requested test post only for end-to-end delivery verification.
+
+Install the independent missed-run watchdog with `python3 scripts/install_watchdog.py`. It stores the Slack bot
+token in the login Keychain, runs from Application Support rather than Desktop, and checks the automation memory
+at 10:05 ET on weekdays. It sends one deduplicated message to `HEALTH_SLACK_CHANNEL_ID` when the 09:45 review
+has not completed after its grace period. A watchdog alert never creates trading authority.
 
 ## Production Connector Contract
 
@@ -110,7 +123,7 @@ sizing, `NO` rejects, and an exact size ends the monitor with `fresh_review_requ
 affordability checks and a new broker review. Live placement remains blocked until explicit matching approval
 is given in Codex; the monitor cannot create execution authority.
 
-Run `cio migrate --backup outputs/backups/pre-v2.db` before the first production start. Install the example
+Run `cio migrate --backup outputs/backups/pre-v3.db` before the first production start. Install the example
 launchd service from `deploy/com.openai.ai-cio.plist.example` only after replacing its paths and validating the
 connected host. The standalone CLI intentionally has no credentials and therefore returns `No Action` unless
 the host injects live screening callbacks.

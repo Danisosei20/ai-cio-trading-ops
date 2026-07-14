@@ -1,6 +1,6 @@
 # AI-CIO Trading Operations Roadmap
 
-Last reviewed: 2026-07-12
+Last reviewed: 2026-07-13
 
 This roadmap tracks the path from a safety-gated prototype to a dependable AI-CIO trading operation. A checked item means repository code, tests, configuration, or CI provides evidence of completion. Connector-dependent and market-dependent work remains unchecked until it has been demonstrated end to end.
 
@@ -19,6 +19,8 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Default live trading to disabled and provide a durable emergency stop.
 - [x] Separate research, paper, and live operating modes and data paths.
 - [x] Fail closed after uncertain broker transport failures until reconciliation.
+- [x] Fail closed on unexplained broker position, order, fill, dividend, or corporate-action drift.
+- [x] Protect the cash floor with settled cash after unsettled funds and pending-order commitments.
 - [x] Keep secrets and personal routing values out of Git.
 
 ## 2. One-task trade lifecycle
@@ -50,6 +52,7 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 
 - [x] Provide a connector-free paper broker with simulated reviews and fills.
 - [x] Test approval expiry, tampering, duplicate execution, fills, loss cooldowns, and safety limits.
+- [x] Record at most one isolated shadow-equity candidate or no-action observation per daily run.
 - [ ] Complete at least 20 paper recommendations across different market regimes.
 - [ ] Complete at least 10 closed paper trades with measured outcomes.
 - [ ] Exercise qualifying trade, no-action, rejection, insufficient funds, partial fill, timeout, loss, hold-profit, trim, and sale scenarios.
@@ -61,6 +64,9 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Score business quality, growth, financial strength, valuation, market confirmation, execution risk, and portfolio fit.
 - [x] Require a thesis, counterargument, probability, catalysts, risk/reward, and invalidation condition.
 - [x] Preserve reproducible market snapshots and source evidence.
+- [x] Persist content-addressed decision provenance with model, prompt, policy, snapshot, and evidence timestamps.
+- [x] Reject replay evidence that was not observable and effective at the original decision time.
+- [x] Persist source-specific freshness manifests that identify stale and missing inputs.
 - [x] Require at least 10 comparable observations before changing durable policy.
 - [ ] Add sector-benchmark returns and factor/correlation exposure to outcome analysis.
 - [ ] Calibrate recommendation probabilities against observed results.
@@ -96,13 +102,20 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Provide database integrity checks, backups, migrations, and privacy-safe support bundles.
 - [x] Provide structured redacted logs and a read-only dashboard.
 - [x] Prevent duplicate daily runs with idempotency keys.
+- [x] Persist daily screen checkpoints and provide a restart recovery plan for Slack, reconciliation, and stale runs.
+- [x] Provide and healthy-state test an independent Keychain-backed missed-run launchd watchdog.
+- [x] Verify the installed watchdog's real Keychain-to-Slack health route with a labeled non-trading test.
+- [x] Render action-first notices with daily changes, data timestamps, and monitoring-only watchlists.
 - [x] Provide market-calendar boundaries and trading-day calculations.
 - [x] Run tests, lint, type checking, dependency audit, configuration validation, and secret scanning in CI.
-- [ ] Pin all dependencies in a reproducible lockfile.
+- [x] Pin and enforce the direct CI toolchain versions, audited transitive security floors, and dependency updates.
+- [x] Provide automated, non-destructive restore verification for integrity, schema, and required tables.
+- [x] Add local operational severity checks for reconciliation, drift, stale runs, delivery, health, and learning failures.
+- [ ] Pin all transitive dependencies with hashes in a reproducible lockfile.
 - [ ] Perform and document a clean-machine restore drill.
 - [ ] Perform and document an encrypted-backup restoration drill.
-- [ ] Add alerts for missed scheduled runs, stale data, failed reconciliation, and overdue learning checkpoints.
-- [ ] Add an operator runbook covering startup, shutdown, emergency stop, recovery, and common failures.
+- [ ] Demonstrate real health-route alerts for a missed scheduled run, stale data, failed reconciliation, and overdue learning checkpoints.
+- [x] Add an operator runbook covering startup, shutdown, emergency stop, recovery, and common failures.
 - [ ] Upgrade GitHub Actions when Node.js 24-compatible major releases are available.
 - [ ] Repair or remove the unreliable third-party `Continuous AI: Test` status check.
 
@@ -122,11 +135,12 @@ Do not start this phase until the paper-readiness report is approved.
 
 1. Validate real Slack delivery and automatic reply detection.
 2. Run one current-data, open-market paper lifecycle from research through exit notification.
-3. Test restart, timeout, partial-fill, and reconciliation recovery paths.
-4. Write the operator runbook and complete a clean-machine restore drill.
-5. Collect 20 paper recommendations and at least 10 closed outcomes.
-6. Review calibration, benchmark-relative results, exits, and failure patterns.
-7. Approve or reject a tightly limited live pilot based on documented evidence.
+3. Run controlled end-to-end health alerts for missed-run, stale-data, reconciliation, and overdue-checkpoint failures.
+4. Test forced restart, timeout, partial-fill, and reconciliation recovery with the real connectors.
+5. Perform and document clean-machine and encrypted-backup restore drills using the verification tool.
+6. Collect 20 paper recommendations and at least 10 closed outcomes, including shadow observations.
+7. Review calibration, benchmark-relative results, exits, and failure patterns.
+8. Approve or reject a tightly limited live pilot based on documented evidence.
 
 ## Updating this roadmap
 

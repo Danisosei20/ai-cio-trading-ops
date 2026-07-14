@@ -18,10 +18,27 @@ class PortfolioState:
     realized_pnl_today: Decimal = Decimal("0")
     realized_pnl_week: Decimal = Decimal("0")
     open_positions: int = 0
+    settled_cash: Decimal | None = None
+    unsettled_cash: Decimal = Decimal("0")
+    pending_order_commitments: Decimal = Decimal("0")
 
     @property
     def available_buying_power(self) -> Decimal:
         return self.cash if self.buying_power is None else self.buying_power
+
+    @property
+    def settled_cash_available(self) -> Decimal:
+        settled = self.settled_cash
+        if settled is None:
+            settled = self.cash - max(self.unsettled_cash, Decimal("0"))
+        return max(settled - max(self.pending_order_commitments, Decimal("0")), Decimal("0"))
+
+    @property
+    def available_for_new_orders(self) -> Decimal:
+        buying_power = max(
+            self.available_buying_power - max(self.pending_order_commitments, Decimal("0")), Decimal("0")
+        )
+        return min(buying_power, self.settled_cash_available)
 
 
 @dataclass(frozen=True)
@@ -58,9 +75,10 @@ class RiskLimits:
             raise PolicyViolation("Daily loss limit reached; new purchases are disabled.")
         if portfolio.realized_pnl_week <= -self.max_weekly_loss:
             raise PolicyViolation("Weekly loss limit reached; new purchases are disabled.")
-        if order_value > portfolio.available_buying_power:
+        if order_value > portfolio.available_for_new_orders:
             raise PolicyViolation(
-                f"Insufficient buying power: ${portfolio.available_buying_power} available, "
+                f"Insufficient buying power after settled-cash and pending-commitment checks: "
+                f"${portfolio.available_for_new_orders} available, "
                 f"but ${order_value} is required. No approval was created."
             )
         resulting_weight = portfolio.position_weights.get(symbol, Decimal("0")) + order_value / portfolio.equity
@@ -69,9 +87,9 @@ class RiskLimits:
         resulting_sector = portfolio.sector_weights.get(sector, Decimal("0")) + order_value / portfolio.equity
         if resulting_sector > self.max_sector_weight:
             raise PolicyViolation("Purchase would exceed the maximum sector weight.")
-        if (portfolio.cash - order_value) / portfolio.equity < self.min_cash_weight:
+        if (portfolio.settled_cash_available - order_value) / portfolio.equity < self.min_cash_weight:
             raise PolicyViolation("Purchase would breach the minimum cash reserve.")
-        if portfolio.cash - order_value < self.min_cash_dollars:
+        if portfolio.settled_cash_available - order_value < self.min_cash_dollars:
             raise PolicyViolation("Purchase would breach the minimum cash-dollar reserve.")
         if portfolio.approved_capital_today + order_value > self.max_daily_approved_capital:
             raise PolicyViolation("Purchase would exceed the daily approved-capital limit.")

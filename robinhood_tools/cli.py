@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .database import CioDatabase
 from .privacy import create_safe_support_bundle
 from .runtime import build_settings
+from .settings import load_env
 from .slack_replies import parse_safe_reply, reply_acknowledgement, transition_for_reply
 
 
@@ -16,13 +20,24 @@ def main(argv=None) -> int:
     parser.add_argument("--env-file", default=".env")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("health")
+    sub.add_parser("operations-status")
     sub.add_parser("approvals")
     sub.add_parser("dashboard")
     sub.add_parser("lifecycles")
     migrate = sub.add_parser("migrate")
     migrate.add_argument("--backup")
+    migrate.add_argument("--database")
     daily = sub.add_parser("daily-review")
     daily.add_argument("--account-label", required=True)
+    watchdog = sub.add_parser("watchdog")
+    watchdog.add_argument("--account-label", required=True)
+    watchdog.add_argument("--date")
+    watchdog.add_argument("--scheduled-time")
+    watchdog.add_argument("--database")
+    watchdog.add_argument("--notify", action="store_true")
+    sub.add_parser("recovery-plan")
+    shadow = sub.add_parser("shadow-recommendations")
+    shadow.add_argument("--limit", type=int, default=25)
     backup = sub.add_parser("backup")
     backup.add_argument("destination")
     bundle = sub.add_parser("support-bundle")
@@ -51,6 +66,11 @@ def main(argv=None) -> int:
             "database": database.integrity_check(), "mode": settings.mode,
             "live_trading_enabled": settings.trading_enabled,
         }, indent=2))
+    elif args.command == "operations-status":
+        from .observability import evaluate_operational_status
+        status = evaluate_operational_status(database)
+        print(json.dumps(status.as_dict(), indent=2))
+        return {"healthy": 0, "safe_stopped": 1, "degraded": 1, "critical": 2}[status.state]
     elif args.command == "approvals":
         print(json.dumps(database.list_approvals(), indent=2))
     elif args.command == "dashboard":
@@ -61,11 +81,55 @@ def main(argv=None) -> int:
         print(json.dumps(database.list_trade_lifecycles(), indent=2))
     elif args.command == "migrate":
         from .migrations import migrate_database
-        print(json.dumps(migrate_database(settings.database_path, backup_path=args.backup), indent=2))
+        target_database = Path(args.database) if args.database else settings.database_path
+        print(json.dumps(migrate_database(target_database, backup_path=args.backup), indent=2))
     elif args.command == "daily-review":
         from .orchestrator import DailyOrchestrator
         result = DailyOrchestrator(database, settings).run_daily(args.account_label, lambda: [])
         print(json.dumps(result.__dict__, indent=2))
+    elif args.command == "watchdog":
+        from .daily_controls import check_daily_run_watchdog
+        from .health import SlackHealthWebApiNotifier
+
+        watchdog_database = CioDatabase(args.database) if args.database else database
+        tz = ZoneInfo(settings.timezone)
+        run_day = date.fromisoformat(args.date) if args.date else datetime.now(tz).date()
+        hour, minute = map(int, (args.scheduled_time or settings.schedule_time_local).split(":"))
+        scheduled_for = datetime(run_day.year, run_day.month, run_day.day, hour, minute, tzinfo=tz)
+        watchdog_result = check_daily_run_watchdog(
+            watchdog_database, account_label=args.account_label, scheduled_for=scheduled_for,
+            grace=timedelta(minutes=settings.watchdog_grace_minutes),
+        )
+        payload = asdict(watchdog_result)
+        if watchdog_result.alert_required and args.notify:
+            alert_key = f"missed-daily-run:{watchdog_result.run_key}"
+            if watchdog_database.claim_health_alert(alert_key):
+                try:
+                    values = load_env(args.env_file)
+                    values.setdefault("HEALTH_SLACK_CHANNEL_ID", settings.health_channel_id)
+                    SlackHealthWebApiNotifier.from_values(values).send_health_alert(
+                        message=(
+                            f"AI CIO health alert: {watchdog_result.detail} "
+                            f"Run key: {watchdog_result.run_key}."
+                        )
+                    )
+                    watchdog_database.complete_health_alert(alert_key, sent=True)
+                    payload["health_alert"] = "sent"
+                except Exception as exc:
+                    watchdog_database.complete_health_alert(alert_key, sent=False, error=type(exc).__name__)
+                    payload["health_alert"] = "failed"
+                    print(json.dumps(payload, indent=2))
+                    return 3
+            else:
+                payload["health_alert"] = "already_sent"
+        print(json.dumps(payload, indent=2))
+        if watchdog_result.alert_required:
+            return 2
+    elif args.command == "recovery-plan":
+        from .operations import build_recovery_plan
+        print(json.dumps(asdict(build_recovery_plan(database)), indent=2))
+    elif args.command == "shadow-recommendations":
+        print(json.dumps(database.shadow_recommendations(args.limit), indent=2))
     elif args.command == "backup":
         print(database.backup(args.destination))
     elif args.command == "support-bundle":

@@ -1,10 +1,13 @@
-.PHONY: test health dashboard ci lint typecheck audit skill-check skill-sync-from-installed skill-sync-to-installed
+.PHONY: test health operations-status dashboard ci lint typecheck audit restore-drill skill-check skill-sync-from-installed skill-sync-to-installed
 
 test:
 	python3 -m unittest discover -s tests -v
 
 health:
 	python3 scripts/health_check.py --available-tools slack._slack_send_message --robinhood-read-ok
+
+operations-status:
+	python3 -m robinhood_tools.cli operations-status
 
 dashboard:
 	python3 scripts/dashboard.py
@@ -22,6 +25,9 @@ typecheck:
 
 audit:
 	python3 -m pip_audit
+
+restore-drill:
+	python3 scripts/restore_drill.py outputs/backups/cio.db
 
 skill-check:
 	python3 scripts/sync_ai_cio_skill.py check

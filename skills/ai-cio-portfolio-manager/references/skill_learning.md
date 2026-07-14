@@ -36,3 +36,10 @@ When updating:
 Track recommendations and fills at 1-, 5-, and 20-trading-day checkpoints versus the S&P 500. Record thesis accuracy, excess return, execution slippage, and whether volume, liquidity, trend, volatility, and event assumptions were correct. Do not optimize rules to one winner or loser. Require at least 10 comparable observations and a repeated error pattern before changing a weight or durable rule; document the old rule, evidence, change, and expected improvement.
 
 Use a transactional audit store when the workflow can execute orders. Reserve an approved order atomically before placement so concurrent tasks cannot reuse it. If transport fails after placement may have reached the broker, mark the approval `reconciliation_required`; query broker order state before any retry. Preserve the market-snapshot hash, source evidence, exit plan, correlation ID, and learning checkpoints with the approval.
+
+Record immutable provenance for every recommendation or no-action decision: model and version, prompt hash,
+policy version and hash, market-snapshot hash, source timestamps, score, and rationale. A decision record is
+evidence only and must never create broker or execution authority. Replay a proposed strategy change using only
+observations that were both known and effective at each historical decision time; reject future-dated evidence
+to prevent look-ahead bias. Keep deterministic safety policy, broker review, and explicit Codex approval in
+control even when model output changes.

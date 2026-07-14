@@ -6,11 +6,12 @@ The project helps review a portfolio, research eligible stocks, prepare broker o
 
 See [ROADMAP.md](ROADMAP.md) for completed capabilities, remaining operational proof, and the recommended path to a limited live pilot.
 
-For unattended Slack reply monitoring, create a dedicated Slack app and keep its bot token only in
-`SLACK_BOT_TOKEN` in the local environment. Grant the minimum bot scopes needed by the adapter:
-`channels:history` (or `groups:history` for a private channel) and `chat:write`. Invite the app only to
-the configured `SLACK_CHANNEL_ID`. `SlackWebApiReplyHost` rejects every other channel, reads only the
-linked thread through `conversations.replies`, and exposes no broker or execution operations.
+For unattended Slack reply monitoring, create a dedicated Slack app and keep both OAuth tokens only in
+the local environment: a user token in `SLACK_USER_TOKEN` for `conversations.replies`, and a bot token
+in `SLACK_BOT_TOKEN` for acknowledgements. Grant the user token `channels:history` (or `groups:history`
+for a private channel) and grant the bot token only `chat:write`. Invite the app only to the configured
+`SLACK_CHANNEL_ID`. `SlackWebApiReplyHost` rejects every other channel and exposes no broker or execution
+operations.
 
 ## What This Project Does
 
@@ -142,6 +143,8 @@ flowchart TD
 ## System Components
 
 - `MarketSnapshot` captures a reproducible, hashed set of quotes, volume, liquidity, trend, volatility, event risk, and sourced research.
+- `DecisionRecord` preserves immutable model, prompt, policy, snapshot, score, rationale, and source-time provenance without creating trading authority.
+- `ReplaySnapshot` rejects observations that were unavailable at decision time, providing a look-ahead-bias guard for historical replay.
 - `TradeCandidate` fails closed when data is stale, critical signals are missing, source quality is inadequate, score is below the purchase hurdle, or reward/risk is insufficient.
 - `RiskLimits` enforces position, sector, cash-reserve, daily-capital, pending-approval, spread, and market-impact limits.
 - `CioWorkflow` connects validation, portfolio risk, broker review, approval persistence, Slack delivery, exit plans, audit events, and learning schedules.
@@ -150,7 +153,13 @@ flowchart TD
 - Uncertain broker failures enter `reconciliation_required`; they are not retried blindly.
 - Structured JSON logs include correlation and approval IDs while excluding credential-like fields.
 - Host adapter protocols provide market data, portfolio data, Robinhood, and Slack access without moving connector credentials into this repository.
+- `operations-status` classifies database, reconciliation, drift, stale-run, delivery, health-route, learning, and emergency-stop state.
 - Daily-run keys prevent duplicate morning summaries and approvals for the same account/date.
+- Daily-run checkpoints allow stale interrupted screens to resume without rerunning a completed screen step.
+- A standalone launchd watchdog reads automation completion memory outside the Desktop privacy boundary and sends one deduplicated health alert after a missed run.
+- Broker-state drift checks block recommendations when positions, orders, fills, dividends, or corporate actions are not linked to durable lifecycle state.
+- Shadow-equity records capture at most one paper-only qualifying idea (or no action) per day without creating a broker review or approval.
+- Source-specific freshness manifests name missing or stale inputs, and settled-cash checks reserve unsettled funds plus pending-order commitments.
 - Tax-lot helpers surface long/short-term holding context and wash-sale warnings as estimates.
 
 ## Project Layout
@@ -161,6 +170,7 @@ config/
   approval_routes.example.json  Example configuration
 docs/
   approval_automation.md        Daily CIO and approval workflow
+  operator_runbook.md           Startup, shutdown, emergency, recovery, and restore procedures
   robinhood_trading_tools.md    Robinhood adapter and safety details
   slack_required_tools.md       Slack tool and destination requirements
 ROADMAP.md                      Evidence-based delivery and operating roadmap
@@ -169,6 +179,11 @@ robinhood_tools/
   approvals.py                  Durable approval ledger and order fingerprints
   auth.py                       Connector authorization checks
   database.py                   Transactional SQLite approval and audit database
+  governance.py                 Immutable decision provenance and content-addressed IDs
+  observability.py              Local operational status and severity checks
+  replay.py                     Point-in-time replay evidence validation
+  daily_controls.py             Freshness, broker drift, watchdog, daily changes, and notice rendering
+  health.py                     Fixed-route Slack health notifier for local operations
   adapters.py                   Credential-free host integration boundaries and Slack retries
   cli.py                        Safe maintenance and read-only command-line interface
   journal.py                    Durable JSON-lines workflow journal
@@ -192,6 +207,9 @@ scripts/
   check_required_tools.py       Checks configured Slack capabilities
   dashboard.py                  Generates the read-only local dashboard
   health_check.py               Non-posting route and access health check
+  restore_drill.py              Non-destructive database restore verification
+  install_watchdog.py           Installs the privacy-safe launchd watchdog and Keychain token
+  standalone_watchdog.py        Dependency-free missed-run checker used outside Desktop
   render_approval_message.py    Produces complete approval-notification text
   secret_scan.py                Rejects credential-like content in tracked files
   update_journal.py             Appends schema-validated strategy observations
@@ -260,7 +278,11 @@ Install the project or use the module directly:
 
 ```bash
 python3 -m robinhood_tools.cli health
+python3 -m robinhood_tools.cli operations-status
 python3 -m robinhood_tools.cli daily-review --account-label Agentic
+python3 -m robinhood_tools.cli watchdog --account-label Agentic --database outputs/live/cio.db
+python3 -m robinhood_tools.cli recovery-plan
+python3 -m robinhood_tools.cli shadow-recommendations
 python3 -m robinhood_tools.cli lifecycles
 python3 -m robinhood_tools.cli approvals
 python3 -m robinhood_tools.cli dashboard
@@ -294,10 +316,16 @@ Test recovery quarterly on a clean machine: install from the lockfile, restore t
 database, run `cio migrate`, verify integrity, resume unexpired Slack monitors, render the dashboard, and keep
 live trading disabled until every check passes.
 
-`daily-review` is safe without host adapters: it claims exactly one run per account/date and reports
-`No Action Recommended`. In the connected host, supply the orchestrator with current screened ideas;
-qualified symbols resume or create their single ticker lifecycle. Broker and market credentials never enter
-the CLI or repository.
+Use `python3 scripts/restore_drill.py BACKUP.db` for a non-destructive first-line restore verification. It
+restores to a temporary location and checks integrity, schema, required tables, and source immutability. Follow
+the full startup, incident, encrypted-backup, and credential procedures in `docs/operator_runbook.md`.
+
+`daily-review` is safe without host adapters: it claims exactly one run per account/date, persists restart
+checkpoints, records a shadow no-action observation, and reports `No Action Recommended`. In the connected
+host, supply current freshness evidence, reconciled broker state, and screened ideas. A research-qualified
+candidate may be recorded in the shadow portfolio even when an execution gate blocks a live review; shadow
+activity never creates an approval or broker call. Qualified executable symbols resume or create their single
+ticker lifecycle. Broker and market credentials never enter the CLI or repository.
 
 ### Operating modes
 
@@ -314,9 +342,40 @@ replacement worker can recover after a crash. Broker fills are stored by `(order
 reconciliation idempotent. Partial fills use a weighted average price and accumulated fees. Realized profit uses
 allocated tax-lot cost basis, actual fill proceeds, and fees before Slack reports a final result.
 
+Run `cio recovery-plan` at startup. Recovery order is: resume unexpired Slack windows, reconcile uncertain
+broker approvals, then reclaim a stale daily run and reuse any completed screen checkpoint. Before a new
+recommendation, compare current positions, open orders, fills, dividends, and corporate actions with durable
+ticker lifecycle state. Any unexplained difference blocks the recommendation until reconciled.
+
+### Independent missed-run watchdog
+
+Install the separate weekday 10:05 ET watchdog with:
+
+```bash
+python3 scripts/install_watchdog.py
+```
+
+The installer copies a dependency-free checker to `~/Library/Application Support/OpenAI-AICIO-Watchdog`,
+stores the Slack bot token in the login Keychain, and loads `com.openai.ai-cio-watchdog`. The background job
+reads the automation memory under `$CODEX_HOME`, avoiding macOS background access restrictions on Desktop.
+It posts to `HEALTH_SLACK_CHANNEL_ID` only when the 09:45 review is still incomplete after the configured grace
+period, and deduplicates one alert per automation/date. This detects a missed run; it does not execute a trade.
+
+To verify the real Keychain and Slack route with one explicitly labeled, non-trading test message, run:
+
+```bash
+python3 scripts/install_watchdog.py --test-alert
+```
+
+The test does not create an approval, recommend a security, change missed-run deduplication state, or authorize
+broker activity.
+
 ## CI and Quality
 
-GitHub Actions runs unit/integration tests, Ruff, mypy, coverage, configuration validation, and local secret scanning. Run the dependency-free local subset with:
+GitHub Actions installs the exact top-level development tool versions and audited transitive security floors
+in `requirements-dev.lock`, then runs
+unit/integration tests, Ruff, mypy, coverage, configuration validation, dependency audit, and local secret
+scanning. Dependabot checks Python and GitHub Actions dependencies weekly. Run the dependency-free local subset with:
 
 ```bash
 make ci
@@ -350,11 +409,14 @@ The daily review owns the complete lifecycle for a selected ticker in one task: 
 
 On an open day it performs a read-only portfolio and market review, then sends one readable Slack summary with:
 
+- `ACTION`, `WHAT YOU SHOULD DO`, `WHY`, `NEXT REVIEW`, and live-trading status first
+- `CHANGED SINCE YESTERDAY` and source-specific `DATA AS OF` timestamps
 - Market status and portfolio-health verdict
 - Cash, concentration, and risk summary
 - Recommended actions or `No Action Recommended`
 - Key risks and source links
 - A structured broker-reviewed approval section only when a trade clears every hurdle
+- Any blocked candidates under `WATCHLIST ONLY — NOT A BUY RECOMMENDATION`
 
 The review never places or cancels an order automatically. Slack remains notification-only.
 
@@ -399,6 +461,11 @@ Never substitute simulated values into a real approval request. Label test data 
 ## Learning Journal
 
 The AI CIO journal records the original thesis and market conditions, then evaluates results after 1, 5, and 20 trading days.
+
+The separate shadow-equity table records at most one qualifying paper candidate or explicit no-action observation
+per daily run. It uses the same research, universe, earnings, freshness, and regime requirements, but it cannot
+create broker reviews, Slack approvals, or live orders. Shadow outcomes are measured against both the underlying
+equity decision and the S&P 500 so the one-position live cap does not stop evidence collection.
 
 Learning fields include:
 

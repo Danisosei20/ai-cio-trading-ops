@@ -15,6 +15,7 @@ def render_dashboard(database: CioDatabase, output_path: str | Path) -> Path:
     data = database.dashboard()
     data["recent_approvals"] = database.list_approvals(25)
     data["trade_lifecycles"] = database.list_trade_lifecycles()
+    data["shadow_recommendations_detail"] = database.shadow_recommendations(25)
     payload = html.escape(json.dumps(data, indent=2, sort_keys=True))
     rows = "".join(
         f"<tr><td>{html.escape(str(row['symbol']))}</td><td>{html.escape(str(row['status']))}</td>"
@@ -26,12 +27,19 @@ def render_dashboard(database: CioDatabase, output_path: str | Path) -> Path:
         f"<td>{html.escape(str(row['opened_at']))}</td><td>{html.escape(str(row['realized_profit'] or ''))}</td></tr>"
         for row in data["trade_lifecycles"]
     ) or "<tr><td colspan='4'>No trade lifecycles</td></tr>"
+    shadow_rows = "".join(
+        f"<tr><td>{html.escape(str(row['symbol'] or 'None'))}</td><td>{html.escape(str(row['action']))}</td>"
+        f"<td>{html.escape(str(row['score'] if row['score'] is not None else ''))}</td>"
+        f"<td>{html.escape(str(row['observed_at']))}</td></tr>"
+        for row in data["shadow_recommendations_detail"]
+    ) or "<tr><td colspan='4'>No shadow recommendations</td></tr>"
     document = f"""<!doctype html><html><head><meta charset='utf-8'><title>AI CIO Dashboard</title>
 <style>body{{font:16px system-ui;max-width:1000px;margin:40px auto;padding:0 20px}}pre,table{{background:#f4f4f4;padding:20px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:8px;text-align:left;border-bottom:1px solid #ccc}}</style>
 </head><body><h1>AI CIO Dashboard</h1><p>Read-only local status.</p>
 <h2>Recent approvals</h2><table><thead><tr><th>Symbol</th><th>Status</th><th>Created</th><th>Expires</th></tr></thead><tbody>{rows}</tbody></table>
-<h2>Trade lifecycles</h2><table><thead><tr><th>Task</th><th>Status</th><th>Opened</th><th>Realized profit</th></tr></thead><tbody>{lifecycle_rows}</tbody></table>
-<h2>System data</h2><pre>{payload}</pre></body></html>"""
+    <h2>Trade lifecycles</h2><table><thead><tr><th>Task</th><th>Status</th><th>Opened</th><th>Realized profit</th></tr></thead><tbody>{lifecycle_rows}</tbody></table>
+    <h2>Shadow equity learning</h2><table><thead><tr><th>Symbol</th><th>Action</th><th>Score</th><th>Observed</th></tr></thead><tbody>{shadow_rows}</tbody></table>
+    <h2>System data</h2><pre>{payload}</pre></body></html>"""
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(document, encoding="utf-8")

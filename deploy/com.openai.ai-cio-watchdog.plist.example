@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-watchdog</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string>
+    <string>REPLACE_WITH_APPLICATION_SUPPORT_PATH/standalone_watchdog.py</string>
+    <string>--memory</string><string>REPLACE_WITH_CODEX_HOME/automations/ai-cio-daily-review/memory.md</string>
+    <string>--state-file</string><string>REPLACE_WITH_APPLICATION_SUPPORT_PATH/state.json</string>
+    <string>--health-channel</string><string>REPLACE_WITH_HEALTH_SLACK_CHANNEL_ID</string>
+    <string>--timezone</string><string>America/New_York</string>
+    <string>--scheduled-time</string><string>09:45</string>
+    <string>--grace-minutes</string><string>15</string>
+  </array>
+  <key>StartCalendarInterval</key><array>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>REPLACE_WITH_APPLICATION_SUPPORT_PATH/watchdog.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_APPLICATION_SUPPORT_PATH/watchdog-error.log</string>
+</dict></plist>
