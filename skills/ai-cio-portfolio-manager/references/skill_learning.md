@@ -24,10 +24,12 @@ When updating:
 2. Keep `SKILL.md` concise.
 3. Put detailed policy/workflow changes in `references/`.
 4. Preserve trading safety gates.
-5. Run `quick_validate.py` on the skill folder.
-6. Tell the user what durable lesson was added.
-7. When the skill is paired with a repository, update its README and versioned helper scripts/tests in the same change so operating instructions do not drift.
-8. Update the repository roadmap in the same change. Mark an item complete only when supported by a test, green CI result, audit record, report, or documented connector/paper/live exercise; code existence alone does not prove an external integration works.
+5. When the paired repository is available, synchronize the installed and repository copies in the same task. Use the repository's allowlisted `scripts/sync_ai_cio_skill.py` with `from-installed` or `to-installed`, depending on which copy contains the intentional change.
+6. Run `scripts/sync_ai_cio_skill.py check` and do not finish while the governed files differ.
+7. Run `quick_validate.py` on the skill folder.
+8. Tell the user what durable lesson was added.
+9. Update the repository README and versioned helper scripts/tests in the same change so operating instructions do not drift.
+10. Update the repository roadmap in the same change. Mark an item complete only when supported by a test, green CI result, audit record, report, or documented connector/paper/live exercise; code existence alone does not prove an external integration works.
 
 ## Evidence Standard
 

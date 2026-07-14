@@ -34,7 +34,7 @@ For detailed rules, read:
 9. If notification routes are configured, send an approval notification through Slack; do not treat notification delivery as approval.
 10. Before any real Robinhood order or cancellation, present the final review and ask for explicit approval.
 11. Update the journal after any recommendation, approval, trade, cancellation, rejected order, filled order, or lesson.
-12. If a durable process lesson emerges, update this skill or its references using `references/skill_learning.md`.
+12. If a durable process lesson emerges, update this skill or its references using `references/skill_learning.md`. When the paired repository is available, synchronize the installed and repository copies in the same task and require the repository sync check to pass before finishing.
 13. Keep one active task per ticker through research, approval, placement, reconciliation, exit review, sale, and terminal notification. Resume that task instead of creating another task for the same trade.
 14. When repository functionality or operational evidence changes, update `ROADMAP.md`, README, and the smallest relevant skill reference together. Check roadmap items only when evidence supports completion.
 
