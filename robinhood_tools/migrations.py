@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .database import CioDatabase
+from .database import CioDatabase, DATABASE_SCHEMA_VERSION
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = DATABASE_SCHEMA_VERSION
 
 
 def migrate_database(path: str | Path, *, backup_path: str | Path | None = None) -> dict:

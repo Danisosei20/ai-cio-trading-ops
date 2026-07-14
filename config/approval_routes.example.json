@@ -54,7 +54,7 @@
     "live_dashboard_path": "outputs/live/dashboard.html",
     "structured_logging": true,
     "broker_reconciliation_required_after_uncertain_failure": true,
-    "database_schema_version": 2,
+    "database_schema_version": 3,
     "lifecycle_lease_seconds": 300,
     "backup_before_migration": true,
     "audit_retention_days": 2555,
@@ -67,6 +67,47 @@
     "weekdays_only": true,
     "require_official_market_calendar_open_day": true,
     "skip_message_when_market_closed": true
+  },
+  "watchdog": {
+    "enabled": true,
+    "grace_minutes": 15,
+    "independent_host_required": true,
+    "deduplicate_health_alerts": true
+  },
+  "data_freshness_max_age_minutes": {
+    "broker_account": 5,
+    "positions_orders_fills": 5,
+    "quotes_spreads_volume": 5,
+    "market_regime": 30,
+    "earnings_corporate_events": 1440,
+    "sp500_membership": 1440,
+    "research_news_filings": 1440
+  },
+  "shadow_equity": {
+    "enabled": true,
+    "paper_only": true,
+    "maximum_daily_candidates": 1,
+    "allow_no_action": true,
+    "learning_checkpoints_trading_days": [1, 5, 20]
+  },
+  "broker_state_drift": {
+    "require_reconciliation_before_recommendation": true,
+    "check_positions": true,
+    "check_open_orders": true,
+    "check_fills": true,
+    "check_dividends_and_corporate_actions": true
+  },
+  "cash_accounting": {
+    "use_settled_cash": true,
+    "subtract_unsettled_cash": true,
+    "reserve_pending_order_commitments": true
+  },
+  "daily_message": {
+    "action_first": true,
+    "show_what_to_do": true,
+    "show_changed_since_yesterday": true,
+    "show_data_as_of": true,
+    "label_watchlist_monitoring_only": true
   },
   "slack_reply_monitor": {
     "enabled": true,

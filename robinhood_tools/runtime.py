@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,6 +20,11 @@ class RuntimeSettings:
     database_path: Path
     dashboard_path: Path
     risk_limits: RiskLimits
+    health_channel_id: str = ""
+    timezone: str = "America/New_York"
+    schedule_time_local: str = "09:45"
+    watchdog_grace_minutes: int = 15
+    freshness_max_age_minutes: dict[str, int] = field(default_factory=dict)
 
     def require_live_trading(self) -> None:
         if self.mode != "live_approval" or not self.trading_enabled:
@@ -68,6 +73,14 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
             max_daily_loss=Decimal(str(risk.get("max_daily_loss_usd", "999999999"))),
             max_weekly_loss=Decimal(str(risk.get("max_weekly_loss_usd", "999999999"))),
         ),
+        health_channel_id=config.get("channels", {}).get("health_slack", {}).get("channel_id", ""),
+        timezone=str(config.get("schedule", {}).get("timezone", "America/New_York")),
+        schedule_time_local=str(config.get("schedule", {}).get("time_local", "09:45")),
+        watchdog_grace_minutes=int(config.get("watchdog", {}).get("grace_minutes", 15)),
+        freshness_max_age_minutes={
+            str(key): int(value)
+            for key, value in config.get("data_freshness_max_age_minutes", {}).items()
+        },
     )
 
 

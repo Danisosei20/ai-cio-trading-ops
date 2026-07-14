@@ -39,6 +39,30 @@ class SlackMonitorResult:
     outcomes: tuple[dict, ...]
 
 
+@dataclass(frozen=True)
+class RecoveryPlan:
+    stale_daily_run_keys: tuple[str, ...]
+    open_slack_approval_ids: tuple[str, ...]
+    reconciliation_approval_ids: tuple[str, ...]
+
+    @property
+    def work_required(self) -> bool:
+        return bool(
+            self.stale_daily_run_keys or self.open_slack_approval_ids or self.reconciliation_approval_ids
+        )
+
+
+def build_recovery_plan(database: CioDatabase) -> RecoveryPlan:
+    """Return durable restart work in the required fail-closed order."""
+    return RecoveryPlan(
+        stale_daily_run_keys=tuple(row["run_key"] for row in database.stale_daily_runs()),
+        open_slack_approval_ids=tuple(row["approval_id"] for row in database.open_reply_windows()),
+        reconciliation_approval_ids=tuple(
+            row["approval_id"] for row in database.list_reconciliation_required()
+        ),
+    )
+
+
 def poll_order_once(database: CioDatabase, host: OrderStatusHost, *, account_id: str,
                     order_id: str) -> PollResult:
     order = host.get_order(account_id=account_id, order_id=order_id)

@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .approvals import ApprovalRecord, order_fingerprint
 from .errors import PolicyViolation
 from .models import EquityOrderRequest, OrderReview
+
+
+DATABASE_SCHEMA_VERSION = 3
 
 
 class CioDatabase:
@@ -61,6 +65,11 @@ class CioDatabase:
                     run_key TEXT PRIMARY KEY, status TEXT NOT NULL,
                     started_at TEXT NOT NULL, completed_at TEXT, detail TEXT
                 );
+                CREATE TABLE IF NOT EXISTS daily_run_checkpoints (
+                    run_key TEXT NOT NULL, step TEXT NOT NULL, status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY(run_key, step)
+                );
                 CREATE TABLE IF NOT EXISTS processed_slack_messages (
                     channel_id TEXT NOT NULL, message_ts TEXT NOT NULL,
                     processed_at TEXT NOT NULL, command_kind TEXT NOT NULL,
@@ -111,10 +120,34 @@ class CioDatabase:
                     symbol TEXT PRIMARY KEY, reason TEXT NOT NULL,
                     starts_on TEXT NOT NULL, expires_on TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS shadow_equity_recommendations (
+                    recommendation_id TEXT PRIMARY KEY, run_key TEXT NOT NULL UNIQUE,
+                    symbol TEXT, score INTEGER, action TEXT NOT NULL, market_regime TEXT NOT NULL,
+                    observed_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS daily_review_states (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, account_label TEXT NOT NULL,
+                    observed_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS freshness_manifests (
+                    run_key TEXT PRIMARY KEY, generated_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS broker_state_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at TEXT NOT NULL,
+                    payload TEXT NOT NULL, drift_count INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS broker_events (
+                    event_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, event_type TEXT NOT NULL,
+                    observed_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS health_alerts (
+                    alert_key TEXT PRIMARY KEY, status TEXT NOT NULL, attempted_at TEXT NOT NULL,
+                    completed_at TEXT, error TEXT
+                );
                 """
             )
             if db.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 0:
-                db.execute("INSERT INTO schema_version VALUES (1)")
+                db.execute("INSERT INTO schema_version VALUES (?)", (DATABASE_SCHEMA_VERSION,))
             db.execute(
                 "INSERT OR IGNORE INTO system_controls VALUES('emergency_kill','off',?)",
                 (datetime.now(timezone.utc).isoformat(),),
@@ -134,16 +167,28 @@ class CioDatabase:
             source.backup(backup)
         return target
 
-    def claim_daily_run(self, run_key: str) -> bool:
+    def claim_daily_run(self, run_key: str, *, stale_after: timedelta = timedelta(minutes=30)) -> bool:
+        now = datetime.now(timezone.utc)
         with self.connect() as db:
-            try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status,started_at FROM daily_runs WHERE run_key=?", (run_key,)).fetchone()
+            if row is None:
                 db.execute(
                     "INSERT INTO daily_runs(run_key,status,started_at) VALUES(?,?,?)",
-                    (run_key, "running", datetime.now(timezone.utc).isoformat()),
+                    (run_key, "running", now.isoformat()),
                 )
+                db.execute("COMMIT")
                 return True
-            except sqlite3.IntegrityError:
-                return False
+            started_at = datetime.fromisoformat(row["started_at"])
+            if row["status"] == "running" and now - started_at >= stale_after:
+                db.execute(
+                    "UPDATE daily_runs SET started_at=?,completed_at=NULL,detail=? WHERE run_key=?",
+                    (now.isoformat(), "Recovered stale daily run.", run_key),
+                )
+                db.execute("COMMIT")
+                return True
+            db.execute("ROLLBACK")
+            return False
 
     def complete_daily_run(self, run_key: str, status: str, detail: str = "") -> None:
         with self.connect() as db:
@@ -151,6 +196,37 @@ class CioDatabase:
                 "UPDATE daily_runs SET status=?, completed_at=?, detail=? WHERE run_key=?",
                 (status, datetime.now(timezone.utc).isoformat(), detail, run_key),
             )
+
+    def daily_run(self, run_key: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM daily_runs WHERE run_key=?", (run_key,)).fetchone()
+        return dict(row) if row else None
+
+    def stale_daily_runs(self, *, stale_after: timedelta = timedelta(minutes=30)) -> list[dict]:
+        cutoff = (datetime.now(timezone.utc) - stale_after).isoformat()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM daily_runs WHERE status='running' AND started_at<=? ORDER BY started_at", (cutoff,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_run_checkpoint(self, run_key: str, step: str, status: str, payload: dict) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO daily_run_checkpoints VALUES(?,?,?,?,?)",
+                (run_key, step, status, datetime.now(timezone.utc).isoformat(), self._json(payload)),
+            )
+
+    def run_checkpoint(self, run_key: str, step: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM daily_run_checkpoints WHERE run_key=? AND step=?", (run_key, step)
+            ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
 
     def claim_slack_message(self, channel_id: str, message_ts: str, command_kind: str) -> bool:
         with self.connect() as db:
@@ -249,6 +325,14 @@ class CioDatabase:
             rows = db.execute(
                 "SELECT approval_id,symbol,status,created_at,expires_at,order_id,failure FROM approvals ORDER BY created_at DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_reconciliation_required(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT approval_id,account_id,symbol,order_id,failure,created_at "
+                "FROM approvals WHERE status='reconciliation_required' ORDER BY created_at"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -380,6 +464,50 @@ class CioDatabase:
                 [(recommendation_id, day, due) for day, due in due_dates.items()],
             )
 
+    def record_shadow_recommendation(
+        self, *, recommendation_id: str, run_key: str, symbol: str | None, score: int | None,
+        action: str, market_regime: str, payload: dict,
+    ) -> dict:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO shadow_equity_recommendations VALUES(?,?,?,?,?,?,?,?)",
+                (recommendation_id, run_key, symbol.upper() if symbol else None, score, action,
+                 market_regime, datetime.now(timezone.utc).isoformat(), self._json(payload)),
+            )
+            row = db.execute("SELECT * FROM shadow_equity_recommendations WHERE run_key=?", (run_key,)).fetchone()
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def shadow_recommendations(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM shadow_equity_recommendations ORDER BY observed_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def save_daily_review_state(self, account_label: str, payload: dict) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO daily_review_states(account_label,observed_at,payload) VALUES(?,?,?)",
+                (account_label, datetime.now(timezone.utc).isoformat(), self._json(payload)),
+            )
+
+    def previous_daily_review_state(self, account_label: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT payload FROM daily_review_states WHERE account_label=? ORDER BY observed_at DESC LIMIT 1",
+                (account_label,),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def save_freshness_manifest(self, run_key: str, generated_at: str, payload: dict) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO freshness_manifests VALUES(?,?,?)",
+                (run_key, generated_at, self._json(payload)),
+            )
+
     def begin_trade_lifecycle(self, symbol: str, *, buy_approval_id: str | None = None) -> dict:
         normalized = symbol.upper()
         now = datetime.now(timezone.utc).isoformat()
@@ -474,6 +602,71 @@ class CioDatabase:
             rows = db.execute("SELECT * FROM order_fills WHERE order_id=? ORDER BY filled_at", (order_id,)).fetchall()
         return [dict(row) for row in rows]
 
+    def expected_open_symbols(self) -> set[str]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT symbol FROM trade_lifecycles WHERE status IN ('open','sell_pending')"
+            ).fetchall()
+        return {str(row["symbol"]).upper() for row in rows}
+
+    def known_order_ids(self) -> set[str]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT order_id FROM approvals WHERE order_id IS NOT NULL "
+                "UNION SELECT buy_order_id FROM trade_lifecycles WHERE buy_order_id IS NOT NULL "
+                "UNION SELECT sell_order_id FROM trade_lifecycles WHERE sell_order_id IS NOT NULL"
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def known_fill_ids(self) -> set[str]:
+        with self.connect() as db:
+            rows = db.execute("SELECT fill_id FROM order_fills").fetchall()
+        return {str(row[0]) for row in rows}
+
+    def record_broker_event(
+        self, *, event_id: str, symbol: str, event_type: str, observed_at: str, payload: dict,
+    ) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO broker_events VALUES(?,?,?,?,?)",
+                (event_id, symbol.upper(), event_type, observed_at, self._json(payload)),
+            )
+
+    def known_broker_event_ids(self) -> set[str]:
+        with self.connect() as db:
+            rows = db.execute("SELECT event_id FROM broker_events").fetchall()
+        return {str(row[0]) for row in rows}
+
+    def save_broker_state_snapshot(self, observed_at: str, state, issues) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO broker_state_snapshots(observed_at,payload,drift_count) VALUES(?,?,?)",
+                (observed_at, self._json({"state": state, "issues": issues}), len(issues)),
+            )
+
+    def claim_health_alert(self, alert_key: str) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM health_alerts WHERE alert_key=?", (alert_key,)).fetchone()
+            if row and row["status"] == "sent":
+                db.execute("ROLLBACK")
+                return False
+            db.execute(
+                "INSERT OR REPLACE INTO health_alerts(alert_key,status,attempted_at,completed_at,error) "
+                "VALUES(?, 'pending', ?, NULL, NULL)",
+                (alert_key, now),
+            )
+            db.execute("COMMIT")
+        return True
+
+    def complete_health_alert(self, alert_key: str, *, sent: bool, error: str | None = None) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE health_alerts SET status=?,completed_at=?,error=? WHERE alert_key=?",
+                ("sent" if sent else "failed", datetime.now(timezone.utc).isoformat(), error, alert_key),
+            )
+
     def record_strategy_observation(
         self, *, recommendation_id: str, symbol: str, strategy_version: str,
         market_regime: str, horizon_days: int, expected_return: str | None,
@@ -552,9 +745,13 @@ class CioDatabase:
             leases = db.execute("SELECT count(*) FROM lifecycle_leases WHERE expires_at>?", (datetime.now(timezone.utc).isoformat(),)).fetchone()[0]
             reconciliation = statuses.get("reconciliation_required", 0)
             failed_deliveries = db.execute("SELECT count(*) FROM deliveries WHERE status='failed'").fetchone()[0]
+            shadow_count = db.execute("SELECT count(*) FROM shadow_equity_recommendations").fetchone()[0]
+            drift_count = db.execute("SELECT coalesce(sum(drift_count),0) FROM broker_state_snapshots").fetchone()[0]
             return {"approval_statuses": statuses, "overdue_learning_checkpoints": overdue,
                     "active_leases": leases, "reconciliation_required": reconciliation,
                     "failed_slack_deliveries": failed_deliveries,
+                    "shadow_recommendations": shadow_count,
+                    "broker_drift_findings": drift_count,
                     "portfolio_snapshots": self.dashboard_snapshots(),
                     "emergency_kill": db.execute(
                         "SELECT value FROM system_controls WHERE key='emergency_kill'"
@@ -567,7 +764,9 @@ class CioDatabase:
     def audit_export(self) -> dict:
         tables = ("approvals", "audit_events", "exit_plans", "learning_checkpoints", "deliveries",
                   "daily_runs", "processed_slack_messages", "slack_reply_windows", "trade_lifecycles",
-                  "order_fills", "strategy_observations", "dashboard_snapshots", "symbol_cooldowns")
+                  "order_fills", "strategy_observations", "dashboard_snapshots", "symbol_cooldowns",
+                  "daily_run_checkpoints", "shadow_equity_recommendations", "daily_review_states",
+                  "freshness_manifests", "broker_state_snapshots", "broker_events", "health_alerts")
         with self.connect() as db:
             return {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")] for table in tables}
 
@@ -581,3 +780,12 @@ class CioDatabase:
         if row["status"] in {"pending", "approved"} and datetime.now(timezone.utc) >= datetime.fromisoformat(row["expires_at"]):
             db.execute("UPDATE approvals SET status='expired' WHERE approval_id=?", (row["approval_id"],))
             raise PolicyViolation("Approval expired; run a fresh broker review.")
+
+    @staticmethod
+    def _json(value) -> str:
+        def default(item):
+            if is_dataclass(item):
+                return asdict(item)  # type: ignore[arg-type]
+            return str(item)
+
+        return json.dumps(value, default=default, sort_keys=True)
