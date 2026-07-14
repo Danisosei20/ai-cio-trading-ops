@@ -41,6 +41,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
     "runtime": {
         "database_path": None, "dashboard_path": None, "paper_database_path": None,
         "paper_dashboard_path": None, "live_database_path": None, "live_dashboard_path": None,
+        "paper_broker": None, "live_broker": None,
         "structured_logging": None, "broker_reconciliation_required_after_uncertain_failure": None,
         "database_schema_version": None, "lifecycle_lease_seconds": None,
         "backup_before_migration": None, "audit_retention_days": None, "delivery_retention_days": None,

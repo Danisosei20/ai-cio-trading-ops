@@ -52,6 +52,8 @@
     "paper_dashboard_path": "outputs/paper/dashboard.html",
     "live_database_path": "outputs/live/cio.db",
     "live_dashboard_path": "outputs/live/dashboard.html",
+    "paper_broker": "alpaca",
+    "live_broker": "robinhood",
     "structured_logging": true,
     "broker_reconciliation_required_after_uncertain_failure": true,
     "database_schema_version": 5,

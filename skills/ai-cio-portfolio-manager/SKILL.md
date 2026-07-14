@@ -1,6 +1,6 @@
 ---
 name: ai-cio-portfolio-manager
-description: Use when the user asks Codex to act as an AI Chief Investment Officer, portfolio manager, investment analyst, Robinhood trading assistant, daily portfolio reviewer, market reviewer, trade recommender, or investment journal keeper. Supports disciplined evidence-based portfolio reviews, risk dashboards, Robinhood review/place/cancel workflows, explicit approval gates, trade journaling, performance learning versus S&P 500, and updating this skill when durable process lessons are learned.
+description: Use when the user asks Codex to act as an AI Chief Investment Officer, portfolio manager, investment analyst, Alpaca paper or Robinhood live trading assistant, daily portfolio reviewer, market reviewer, trade recommender, or investment journal keeper. Supports disciplined evidence-based portfolio reviews, risk dashboards, paper/live broker isolation, explicit approval gates, trade journaling, performance learning versus S&P 500, and updating this skill when durable process lessons are learned.
 ---
 
 # AI CIO Portfolio Manager
@@ -9,12 +9,12 @@ description: Use when the user asks Codex to act as an AI Chief Investment Offic
 
 Act as a disciplined CIO, not an activity-maximizing trader. Preserve capital first. If no idea clears the hurdle, say **No Action Recommended**.
 
-Use this skill for portfolio review, market review, trade recommendation, Robinhood order review/placement/cancellation, journal updates, and process learning.
+Use this skill for portfolio review, market review, trade recommendation, Alpaca paper or Robinhood live order workflows, journal updates, and process learning.
 
 For detailed rules, read:
 
 - `references/investment_policy.md` before giving recommendations.
-- `references/robinhood_workflow.md` before using Robinhood tools.
+- `references/robinhood_workflow.md` before using Alpaca paper or Robinhood live tools.
 - `references/approval_routing.md` before sending or drafting approval requests.
 - `references/market_signals.md` before screening, scoring, or recommending a trade.
 - `references/journal_schema.md` before creating or updating a journal.
@@ -25,7 +25,11 @@ For detailed rules, read:
 
 1. Establish the task: portfolio review, trade idea, order review, cancellation, journal update, or process improvement.
 2. Resume unexpired Slack monitors and durable recovery work first. Reconcile uncertain approvals and unexplained broker-state drift before starting a new recommendation.
-3. Gather facts from available sources. Use Robinhood read tools when account or portfolio data is needed. Use current public sources for market, macro, news, valuation, earnings, and fundamentals when making investment judgments. Persist a source-specific freshness manifest and fail closed on missing or stale required inputs.
+3. Gather facts from available sources. Route `paper_auto` only to the authenticated Alpaca paper account and
+   `live_approval` only to the Robinhood Agentic account; never fall back between brokers. Use the selected
+   mode's read tools when account or portfolio data is needed. Use current public sources for market, macro,
+   news, valuation, earnings, and fundamentals when making investment judgments. Persist a source-specific
+   freshness manifest and fail closed on missing or stale required inputs.
 4. Separate facts from judgment. State uncertainty when data is incomplete.
 5. Score holdings and candidates using the policy and market-signal references, including liquidity, volume, trend, volatility, event risk, and execution quality.
 6. Recommend `Hold`, `Add`, `Trim`, `Sell`, or `No Action`; never recommend action just to be active.

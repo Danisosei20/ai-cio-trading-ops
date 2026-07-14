@@ -51,3 +51,9 @@ comparable observations plus recorded human review before research acceptance; a
 policy or creates execution authority automatically. Decision evidence must identify its provider, when the
 data became effective, when it was observed, and its content hash. Reject unknown or missing configuration
 fields so a typo cannot silently disable a safety control.
+
+Keep broker environments structurally separate. Route paper mode only to a provider's dedicated paper endpoint
+and live mode only to the approved live broker; reject live-looking paper URLs and never silently fall back
+between brokers. Use distinct credentials and durable stores, verify paper connectivity read-only before a
+session, and retain exact review fingerprints, approvals, reconciliation, and learning records in paper mode so
+testing exercises the real safety workflow without creating live authority.
