@@ -18,6 +18,7 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Prevent approval reuse, changed-order execution, and concurrent duplicate placement.
 - [x] Default live trading to disabled and provide a durable emergency stop.
 - [x] Separate research, paper, and live operating modes and data paths.
+- [x] Route `paper_auto` only to Alpaca paper and `live_approval` only to Robinhood, with no broker fallback.
 - [x] Fail closed after uncertain broker transport failures until reconciliation.
 - [x] Fail closed on unexplained broker position, order, fill, dividend, or corporate-action drift.
 - [x] Protect the cash floor with settled cash after unsettled funds and pending-order commitments.
@@ -51,6 +52,8 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 ## 4. Paper-trading proof
 
 - [x] Provide a connector-free paper broker with simulated reviews and fills.
+- [x] Provide a credential-gated Alpaca paper adapter, read-only health command, and paper/live URL guard.
+- [ ] Verify authenticated Alpaca paper account access with the read-only health command.
 - [x] Test approval expiry, tampering, duplicate execution, fills, loss cooldowns, and safety limits.
 - [x] Record at most one isolated shadow-equity candidate or no-action observation per daily run.
 - [ ] Complete at least 20 paper recommendations across different market regimes.
@@ -137,14 +140,15 @@ Do not start this phase until the paper-readiness report is approved.
 
 ## Recommended next sequence
 
-1. Validate real Slack delivery and automatic reply detection.
-2. Run one current-data, open-market paper lifecycle from research through exit notification.
-3. Run controlled end-to-end health alerts for missed-run, stale-data, reconciliation, and overdue-checkpoint failures.
-4. Test forced restart, timeout, partial-fill, and reconciliation recovery with the real connectors.
-5. Perform and document clean-machine and encrypted-backup restore drills using the verification tool.
-6. Collect 20 paper recommendations and at least 10 closed outcomes, including shadow observations.
-7. Review calibration, benchmark-relative results, exits, and failure patterns.
-8. Approve or reject a tightly limited live pilot based on documented evidence.
+1. Validate authenticated Alpaca paper access and configure its starting balance to match the intended pilot.
+2. Validate real Slack delivery and automatic reply detection.
+3. Run one current-data, open-market Alpaca paper lifecycle from research through exit notification.
+4. Run controlled end-to-end health alerts for missed-run, stale-data, reconciliation, and overdue-checkpoint failures.
+5. Test forced restart, timeout, partial-fill, and reconciliation recovery with the real connectors.
+6. Perform and document clean-machine and encrypted-backup restore drills using the verification tool.
+7. Collect 20 paper recommendations and at least 10 closed outcomes, including shadow observations.
+8. Review calibration, benchmark-relative results, exits, and failure patterns.
+9. Approve or reject a tightly limited live pilot based on documented evidence.
 
 ## Updating this roadmap
 

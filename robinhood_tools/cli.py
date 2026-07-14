@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ def main(argv=None) -> int:
     parser.add_argument("--env-file", default=".env")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("health")
+    sub.add_parser("paper-broker-health")
     sub.add_parser("operations-status")
     sub.add_parser("approvals")
     sub.add_parser("dashboard")
@@ -67,6 +69,26 @@ def main(argv=None) -> int:
         print(json.dumps({
             "database": database.integrity_check(), "mode": settings.mode,
             "live_trading_enabled": settings.trading_enabled,
+        }, indent=2))
+    elif args.command == "paper-broker-health":
+        from .alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
+        from .errors import RobinhoodToolError
+        try:
+            settings.require_paper_trading()
+            values = {**load_env(args.env_file), **os.environ}
+            accounts = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(values)).list_accounts()
+        except RobinhoodToolError as exc:
+            print(json.dumps({
+                "broker": "alpaca", "environment": "paper", "connected": False,
+                "error": str(exc),
+            }, indent=2))
+            return 2
+        print(json.dumps({
+            "broker": "alpaca", "environment": "paper", "connected": True,
+            "accounts": [
+                {"label": account.label, "masked_account_number": account.masked_account_number}
+                for account in accounts
+            ],
         }, indent=2))
     elif args.command == "operations-status":
         from .observability import evaluate_operational_status

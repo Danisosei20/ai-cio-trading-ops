@@ -1,4 +1,16 @@
-# Robinhood Workflow
+# Paper and Live Broker Workflow
+
+## Mode Routing
+
+Use no broker in `research_only`. Use Alpaca's authenticated paper endpoint only in `paper_auto`; reject the
+Alpaca live endpoint and never fall back to Robinhood or a local simulated fill. Use Robinhood only in
+`live_approval`. Keep Alpaca paper and Robinhood live credentials, databases, dashboards, account state,
+orders, fills, and reconciliation records separate.
+
+Before an Alpaca paper session, run the repository's read-only `paper-broker-health` command and show only the
+masked account identifier. Missing/rejected credentials, an inactive/blocked account, or a non-paper endpoint
+blocks paper activity. Paper orders still require an exact review fingerprint and durable approval record so
+the workflow exercises the same tamper, deduplication, and reconciliation controls used for live orders.
 
 ## Account Rules
 
@@ -47,7 +59,10 @@ Update the journal.
 
 Before placement, atomically reserve the approved order in a transactional store. After any uncertain transport failure, do not retry automatically: mark it for reconciliation and read the broker’s order state first. Record queued, confirmed, partially filled, filled, rejected, and cancelled outcomes plus average fill price and execution slippage.
 
-Keep live trading behind a separate default-off kill switch and exercise the complete workflow in paper mode first. Enabling the switch is necessary operational state, never user approval and never a substitute for broker review or the matching Codex approval ID. Make daily scheduled runs idempotent per account and date so duplicate workers cannot send duplicate approvals.
+Keep live Robinhood trading behind a separate default-off kill switch and exercise the complete workflow with
+Alpaca paper first. Enabling the switch is necessary operational state, never user approval and never a
+substitute for broker review or the matching Codex approval ID. Make daily scheduled runs idempotent per
+account and date so duplicate workers cannot send duplicate approvals.
 
 ## Cancellation
 

@@ -1,6 +1,7 @@
-# Robinhood Trading Tools
+# AI CIO Trading Tools
 
-A safety-gated support layer for an AI Chief Investment Officer workflow using Robinhood and Slack.
+A safety-gated AI Chief Investment Officer workflow using Alpaca for paper trading, Robinhood for live trading,
+and Slack for notifications.
 
 The project helps review a portfolio, research eligible stocks, prepare broker order reviews, send approval notifications, and learn from outcomes. It is intentionally designed to stop before real execution unless every approval requirement is satisfied.
 
@@ -17,7 +18,8 @@ operations.
 
 ## What This Project Does
 
-- Reads authorized Robinhood account and portfolio information.
+- Routes paper account/orders exclusively to Alpaca's paper API.
+- Reads authorized Robinhood account and portfolio information only in live mode.
 - Restricts new purchases to verified current S&P 500 constituent companies.
 - Evaluates fundamentals, valuation, news, volume, liquidity, momentum, volatility, and event risk.
 - Produces structured Slack approval notifications.
@@ -27,7 +29,7 @@ operations.
 - Coordinates the complete pre-trade workflow through one service.
 - Keeps research, buy, monitoring, sell, profit reporting, and learning in one symbol-named lifecycle task.
 - Uses SQLite for atomic approvals, audit events, exit plans, learning checkpoints, and reconciliation state.
-- Supports Robinhood equity review, placement, and cancellation through a safety wrapper.
+- Supports safety-wrapped Alpaca paper and Robinhood live equity workflows.
 
 ## What It Does Not Do
 
@@ -36,18 +38,24 @@ operations.
 - It does not buy options, crypto, leveraged ETFs, inverse ETFs, or non-S&P 500 stocks.
 - It does not sell merely because a position has a small profit.
 - It does not bypass broker review or explicit Codex approval.
-- It does not store Robinhood or Slack credentials; live adapters are supplied by the connected host.
+- It does not store broker or Slack credentials in Git.
 
 ## Trading Modes and Kill Switch
 
 The default `.env` is deliberately safe:
 
 ```env
-TRADING_MODE=paper
+TRADING_MODE=research_only
 TRADING_ENABLED=false
 ```
 
-`PaperTradingBackend` simulates broker reviews and fills without contacting Robinhood. The production service must be constructed through `build_live_service`, which attaches the kill switch directly to placement. Changing a file is still not sufficient authorization: live placement continues to require an agentic account, broker review, transactional approval, matching explicit Codex approval, and unchanged parameters.
+`paper_auto` routes only to `https://paper-api.alpaca.markets`; an Alpaca live URL is rejected. It never falls
+back to Robinhood or the local simulator. `live_approval` routes only to Robinhood and attaches the default-off
+live kill switch. Changing a file is still not sufficient authorization: live placement continues to require an
+agentic account, broker review, transactional approval, matching explicit Codex approval, and unchanged
+parameters. `PaperTradingBackend` remains a connector-free test double for unit and failure testing only.
+
+See [docs/alpaca_paper.md](docs/alpaca_paper.md) for paper-account setup and a read-only connection check.
 
 ## Safety Model
 
@@ -66,10 +74,11 @@ Any missing or changed requirement fails closed and requires a new broker review
 
 Slack is a notification channel only. It never authorizes execution.
 
-Paper mode can run the lifecycle end to end without broker access. Live mode never uses a configuration
-variable as execution authority: `TRADING_ENABLED=true` only opens the kill switch. Every buy, trim, or sell
-still needs a fresh broker review and explicit matching Codex approval. Slack `YES` requests sizing, `NO`
-rejects the pending idea, and an amount triggers a fresh review in the same symbol task.
+Paper mode uses separate Alpaca paper credentials, storage, and simulated broker fills. It still preserves the
+review, fingerprint, durable approval, and reconciliation workflow. Live mode never uses a configuration
+variable as execution authority: `TRADING_ENABLED=true` only opens the Robinhood kill switch. Every live buy,
+trim, or sell still needs a fresh broker review and explicit matching Codex approval. Slack `YES` requests
+sizing, `NO` rejects the pending idea, and an amount triggers a fresh review in the same symbol task.
 
 ## One-Task Trade Lifecycle
 
@@ -173,6 +182,7 @@ config/
   approval_routes.json          Active routing and investment-policy settings
   approval_routes.example.json  Example configuration
 docs/
+  alpaca_paper.md               Paper-account setup, isolation, and read-only health check
   approval_automation.md        Daily CIO and approval workflow
   operator_runbook.md           Startup, shutdown, emergency, recovery, and restore procedures
   upstream_review.md            Primary-source comparison with similar open-source systems
@@ -180,6 +190,7 @@ docs/
   slack_required_tools.md       Slack tool and destination requirements
 ROADMAP.md                      Evidence-based delivery and operating roadmap
 robinhood_tools/
+  alpaca_paper.py               Alpaca paper-only HTTP transport and equity backend
   analysis.py                   Market snapshots, source controls, candidates, exit plans
   approvals.py                  Durable approval ledger and order fingerprints
   auth.py                       Connector authorization checks
@@ -235,7 +246,10 @@ cp .env.example .env
 
 Then edit `.env` with the local timezone, Slack channel, account nickname, and non-secret investment context. The active policy configuration is [`config/approval_routes.json`](config/approval_routes.json); it contains `${VARIABLE_NAME}` references instead of personal values.
 
-Never put Robinhood account numbers, passwords, cookies, access tokens, API keys, recovery codes, or other credentials in `.env`. Authentication remains inside the authorized Robinhood and Slack connectors.
+Never put Robinhood account numbers, passwords, cookies, access tokens, recovery codes, or live-broker API keys
+in `.env`. Authentication remains inside the authorized Robinhood and Slack connectors. Alpaca paper keys may
+be injected through the process environment or a local secret manager. The ignored `.env` is supported for
+paper-only keys when restricted to the local user with `chmod 600 .env`; never commit, paste, or share it.
 
 Important settings include:
 
@@ -262,7 +276,7 @@ The `.gitignore` also excludes approval ledgers, delivery logs, runtime outputs,
 
 ## Running the Tests
 
-The test suite uses the Python standard library and does not contact Robinhood or place orders.
+The test suite uses the Python standard library and does not contact Alpaca or Robinhood or place orders.
 
 ```bash
 make test
@@ -284,6 +298,7 @@ Install the project or use the module directly:
 
 ```bash
 python3 -m robinhood_tools.cli health
+python3 -m robinhood_tools.cli paper-broker-health
 python3 -m robinhood_tools.cli operations-status
 python3 -m robinhood_tools.cli daily-review --account-label Agentic
 python3 -m robinhood_tools.cli watchdog --account-label Agentic --database outputs/live/cio.db
@@ -336,15 +351,15 @@ ticker lifecycle. Broker and market credentials never enter the CLI or repositor
 
 ### Operating modes
 
-- `research_only`: screen, research, journal, and notify; never execute.
-- `paper_auto`: automatic simulated reviews/fills for end-to-end validation.
-- `live_approval`: live reviews and placements, with the kill switch plus matching per-order Codex approval.
+- `research_only`: screen, research, journal, and notify; never create a broker service.
+- `paper_auto`: Alpaca paper account, reviews, and simulated fills; never Robinhood or Alpaca live.
+- `live_approval`: Robinhood live reviews and placements, with the kill switch plus matching Codex approval.
 
 Legacy `paper` and `live` values normalize to `paper_auto` and `live_approval`.
 
 Configuration is strict in runtime startup. Unknown, misspelled, missing, or stale keys fail closed, and the
 configured database schema version must match the code. This prevents a typo from silently disabling a safety
-setting.
+setting. Broker routing is also fixed: `paper_broker=alpaca` and `live_broker=robinhood`.
 
 ### Restart and fill safety
 
@@ -394,7 +409,13 @@ make ci
 
 ## Health Check
 
-After the host independently verifies Robinhood read access, run:
+For Alpaca paper mode, first run the read-only broker check:
+
+```bash
+python3 -m robinhood_tools.cli paper-broker-health
+```
+
+For Robinhood live mode, after the host independently verifies Robinhood read access, run:
 
 ```bash
 make health
@@ -448,7 +469,8 @@ Processed messages are deduplicated in SQLite by channel and Slack timestamp. If
 
 The event-scoped monitor remains in the same active Codex task for the 10-minute window. It does not create additional scheduled Codex tasks.
 
-After an explicitly approved Codex placement, Slack may report `Trade successful` only when Robinhood returns a confirmed successful order result. A queued order must be described as queued, not successful or filled.
+After a matching Codex-authorized placement, Slack may report `Trade successful` only when the selected broker
+returns a filled result. A queued or confirmed order must be described as submitted, not successful or filled.
 
 For the lower-level tool check:
 

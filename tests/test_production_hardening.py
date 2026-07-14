@@ -37,7 +37,9 @@ class Calendar:
 
 
 class ProductionHardeningTests(unittest.TestCase):
-    def build_test_settings(self, directory, config_path="config/approval_routes.example.json"):
+    def build_test_settings(
+        self, directory, config_path="config/approval_routes.example.json", mode="paper_auto",
+    ):
         env = Path(directory) / ".env.test"
         env.write_text(
             "TIMEZONE=America/New_York\n"
@@ -48,7 +50,7 @@ class ProductionHardeningTests(unittest.TestCase):
             "INVESTMENT_OBJECTIVE=Testing\n"
             "RISK_TOLERANCE=moderate\n"
             "TAX_CONTEXT=test\n"
-            "TRADING_MODE=paper_auto\n"
+            f"TRADING_MODE={mode}\n"
             "TRADING_ENABLED=false\n",
             encoding="utf-8",
         )
@@ -63,6 +65,15 @@ class ProductionHardeningTests(unittest.TestCase):
             with self.assertRaisesRegex(PolicyViolation, "Configured database schema"):
                 self.build_test_settings(directory, config_path)
 
+    def test_broker_mode_routing_cannot_be_swapped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = json.loads(Path("config/approval_routes.example.json").read_text(encoding="utf-8"))
+            config["runtime"]["paper_broker"] = "robinhood"
+            config_path = Path(directory) / "unsafe-routing.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(PolicyViolation, "paper_broker=alpaca"):
+                self.build_test_settings(directory, config_path)
+
     def test_live_kill_switch_defaults_off(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = self.build_test_settings(directory)
@@ -73,7 +84,7 @@ class ProductionHardeningTests(unittest.TestCase):
 
     def test_production_service_factory_enforces_kill_switch(self):
         with tempfile.TemporaryDirectory() as directory:
-            settings = self.build_test_settings(directory)
+            settings = self.build_test_settings(directory, mode="live_approval")
             backend = PaperTradingBackend([Account("paper", "Paper", True)], {"AAPL": Decimal("200")})
             universe = Sp500Snapshot(frozenset({"AAPL"}), datetime.now(timezone.utc).isoformat(), "https://spglobal.com/sp500")
             service = build_live_service(backend, settings=settings, sp500_snapshot=universe)

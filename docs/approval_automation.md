@@ -9,7 +9,7 @@ task, and a monthly reporting automation may aggregate completed lifecycle and l
 
 The daily CIO automation may:
 
-- Read authorized Robinhood portfolio/account data.
+- Read the authorized Alpaca paper account in paper mode or Robinhood Agentic account in live mode.
 - Review market and portfolio conditions.
 - Produce a portfolio health dashboard.
 - Identify `No Action Recommended`, or prepare a trade thesis.
@@ -76,7 +76,8 @@ Every approval request should include:
 - Clear Codex approval instruction
 
 Every daily notice, including no-action notices, starts with `ACTION`, `WHAT YOU SHOULD DO`, `WHY`,
-`NEXT REVIEW`, and `LIVE TRADING`. Follow those fields with `CHANGED SINCE YESTERDAY` and source-specific
+`NEXT REVIEW`, and `BROKER ENVIRONMENT` (`ALPACA PAPER`, `ROBINHOOD LIVE`, or `RESEARCH ONLY`). Follow those
+fields with `CHANGED SINCE YESTERDAY` and source-specific
 `DATA AS OF` timestamps. Candidates blocked from execution must appear only under
 `WATCHLIST ONLY — NOT A BUY RECOMMENDATION`.
 
@@ -95,7 +96,7 @@ Phone routing is disabled. Slack mobile push notifications are the phone notific
 Use this as the Codex automation prompt:
 
 ```text
-Use $ai-cio-portfolio-manager to run the daily equity CIO portfolio review; options remain prohibited. Resume unexpired Slack monitors and the durable recovery plan first. Reconcile positions, open orders, fills, dividends, corporate actions, and uncertain approvals before recommendations. Require a source-specific freshness manifest with timestamps for broker state, quotes, volume/spreads, regime inputs, earnings/events, S&P 500 membership, and research. Read the full authorized Robinhood portfolio, including cost basis, settled and unsettled cash, pending-order commitments, and unrealized gains. Purchase candidates must be verified current S&P 500 constituents using membership evidence no more than 24 hours old. Obtain a current broker quote and research current news, current company or SEC material, and at least one additional reliable source. Evaluate current and average volume, relative volume, dollar liquidity, bid/ask spread, order-size impact, trend, relative strength, volatility, drawdown, upcoming earnings/events, invalidation level, target/review condition, and expected execution quality. Update the dashboard and journal, and recommend No Action unless an idea clears the policy hurdle. Separately record at most one paper-only shadow candidate that clears research rules, or shadow no action; shadow activity never creates an approval or broker call. Lead Slack with ACTION, WHAT YOU SHOULD DO, WHY, NEXT REVIEW, LIVE TRADING, CHANGED SINCE YESTERDAY, and DATA AS OF. Review profitable positions for thesis, valuation, concentration, taxes, and position-specific targets; profit alone is not an automatic sell instruction. If a live trade qualifies, run review-only first and send the configured Slack approval notification to the channel resolved from `SLACK_CHANNEL_ID` in the same task. Slack notification is not execution approval. Only after explicit approval in Codex with the matching approval ID and unchanged reviewed order parameters may a real Robinhood placement or sale be called. At 1, 5, and 20 trading days, update live and shadow outcomes with S&P 500 benchmark return, excess return, thesis accuracy, and execution slippage; only change durable rules after repeated documented evidence.
+Use $ai-cio-portfolio-manager to run the daily equity CIO portfolio review; options remain prohibited. Read TRADING_MODE before broker access. In paper_auto, run paper-broker-health and use only the authenticated Alpaca paper account at https://paper-api.alpaca.markets with the paper database/dashboard; never call Robinhood or Alpaca live. In live_approval, use only the Robinhood Agentic account with the live database/dashboard. In research_only, create no broker service. Never fall back between brokers. Resume unexpired Slack monitors and the durable recovery plan first. Reconcile the selected broker's positions, open orders, fills, dividends, corporate actions, and uncertain approvals before recommendations. Require a source-specific freshness manifest with timestamps for broker state, quotes, volume/spreads, regime inputs, earnings/events, S&P 500 membership, and research. Read the full selected account, including cost basis, settled and unsettled cash, pending-order commitments, and unrealized gains. Purchase candidates must be verified current S&P 500 constituents using membership evidence no more than 24 hours old. Obtain a current broker quote and research current news, current company or SEC material, and at least one additional reliable source. Evaluate current and average volume, relative volume, dollar liquidity, bid/ask spread, order-size impact, trend, relative strength, volatility, drawdown, upcoming earnings/events, invalidation level, target/review condition, and expected execution quality. Update only the selected mode's dashboard and journal, and recommend No Action unless an idea clears the policy hurdle. Separately record at most one shadow candidate that clears research rules, or shadow no action; shadow activity never creates an approval or broker call. Lead Slack with ACTION, WHAT YOU SHOULD DO, WHY, NEXT REVIEW, BROKER ENVIRONMENT, CHANGED SINCE YESTERDAY, and DATA AS OF. Review profitable positions for thesis, valuation, concentration, taxes, and position-specific targets; profit alone is not an automatic sell instruction. A paper order must match its Alpaca paper review, fingerprint, and durable approval. A live order additionally requires the Robinhood live kill switch and explicit matching Codex approval. Slack notification is never execution approval. At 1, 5, and 20 trading days, update selected-mode and shadow outcomes with S&P 500 benchmark return, excess return, thesis accuracy, and execution slippage; only change durable rules after repeated documented evidence.
 ```
 
 For Slack mobile push setup, see `docs/slack_required_tools.md`. Slack is a notification route unless a validated Slack reply-reading approval loop is added.
@@ -104,7 +105,11 @@ Known operational note: Slack send tools may require a task explicitly opened wi
 
 ## Health Check
 
-Run `python3 scripts/health_check.py --available-tools slack._slack_send_message --robinhood-read-ok` after the host has independently verified Robinhood read access. This validates configuration and capabilities without posting a Slack message. Use an explicitly requested test post only for end-to-end delivery verification.
+In `paper_auto`, run `python3 -m robinhood_tools.cli paper-broker-health`; it performs an account read only. In
+`live_approval`, run `python3 scripts/health_check.py --available-tools slack._slack_send_message
+--robinhood-read-ok` after the host has independently verified Robinhood read access. These checks validate the
+selected route without posting a Slack message. Use an explicitly requested test post only for end-to-end
+delivery verification.
 
 Install the independent missed-run watchdog with `python3 scripts/install_watchdog.py`. It stores the Slack bot
 token in the login Keychain, runs from Application Support rather than Desktop, and checks the automation memory

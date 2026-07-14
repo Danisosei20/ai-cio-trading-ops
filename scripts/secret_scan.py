@@ -5,10 +5,14 @@ import re
 from pathlib import Path
 
 PATTERNS = [
-    re.compile(r"(?i)(password|access_token|api_key|cookie)\s*[=:]\s*[^\s$][^\s]*"),
-    re.compile(r"(?i)account_number\s*[=:]\s*['\"]?\d{8,12}"),
+    re.compile(r"(?i)(password|access_token|api_key|cookie)[ \t]*[=:][ \t]*[^\s$][^\s]*"),
+    re.compile(r"(?i)account_number[ \t]*[=:][ \t]*['\"]?\d{8,12}"),
 ]
 SKIP = {".env", ".git", "outputs", "__pycache__", ".venv"}
+
+
+def contains_potential_secret(text: str) -> bool:
+    return any(pattern.search(text) for pattern in PATTERNS)
 
 
 def main() -> int:
@@ -19,10 +23,8 @@ def main() -> int:
         if path.suffix not in {".py", ".md", ".json", ".toml", ".yml", ".yaml", ".example"} and path.name != ".env.example":
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        for pattern in PATTERNS:
-            if pattern.search(text):
-                findings.append(str(path))
-                break
+        if contains_potential_secret(text):
+            findings.append(str(path))
     if findings:
         print("potential secrets found: " + ", ".join(sorted(findings)))
         return 2
