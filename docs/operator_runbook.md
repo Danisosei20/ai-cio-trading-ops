@@ -74,7 +74,7 @@ scripts/encrypted_backup.sh outputs/backups/cio.db outputs/backups/cio.db.enc
 Verify an unencrypted backup or an already decrypted temporary copy without modifying it:
 
 ```bash
-python3 scripts/restore_drill.py outputs/backups/cio.db
+python3 -m scripts.restore_drill outputs/backups/cio.db
 ```
 
 Set `AI_CIO_BACKUP_PASSPHRASE` through a local secret manager or private shell prompt before running the

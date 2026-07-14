@@ -323,7 +323,7 @@ Test recovery quarterly on a clean machine: install from the lockfile, restore t
 database, run `cio migrate`, verify integrity, resume unexpired Slack monitors, render the dashboard, and keep
 live trading disabled until every check passes.
 
-Use `python3 scripts/restore_drill.py BACKUP.db` for a non-destructive first-line restore verification. It
+Use `python3 -m scripts.restore_drill BACKUP.db` for a non-destructive first-line restore verification. It
 restores to a temporary location and checks integrity, schema, required tables, and source immutability. Follow
 the full startup, incident, encrypted-backup, and credential procedures in `docs/operator_runbook.md`.
 
