@@ -13,7 +13,7 @@ from robinhood_tools.database import DATABASE_SCHEMA_VERSION
 
 REQUIRED_TABLES = {
     "approvals", "audit_events", "decision_records", "order_fills", "schema_version",
-    "trade_lifecycles", "system_controls",
+    "trade_lifecycles", "system_controls", "research_experiments", "research_experiment_runs",
 }
 
 

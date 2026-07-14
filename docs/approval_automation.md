@@ -123,7 +123,7 @@ sizing, `NO` rejects, and an exact size ends the monitor with `fresh_review_requ
 affordability checks and a new broker review. Live placement remains blocked until explicit matching approval
 is given in Codex; the monitor cannot create execution authority.
 
-Run `cio migrate --backup outputs/backups/pre-v3.db` before the first production start. Install the example
+Run `cio migrate --backup outputs/backups/pre-v5.db` before the first production start. Install the example
 launchd service from `deploy/com.openai.ai-cio.plist.example` only after replacing its paths and validating the
 connected host. The standalone CLI intentionally has no credentials and therefore returns `No Action` unless
 the host injects live screening callbacks.

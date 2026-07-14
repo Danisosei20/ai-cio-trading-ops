@@ -25,17 +25,24 @@ def _require_sha256(value: str, name: str) -> None:
 
 @dataclass(frozen=True)
 class EvidenceTimestamp:
-    """A named source observation used in an investment decision."""
+    """Point-in-time source evidence used in an investment decision."""
 
     source: str
+    provider: str
     observed_at: datetime
+    effective_at: datetime
+    content_sha256: str
 
     def validate(self, *, decision_at: datetime) -> None:
-        if not self.source.strip():
-            raise PolicyViolation("Evidence source names cannot be blank.")
+        if not self.source.strip() or not self.provider.strip():
+            raise PolicyViolation("Evidence source and provider names cannot be blank.")
         _require_aware(self.observed_at, f"{self.source} observed_at")
+        _require_aware(self.effective_at, f"{self.source} effective_at")
+        _require_sha256(self.content_sha256, f"{self.source} content_sha256")
         if self.observed_at > decision_at:
             raise PolicyViolation(f"{self.source} evidence is dated after the decision.")
+        if self.effective_at > self.observed_at:
+            raise PolicyViolation(f"{self.source} evidence was not yet effective when observed.")
 
 
 @dataclass(frozen=True)
@@ -86,7 +93,13 @@ class DecisionRecord:
         payload = asdict(self)
         payload["created_at"] = self.created_at.isoformat()
         payload["evidence"] = [
-            {"source": item.source, "observed_at": item.observed_at.isoformat()}
+            {
+                "source": item.source,
+                "provider": item.provider,
+                "observed_at": item.observed_at.isoformat(),
+                "effective_at": item.effective_at.isoformat(),
+                "content_sha256": item.content_sha256,
+            }
             for item in sorted(self.evidence, key=lambda item: item.source)
         ]
         return payload

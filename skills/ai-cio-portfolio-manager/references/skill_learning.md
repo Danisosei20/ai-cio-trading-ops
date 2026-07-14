@@ -43,3 +43,11 @@ evidence only and must never create broker or execution authority. Replay a prop
 observations that were both known and effective at each historical decision time; reject future-dated evidence
 to prevent look-ahead bias. Keep deterministic safety policy, broker review, and explicit Codex approval in
 control even when model output changes.
+
+Treat strategy changes as registered research experiments, not prompt edits. Record the hypothesis, baseline,
+strategy and code version, policy/parameter hashes, point-in-time replay digest, expected benefit, rollback
+criteria, dataset/artifact hashes, and cost-aware metrics. Keep runs paper-only and require at least ten
+comparable observations plus recorded human review before research acceptance; acceptance never changes live
+policy or creates execution authority automatically. Decision evidence must identify its provider, when the
+data became effective, when it was observed, and its content hash. Reject unknown or missing configuration
+fields so a typo cannot silently disable a safety control.

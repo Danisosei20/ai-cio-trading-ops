@@ -54,7 +54,7 @@
     "live_dashboard_path": "outputs/live/dashboard.html",
     "structured_logging": true,
     "broker_reconciliation_required_after_uncertain_failure": true,
-    "database_schema_version": 3,
+    "database_schema_version": 5,
     "lifecycle_lease_seconds": 300,
     "backup_before_migration": true,
     "audit_retention_days": 2555,
