@@ -25,6 +25,7 @@
   },
   "risk_limits": {
     "max_order_value_usd": 25,
+    "max_symbol_exposure_usd": 25,
     "minimum_cash_reserve_usd": 50,
     "max_open_positions": 1,
     "max_daily_loss_usd": 5,
@@ -36,6 +37,22 @@
     "max_pending_approvals": 3,
     "max_bid_ask_spread_pct": 0.005,
     "max_order_pct_average_daily_volume": 0.001
+  },
+  "paper_autonomy": {
+    "enabled": true,
+    "human_approval_required": false,
+    "max_order_value_usd": 500,
+    "max_symbol_exposure_usd": 500,
+    "regular_session_only": true,
+    "earliest_entry_time_et": "11:35",
+    "latest_entry_time_et": "15:30",
+    "require_limit_orders": true,
+    "forbid_price_chasing": true,
+    "notify_slack_after_execution": true,
+    "tradingview_confirmation_when_available": true,
+    "panic_entry_minimum_relative_volume": 1.5,
+    "panic_entry_minimum_stabilization_bars": 3,
+    "panic_entry_minimum_reward_risk": 2.5
   },
   "entry_controls": {
     "earnings_blackout_trading_days": 5,

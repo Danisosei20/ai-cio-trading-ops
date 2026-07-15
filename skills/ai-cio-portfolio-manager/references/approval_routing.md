@@ -6,6 +6,9 @@ Use approval routing when the user wants daily CIO reviews or trade approval req
 
 Slack notifications are not trade approval by themselves. Do not place or cancel a real Robinhood order unless the user explicitly approves in Codex after seeing the broker review.
 
+Autonomous Alpaca paper execution is the only exception to the human approval pause. It uses an internal policy
+authorization and sends Slack after the broker action; Slack never triggers or changes the paper action.
+
 ## Supported Route
 
 - Slack: create or send a message when a channel/user ID is known and Slack tools are exposed. Treat Slack as mobile-push notification unless a validated Slack reply-reading approval loop exists.
@@ -55,11 +58,11 @@ Daily automation should:
 3. Run the CIO review.
 4. Update dashboard, journal, daily changes, and the isolated shadow-equity record.
 5. Say `No Action Recommended` if nothing clears the hurdle.
-6. If a trade clears the hurdle, run review-only first.
-7. Send an approval notification to the channel resolved from `SLACK_CHANNEL_ID`; never hard-code a personal channel ID in the skill or repository.
-8. Stop before placement.
-9. Before placement, verify the user approved in Codex with the matching approval ID and reviewed order parameters have not changed.
-10. Place only the exact reviewed order; otherwise restart review.
+6. If a trade clears the hurdle, run review-only first and persist the exact fingerprint.
+7. In autonomous paper mode, create an internal policy authorization, atomically reserve and place the unchanged limit order, reconcile, then send a post-trade summary to `SLACK_CHANNEL_ID`.
+8. In live mode, send an approval notification and stop before placement.
+9. Before live placement, verify the user approved in Codex with the matching approval ID and unchanged parameters.
+10. Never open a Slack reply monitor for an already executed autonomous paper action.
 
 Slack mobile push can notify the user, but do not accept Slack as execution approval unless a specific Slack reply-reading workflow has been implemented and tested.
 

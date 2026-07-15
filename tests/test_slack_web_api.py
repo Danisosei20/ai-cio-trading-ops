@@ -3,10 +3,28 @@ from __future__ import annotations
 import unittest
 
 from robinhood_tools.errors import PolicyViolation
-from robinhood_tools.slack_web_api import SlackWebApiReplyHost
+from robinhood_tools.slack_web_api import SlackWebApiNotifier, SlackWebApiReplyHost
 
 
 class SlackWebApiReplyHostTests(unittest.TestCase):
+    def test_fixed_channel_notifier_posts_paper_summary(self):
+        calls = []
+
+        def transport(method, payload, token):
+            calls.append((method, payload, token))
+            return {"ok": True, "ts": "2.1"}
+
+        notifier = SlackWebApiNotifier(
+            bot_token="xoxb-test", allowed_channel_id="C1", transport=transport,
+        )
+        result = notifier.send_approval(channel_id="C1", message="Paper trade summary")
+        self.assertEqual(result["message_ts"], "2.1")
+        self.assertEqual(calls[0], (
+            "chat.postMessage", {"channel": "C1", "text": "Paper trade summary"}, "xoxb-test",
+        ))
+        with self.assertRaises(PolicyViolation):
+            notifier.send_approval(channel_id="C2", message="wrong channel")
+
     def test_reads_only_replies_from_exact_thread(self):
         calls = []
 

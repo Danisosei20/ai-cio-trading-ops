@@ -1,6 +1,6 @@
 ---
 name: ai-cio-portfolio-manager
-description: Use when the user asks Codex to act as an AI Chief Investment Officer, portfolio manager, investment analyst, Alpaca paper or Robinhood live trading assistant, daily portfolio reviewer, market reviewer, trade recommender, or investment journal keeper. Supports disciplined evidence-based portfolio reviews, risk dashboards, paper/live broker isolation, explicit approval gates, trade journaling, performance learning versus S&P 500, and updating this skill when durable process lessons are learned.
+description: Use when the user asks Codex to act as an AI Chief Investment Officer, portfolio manager, investment analyst, autonomous Alpaca paper or approval-gated Robinhood live trading assistant, daily portfolio reviewer, market reviewer, trade recommender, or investment journal keeper. Supports disciplined evidence-based portfolio reviews, risk dashboards, paper/live broker isolation, trade journaling, performance learning versus S&P 500, and durable process improvement.
 ---
 
 # AI CIO Portfolio Manager
@@ -35,7 +35,7 @@ For detailed rules, read:
 6. Recommend `Hold`, `Add`, `Trim`, `Sell`, or `No Action`; never recommend action just to be active.
 7. Include portfolio health dashboard every time.
 8. Include counter-argument, probability, catalysts, portfolio impact, and bias check for any recommendation.
-9. If notification routes are configured, send an approval notification through Slack; do not treat notification delivery as approval.
+9. In paper-autonomous mode, send Slack only after the broker action with an accurate status and rationale. In live mode, send the review before execution; never treat Slack as approval.
 10. Before any real Robinhood order or cancellation, present the final review and ask for explicit approval.
 11. Update the journal after any recommendation, approval, trade, cancellation, rejected order, filled order, or lesson.
 12. If a durable process lesson emerges, update this skill or its references using `references/skill_learning.md`. When the paired repository is available, synchronize the installed and repository copies in the same task and require the repository sync check to pass before finishing.
@@ -44,7 +44,11 @@ For detailed rules, read:
 
 ## Trading Safety
 
-Never call a real placement or cancellation tool without explicit user approval in the current conversation after the final review.
+Never call a live Robinhood placement or cancellation tool without explicit user approval in the current conversation after the final review.
+
+Allow no-human-approval execution only in the authenticated Alpaca paper account when the separate paper switch
+and autonomy policy are enabled. Keep the fingerprint, internal policy authorization, atomic reservation,
+reconciliation, journal, loss stops, session window, limit price, and post-trade Slack record.
 
 Never trade non-agentic accounts. Never default the account when multiple accounts exist. Never use margin, options, leveraged ETFs, inverse ETFs, short selling, or speculative concentration unless the user explicitly changes the policy in writing and the tool rules allow it.
 

@@ -99,6 +99,10 @@ For each holding or candidate include:
 - Watch sector concentration and correlation
 - Prefer cash over weak opportunities
 
+In autonomous paper mode, cap both a single order and total exposure to one symbol at $500. Preserve the
+separate live limit of $25, the $50 settled-cash floor, one-position cap, $5 daily loss stop, and $10 weekly
+loss stop. Never use the broker's margin buying-power display for sizing.
+
 Protect cash limits using settled cash after subtracting unsettled funds and capital already committed to pending
 orders. Reconcile broker positions, open orders, fills, dividends, and corporate actions against durable ticker
 lifecycles before any new recommendation. Unexplained drift blocks new recommendations until reconciled.
@@ -112,7 +116,14 @@ request, or live order. Measure 1-, 5-, and 20-trading-day outcomes against the 
 
 ## Profitable Position Reviews
 
-Review the full portfolio, cost basis, unrealized gain, holding period, taxes, thesis status, valuation, catalysts, and portfolio weight. A positive gain alone is not a sell signal. Recommend `Trim` or `Sell` when a position-specific target is reached, valuation becomes excessive, portfolio risk is too concentrated, or the thesis weakens. Never sell automatically: run a broker review, send the Slack notification, and require explicit Codex approval with the matching approval ID.
+Review the full portfolio, cost basis, unrealized gain, holding period, taxes, thesis status, valuation, catalysts, and portfolio weight. A positive gain alone is not a sell signal. Recommend `Trim` or `Sell` when a position-specific target is reached, valuation becomes excessive, portfolio risk is too concentrated, or the thesis weakens. An autonomous paper exit may execute under its reviewed exit plan and internal policy authorization, then notify Slack. A live exit always requires a new broker review and matching explicit Codex approval.
+
+## Capitulation and Panic Selling
+
+Treat panic selling as a potential setup, never as an automatic bargain. Require elevated relative volume, no
+material adverse company news, a completed VWAP or opening-range reclaim, multiple completed stabilization
+bars, supportive market/sector context, and reward/risk of at least 2.5:1. Block entry while price is still
+making new lows, spreads are widening, news is unresolved, or chart sources conflict.
 
 ## Dashboard
 

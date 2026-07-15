@@ -69,6 +69,11 @@ def main(argv=None) -> int:
         print(json.dumps({
             "database": database.integrity_check(), "mode": settings.mode,
             "live_trading_enabled": settings.trading_enabled,
+            "paper_trading_enabled": settings.paper_trading_enabled,
+            "paper_autonomy_enabled": settings.paper_autonomy.enabled,
+            "paper_human_approval_required": settings.paper_autonomy.human_approval_required,
+            "maximum_order_value": str(settings.risk_limits.max_order_value),
+            "maximum_symbol_exposure": str(settings.risk_limits.max_symbol_exposure),
         }, indent=2))
     elif args.command == "paper-broker-health":
         from .alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport

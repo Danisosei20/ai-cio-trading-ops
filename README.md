@@ -34,10 +34,11 @@ operations.
 ## What It Does Not Do
 
 - It does not treat a Slack message or Slack reply as trade approval.
-- It does not place or cancel orders automatically.
+- It may place or cancel orders automatically only in the authenticated Alpaca paper account when the separate
+  paper switch and autonomy policy are enabled. Robinhood live remains explicit-approval only.
 - It does not buy options, crypto, leveraged ETFs, inverse ETFs, or non-S&P 500 stocks.
 - It does not sell merely because a position has a small profit.
-- It does not bypass broker review or explicit Codex approval.
+- It does not bypass broker review, the paper internal-policy authorization, or explicit Codex approval for live orders.
 - It does not store broker or Slack credentials in Git.
 
 ## Trading Modes and Kill Switch
@@ -47,13 +48,15 @@ The default `.env` is deliberately safe:
 ```env
 TRADING_MODE=research_only
 TRADING_ENABLED=false
+PAPER_TRADING_ENABLED=false
 ```
 
 `paper_auto` routes only to `https://paper-api.alpaca.markets`; an Alpaca live URL is rejected. It never falls
-back to Robinhood or the local simulator. `live_approval` routes only to Robinhood and attaches the default-off
-live kill switch. Changing a file is still not sufficient authorization: live placement continues to require an
-agentic account, broker review, transactional approval, matching explicit Codex approval, and unchanged
-parameters. `PaperTradingBackend` remains a connector-free test double for unit and failure testing only.
+back to Robinhood or the local simulator. When `PAPER_TRADING_ENABLED=true`, the paper autonomy policy may place
+an unchanged reviewed limit order without a human approval pause, using an internal policy authorization and a
+$500 order/symbol cap. `live_approval` routes only to Robinhood and retains the default-off live kill switch,
+broker review, transactional approval, matching explicit Codex approval, and unchanged parameters.
+`PaperTradingBackend` remains a connector-free test double for unit and failure testing only.
 
 See [docs/alpaca_paper.md](docs/alpaca_paper.md) for paper-account setup and a read-only connection check.
 
@@ -75,7 +78,8 @@ Any missing or changed requirement fails closed and requires a new broker review
 Slack is a notification channel only. It never authorizes execution.
 
 Paper mode uses separate Alpaca paper credentials, storage, and simulated broker fills. It still preserves the
-review, fingerprint, durable approval, and reconciliation workflow. Live mode never uses a configuration
+review, fingerprint, durable internal policy authorization, atomic reservation, and reconciliation workflow.
+Live mode never uses a configuration
 variable as execution authority: `TRADING_ENABLED=true` only opens the Robinhood kill switch. Every live buy,
 trim, or sell still needs a fresh broker review and explicit matching Codex approval. Slack `YES` requests
 sizing, `NO` rejects the pending idea, and an amount triggers a fresh review in the same symbol task.
@@ -318,7 +322,8 @@ There is intentionally no casual `buy` command.
 
 ### Small-account safety profile
 
-The checked-in policy limits new orders to $25, preserves at least $50 cash, permits one open position,
+The checked-in live policy limits new orders and total symbol exposure to $25. Autonomous Alpaca paper mode
+permits up to $500 per order and $500 total exposure to one symbol. Both preserve at least $50 cash, permit one open position,
 stops new entries after $5 daily or $10 weekly realized loss, blocks entries within five days of earnings,
 and applies a five-trading-day cooldown after an invalidated loss. Risk-off markets require a higher candidate
 score, and all critical data inputs must be present and fresh.
@@ -356,6 +361,20 @@ ticker lifecycle. Broker and market credentials never enter the CLI or repositor
 - `live_approval`: Robinhood live reviews and placements, with the kill switch plus matching Codex approval.
 
 Legacy `paper` and `live` values normalize to `paper_auto` and `live_approval`.
+
+Paper autonomous execution also requires `PAPER_TRADING_ENABLED=true`; new installations default it to false.
+It runs only during the configured regular-session window (11:35–15:30 ET), requires a DAY limit order at the
+reviewed intended price, blocks price chasing, and sends Slack after submission. It retains the exact fingerprint,
+internal policy authorization, atomic reservation, reconciliation, lifecycle, and learning checkpoints. A Slack
+failure is recorded but never causes an order retry.
+
+TradingView may be used as an optional chart cross-check when authenticated browser access is available. Primary
+inputs remain Alpaca quotes/bars, current S&P 500 membership, company/SEC material, earnings/event checks, and
+independent news. Community ideas and aggregate technical ratings never create execution authority.
+
+Panic-selling setups are not bought automatically. They require elevated relative volume, no material adverse
+news, a completed VWAP or opening-range reclaim, multiple stabilization bars, supportive market/sector context,
+and at least 2.5:1 reward/risk. Continued new lows, widening spreads, or conflicting charts block entry.
 
 Configuration is strict in runtime startup. Unknown, misspelled, missing, or stale keys fail closed, and the
 configured database schema version must match the code. This prevents a typo from silently disabling a safety
@@ -441,9 +460,18 @@ The output defaults to `outputs/dashboard.html` and summarizes approval states a
 
 ## Automated Reviews
 
-The operating setup includes a daily AI-CIO review and a monthly performance report. These are Codex automations, not credential-bearing processes in this repository; recreate or inspect them in Codex when installing on another machine. A review can also be run manually in the current Codex task. Daily runs must check an official current U.S. exchange calendar and skip exchange holidays or special closures without posting to Slack.
+The operating setup includes a 09:45 ET read-only daily review, a separate 11:35 ET autonomous Alpaca paper
+session, and a monthly performance report. These are Codex automations, not credential-bearing processes in this
+repository; recreate or inspect them in Codex when installing on another machine. A review can also be run
+manually in the current Codex task. Every run must check the official current U.S. exchange calendar and skip
+exchange holidays or special closures.
 
-The daily review owns the complete lifecycle for a selected ticker in one task: research, broker preview, Slack notification and event-scoped reply monitoring, matching Codex approval, placement, reconciliation, exit review, and final profit/loss notification. It must not create another task for the same trade. The monthly report summarizes realized and unrealized performance, benchmark-relative outcomes, execution quality, risk-limit events, and overdue learning checkpoints. Neither automation may weaken the live approval gate.
+The 09:45 review owns reconciliation, portfolio health, research, and the watchlist, but cannot place or cancel
+an order. The 11:35 paper session may start or resume one ticker lifecycle and autonomously place only an
+unchanged, policy-qualified Alpaca paper limit order. A live Robinhood lifecycle remains a manually active
+Codex task and still requires broker review plus matching explicit Codex approval. The monthly report summarizes
+realized and unrealized performance, benchmark-relative outcomes, execution quality, risk-limit events, and
+overdue learning checkpoints. No automation may weaken the live approval gate.
 
 On an open day it performs a read-only portfolio and market review, then sends one readable Slack summary with:
 
@@ -453,10 +481,11 @@ On an open day it performs a read-only portfolio and market review, then sends o
 - Cash, concentration, and risk summary
 - Recommended actions or `No Action Recommended`
 - Key risks and source links
-- A structured broker-reviewed approval section only when a trade clears every hurdle
+- A structured broker-reviewed approval section only for a live trade that clears every hurdle
 - Any blocked candidates under `WATCHLIST ONLY — NOT A BUY RECOMMENDATION`
 
-The review never places or cancels an order automatically. Slack remains notification-only.
+The 09:45 review never places or cancels an order. The 11:35 paper session sends Slack only after its broker
+action; Slack remains notification-only and creates no execution authority.
 
 Trade approval messages also show current buying power, proposed cost, estimated buying power remaining, and the exact reviewed dollar/share sizing. If funds are insufficient, Slack receives a `No Approval Created` notice showing the shortfall. The user must return to Codex and specify a smaller exact dollar amount or share quantity for a fresh broker review; changing size in Slack is not accepted as execution approval.
 

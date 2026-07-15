@@ -568,6 +568,18 @@ class CioDatabase:
             raise PolicyViolation("Only a buy-pending lifecycle can become an open position.")
         return self.get_trade_lifecycle(symbol)
 
+    def attach_buy_authorization(self, symbol: str, *, approval_id: str) -> dict:
+        """Attach a reviewed buy to an existing research lifecycle without creating a second ticker task."""
+        with self.connect() as db:
+            changed = db.execute(
+                "UPDATE trade_lifecycles SET status='buy_pending',buy_approval_id=? "
+                "WHERE symbol=? AND status='research'",
+                (approval_id, symbol.upper()),
+            ).rowcount
+        if changed != 1:
+            raise PolicyViolation("Only a research lifecycle can receive a buy authorization.")
+        return self.get_trade_lifecycle(symbol)
+
     def mark_sell_pending(self, symbol: str, *, approval_id: str) -> dict:
         with self.connect() as db:
             changed = db.execute(

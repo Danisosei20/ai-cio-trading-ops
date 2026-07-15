@@ -57,3 +57,9 @@ and live mode only to the approved live broker; reject live-looking paper URLs a
 between brokers. Use distinct credentials and durable stores, verify paper connectivity read-only before a
 session, and retain exact review fingerprints, approvals, reconciliation, and learning records in paper mode so
 testing exercises the real safety workflow without creating live authority.
+
+When a user delegates autonomous paper execution, preserve a separate default-off paper switch and never infer
+live authority. Replace human approval only with a durable internal policy authorization, unchanged fingerprint,
+atomic reservation, regular-session limit order, bounded per-order and per-symbol exposure, reconciliation, and
+post-trade notification. Treat chart-driven capitulation rules as paper experiments until repeated outcomes
+support them; never promise profitability or optimize policy from isolated wins.
