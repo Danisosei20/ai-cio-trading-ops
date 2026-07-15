@@ -1,6 +1,6 @@
 # AI-CIO Trading Operations Roadmap
 
-Last reviewed: 2026-07-13
+Last reviewed: 2026-07-14
 
 This roadmap tracks the path from a safety-gated prototype to a dependable AI-CIO trading operation. A checked item means repository code, tests, configuration, or CI provides evidence of completion. Connector-dependent and market-dependent work remains unchecked until it has been demonstrated end to end.
 
@@ -53,7 +53,7 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 
 - [x] Provide a connector-free paper broker with simulated reviews and fills.
 - [x] Provide a credential-gated Alpaca paper adapter, read-only health command, and paper/live URL guard.
-- [ ] Verify authenticated Alpaca paper account access with the read-only health command.
+- [x] Verify authenticated Alpaca paper account access with the read-only health command.
 - [x] Test approval expiry, tampering, duplicate execution, fills, loss cooldowns, and safety limits.
 - [x] Record at most one isolated shadow-equity candidate or no-action observation per daily run.
 - [ ] Complete at least 20 paper recommendations across different market regimes.
@@ -140,7 +140,7 @@ Do not start this phase until the paper-readiness report is approved.
 
 ## Recommended next sequence
 
-1. Validate authenticated Alpaca paper access and configure its starting balance to match the intended pilot.
+1. Configure the authenticated Alpaca paper account's starting balance to match the intended pilot.
 2. Validate real Slack delivery and automatic reply detection.
 3. Run one current-data, open-market Alpaca paper lifecycle from research through exit notification.
 4. Run controlled end-to-end health alerts for missed-run, stale-data, reconciliation, and overdue-checkpoint failures.

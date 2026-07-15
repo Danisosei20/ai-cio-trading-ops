@@ -415,6 +415,12 @@ For Alpaca paper mode, first run the read-only broker check:
 python3 -m robinhood_tools.cli paper-broker-health
 ```
 
+Authenticated paper-account access was verified with this command on 2026-07-14. That evidence proves only
+the configured environment's read-only account connection; it does not prove order placement or authorize a
+trade. The first smoke test also verified zero broker drift and that live-Alpaca, Robinhood-live, and option
+paths remain blocked in paper mode. Because the market was closed, the order stage correctly stopped before
+candidate review when five-minute quote, spread, and volume freshness could not be satisfied.
+
 For Robinhood live mode, after the host independently verifies Robinhood read access, run:
 
 ```bash

@@ -29,6 +29,12 @@ The command returns only the broker, `paper` environment, connection status, acc
 number. It does not submit or cancel an order. Missing credentials, rejected credentials, account blocks, an
 inactive account, or any non-paper base URL fails closed.
 
+Treat a successful health check as environment-specific read-only evidence. Record its observation time and
+only the masked account identifier in the local audit store; never commit account identifiers or credentials.
+If the official market clock is closed, restrict a smoke test to connectivity, reconciliation, and safety-guard
+checks. Do not create an order review or approval until all required market, membership, earnings, research,
+quote, spread, and volume inputs are fresh under the configured limits.
+
 Alpaca also publishes an official local MCP server. If it is added to Codex, run `uvx alpaca-mcp-server` with
 the same keys supplied by the MCP client's secret environment, `ALPACA_PAPER_TRADE=true`, and only the toolsets
 needed for account, U.S. equity, market-data, news, and corporate-action work. The repository policy still

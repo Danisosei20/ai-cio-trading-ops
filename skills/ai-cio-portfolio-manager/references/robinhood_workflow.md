@@ -11,6 +11,10 @@ Before an Alpaca paper session, run the repository's read-only `paper-broker-hea
 masked account identifier. Missing/rejected credentials, an inactive/blocked account, or a non-paper endpoint
 blocks paper activity. Paper orders still require an exact review fingerprint and durable approval record so
 the workflow exercises the same tamper, deduplication, and reconciliation controls used for live orders.
+Record successful connectivity as environment-specific read-only evidence using only the observation time and
+masked account identifier. When the official market clock is closed, limit the smoke test to connectivity,
+reconciliation, and safety guards; wait for complete fresh market-session inputs before creating an order
+review, approval, or Slack execution notice.
 
 ## Account Rules
 
