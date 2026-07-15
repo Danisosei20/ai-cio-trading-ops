@@ -9,8 +9,9 @@ orders, fills, and reconciliation records separate.
 
 Before an Alpaca paper session, run the repository's read-only `paper-broker-health` command and show only the
 masked account identifier. Missing/rejected credentials, an inactive/blocked account, or a non-paper endpoint
-blocks paper activity. Paper orders still require an exact review fingerprint and durable approval record so
-the workflow exercises the same tamper, deduplication, and reconciliation controls used for live orders.
+blocks paper activity. Autonomous paper orders require an exact review fingerprint and durable internal policy
+authorization so the workflow exercises the same tamper, deduplication, and reconciliation controls without a
+human approval pause. Keep the separate paper execution switch default-off in new installations.
 Record successful connectivity as environment-specific read-only evidence using only the observation time and
 masked account identifier. When the official market clock is closed, limit the smoke test to connectivity,
 reconciliation, and safety guards; wait for complete fresh market-session inputs before creating an order
@@ -40,11 +41,14 @@ Surface:
 - Broker alerts
 - Required market data disclosure verbatim
 
-Then ask for explicit approval before placement.
+In live mode, ask for explicit approval before placement. In autonomous paper mode, continue only through the
+paper executor after every deterministic gate passes.
 
 ## Equity Placement
 
-Call `_place_equity_order` only after explicit approval in the current conversation.
+Call a live `_place_equity_order` only after explicit approval in the current conversation. In autonomous paper
+mode, the internal policy authorization may execute without user approval only when the regular session is
+open, the reviewed limit price is unchanged, and the separate $500 order and symbol-exposure caps pass.
 
 Generate a fresh UUID `ref_id` for the first placement attempt. Reuse the same `ref_id` only for retrying the same logical order after transient transport failure.
 
@@ -61,6 +65,10 @@ After placement, report:
 
 Update the journal.
 
+For autonomous paper actions, send Slack after submission. State paper environment, exact limit price and size,
+broker status, rationale, counterargument, liquidity, chart/news checks, exit plan, order fingerprint, and broker
+order ID. Never say filled or profitable until reconciliation proves it.
+
 Before placement, atomically reserve the approved order in a transactional store. After any uncertain transport failure, do not retry automatically: mark it for reconciliation and read the broker’s order state first. Record queued, confirmed, partially filled, filled, rejected, and cancelled outcomes plus average fill price and execution slippage.
 
 Keep live Robinhood trading behind a separate default-off kill switch and exercise the complete workflow with
@@ -70,7 +78,9 @@ account and date so duplicate workers cannot send duplicate approvals.
 
 ## Cancellation
 
-Before cancellation, resolve the order with `_get_equity_orders` or `_get_option_orders` if needed. Present the order and ask for explicit cancellation approval. Call cancellation only after approval.
+Before cancellation, resolve the order with the broker. Live cancellation requires explicit approval. An
+autonomous paper cancellation may proceed under the paper policy and must send an accurate post-action Slack
+summary.
 
 ## Options
 

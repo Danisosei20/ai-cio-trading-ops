@@ -12,6 +12,59 @@ from .errors import PolicyViolation
 SlackTransport = Callable[[str, dict[str, str], str], dict[str, Any]]
 
 
+class SlackWebApiNotifier:
+    """Fixed-channel Slack writer for post-trade paper summaries; it grants no trading authority."""
+
+    def __init__(
+        self, *, bot_token: str, allowed_channel_id: str, transport: SlackTransport | None = None,
+    ):
+        if not bot_token.strip():
+            raise PolicyViolation("SLACK_BOT_TOKEN is required for paper trade summaries.")
+        if not allowed_channel_id.startswith(("C", "G")):
+            raise PolicyViolation("Paper trade summaries require a fixed C... or G... channel ID.")
+        self._bot_token = bot_token
+        self._allowed_channel_id = allowed_channel_id
+        self._transport = transport or self._request
+
+    @classmethod
+    def from_values(
+        cls, values: dict[str, str], *, transport: SlackTransport | None = None,
+    ) -> SlackWebApiNotifier:
+        return cls(
+            bot_token=values.get("SLACK_BOT_TOKEN", ""),
+            allowed_channel_id=values.get("SLACK_CHANNEL_ID", ""),
+            transport=transport,
+        )
+
+    def send_approval(self, *, channel_id: str, message: str) -> dict:
+        if channel_id != self._allowed_channel_id:
+            raise PolicyViolation("Slack summary channel does not match SLACK_CHANNEL_ID.")
+        try:
+            response = self._transport(
+                "chat.postMessage", {"channel": channel_id, "text": message}, self._bot_token,
+            )
+        except Exception as exc:
+            raise RuntimeError("Slack paper-summary transport failed.") from exc
+        if response.get("ok") is not True:
+            raise RuntimeError(f"Slack paper summary failed ({response.get('error', 'unknown_error')}).")
+        message_ts = str(response.get("ts", ""))
+        return {"message_ts": message_ts, "message_link": response.get("permalink")}
+
+    def _request(self, method: str, payload: dict[str, str], token: str) -> dict[str, Any]:
+        body = parse.urlencode(payload).encode("utf-8")
+        api_request = request.Request(
+            f"https://slack.com/api/{method}",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        with request.urlopen(api_request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+
 class SlackWebApiReplyHost:
     """Minimal exact-thread Slack adapter; it exposes no trading operations."""
 

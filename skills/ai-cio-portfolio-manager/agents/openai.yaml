@@ -1,7 +1,7 @@
 interface:
   display_name: "AI CIO Portfolio Manager"
-  short_description: "Disciplined portfolio reviews and trade journaling"
-  default_prompt: "Use $ai-cio-portfolio-manager to run my daily portfolio review and update the journal."
+  short_description: "Autonomous paper and approval-gated live portfolio operations"
+  default_prompt: "Use $ai-cio-portfolio-manager to run my evidence-based paper or live portfolio workflow and update the journal."
 dependencies:
   tools:
     - type: "mcp"
@@ -11,4 +11,4 @@ dependencies:
       url: "https://agent.robinhood.com/mcp/trading"
     - type: "mcp"
       value: "slack"
-      description: "Slack approval notifications"
+      description: "Slack post-trade paper summaries and live approval notifications"

@@ -35,6 +35,16 @@ Check the next earnings date, investor day, dividend/ex-date, material SEC filin
 
 Use a current broker quote, current company/SEC source, current news, and at least one independent reliable source. Record timestamps and links. Treat social sentiment only as a weak secondary indicator and never as primary evidence.
 
+Use TradingView as an optional visual cross-check when browser access is available. Record its symbol, exchange,
+timeframe, data source, and observation time. Never scrape around authentication, never treat a community idea
+or aggregate technical rating as primary evidence, and never let TradingView replace the broker quote, Alpaca
+bars, filings, earnings checks, or independent news. A conflicting TradingView chart blocks autonomous paper
+entry until reconciled; an unavailable TradingView session is not fabricated.
+
+For a panic-seller setup, require elevated relative volume plus a completed VWAP or opening-range reclaim and
+multiple higher-low or stabilization bars. Reject the setup when price is still discovering new lows, the spread
+is widening, the selloff follows material negative news, or the higher 2.5:1 reward/risk hurdle is not met.
+
 ## Execution Plan
 
 State the intended price, order type, time in force, maximum acceptable spread/slippage, invalidation level, initial target or review condition, and estimated portfolio weight. Never convert a technical stop or profit target into an automatic Robinhood order under this skill; broker review and explicit Codex approval remain mandatory.

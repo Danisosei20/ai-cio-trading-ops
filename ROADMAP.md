@@ -19,6 +19,7 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Default live trading to disabled and provide a durable emergency stop.
 - [x] Separate research, paper, and live operating modes and data paths.
 - [x] Route `paper_auto` only to Alpaca paper and `live_approval` only to Robinhood, with no broker fallback.
+- [x] Isolate autonomous paper execution behind its own default-off switch while retaining live approval gates.
 - [x] Fail closed after uncertain broker transport failures until reconciliation.
 - [x] Fail closed on unexplained broker position, order, fill, dividend, or corporate-action drift.
 - [x] Protect the cash floor with settled cash after unsettled funds and pending-order commitments.
@@ -54,6 +55,7 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Provide a connector-free paper broker with simulated reviews and fills.
 - [x] Provide a credential-gated Alpaca paper adapter, read-only health command, and paper/live URL guard.
 - [x] Verify authenticated Alpaca paper account access with the read-only health command.
+- [x] Implement fingerprinted autonomous paper buys/exits with $500 order and per-symbol caps and post-trade Slack.
 - [x] Test approval expiry, tampering, duplicate execution, fills, loss cooldowns, and safety limits.
 - [x] Record at most one isolated shadow-equity candidate or no-action observation per daily run.
 - [ ] Complete at least 20 paper recommendations across different market regimes.
@@ -73,11 +75,13 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Record strategy experiments and paper runs with replay, code, policy, parameter, dataset, artifact, and metric provenance.
 - [x] Gate research acceptance on at least 10 observations and recorded human review without changing live authority.
 - [x] Persist source-specific freshness manifests that identify stale and missing inputs.
+- [x] Provide read-only Alpaca snapshots, historical bars, and news access with a fixed official data endpoint.
 - [x] Require at least 10 comparable observations before changing durable policy.
 - [ ] Add sector-benchmark returns and factor/correlation exposure to outcome analysis.
 - [ ] Calibrate recommendation probabilities against observed results.
 - [ ] Compare entry and exit decisions with a simple S&P 500 buy-and-hold baseline.
 - [ ] Replay every proposed strategy change on historical stored snapshots before paper adoption.
+- [ ] Validate the panic-seller stabilization rule and optional TradingView cross-check across at least 10 paper observations.
 - [ ] Version each adopted policy change with evidence, expected benefit, and rollback criteria.
 
 ## 6. Exit and profit logic

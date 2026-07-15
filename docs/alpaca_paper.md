@@ -19,6 +19,7 @@ There is no automatic fallback between brokers. The Alpaca adapter accepts only
    `ALPACA_PAPER_TRADE=true`. These names also match Alpaca's official MCP server. Do not paste the keys into
    Codex, Slack, Git, logs, shell history, or support bundles.
 4. Set `TRADING_MODE=paper_auto` and keep `TRADING_ENABLED=false`.
+   Set `PAPER_TRADING_ENABLED=true` only when intentionally enabling autonomous paper execution.
 5. Run the read-only connection check:
 
 ```bash
@@ -50,6 +51,23 @@ extended-hours combinations are rejected locally.
 Paper fills are simulations. They do not model every live effect, including market impact, latency slippage,
 queue position, price improvement, regulatory fees, or dividends. Record actual paper order states and fills,
 then compare them with the decision snapshot at the 1-, 5-, and 20-day checkpoints.
+
+## Autonomous paper policy
+
+Autonomous paper execution removes the human approval pause only for Alpaca paper. It retains a durable internal
+policy authorization, exact fingerprint, atomic execution reservation, idempotent client order ID, and broker
+reconciliation. Entries are regular-session DAY limit orders from 11:35 through 15:30 ET, at the unchanged
+reviewed price, with no more than $500 per order or $500 total exposure to one symbol. The one-position cap,
+$50 cash floor, daily/weekly realized-loss stops, earnings blackout, cooldown, current S&P 500 membership,
+freshness, score, liquidity, news, and source rules remain enforced.
+
+Send Slack after the broker action with the exact status, size, limit price, rationale, liquidity, news/chart
+checks, exit plan, policy authorization, fingerprint, and order ID. Do not open a reply monitor or ask Slack to
+approve an autonomous paper action. Do not report a fill or realized profit until reconciliation proves it.
+
+Use the read-only Alpaca market-data client for snapshots, historical bars, and news. Use TradingView only as an
+optional visual cross-check; record its exchange, timeframe, data source, and observation time, and block entry
+when it conflicts with the primary chart analysis.
 
 Sources: [Alpaca paper trading](https://docs.alpaca.markets/us/docs/paper-trading),
 [authentication and paper endpoint](https://docs.alpaca.markets/us/v1.1/docs/authentication-1), and

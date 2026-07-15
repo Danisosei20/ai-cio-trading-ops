@@ -9,13 +9,15 @@ This runbook is for the equity-only AI CIO service. Options remain prohibited. A
    keep `TRADING_ENABLED=false` unless a previously approved live pilot is active.
 2. In paper mode, run `python3 -m robinhood_tools.cli paper-broker-health` and verify the masked Alpaca paper
    account before continuing. Never substitute Alpaca live credentials or its live endpoint.
-3. Run `python3 -m robinhood_tools.cli operations-status`. Do not continue from `critical`.
-4. Run `python3 -m robinhood_tools.cli recovery-plan`. Resume unexpired exact-thread Slack monitors first,
+3. For autonomous paper execution, require `PAPER_TRADING_ENABLED=true`, regular-session time from 11:35 through
+   15:30 ET, and the checked-in paper policy. Keep `TRADING_ENABLED=false`; that is the Robinhood live switch.
+4. Run `python3 -m robinhood_tools.cli operations-status`. Do not continue from `critical`.
+5. Run `python3 -m robinhood_tools.cli recovery-plan`. Resume unexpired exact-thread Slack monitors first,
    reconcile every uncertain broker approval second, and recover stale daily runs third.
-5. Confirm the separate watchdog is loaded and its error log is empty.
-6. Verify the selected mode's broker read access, the fixed trading Slack route, and the separate health route.
-7. Reconcile positions, open orders, fills, dividends, and corporate actions before new research.
-8. Run the daily review only after every required source has a fresh timestamp and content hash.
+6. Confirm the separate watchdog is loaded and its error log is empty.
+7. Verify the selected mode's broker read access, the fixed trading Slack route, and the separate health route.
+8. Reconcile positions, open orders, fills, dividends, and corporate actions before new research.
+9. Run the daily review only after every required source has a fresh timestamp and content hash.
 
 An operational check is not trading authorization. A live order still needs an unchanged broker review,
 matching order fingerprint, unexpired approval, and explicit matching approval in Codex.

@@ -10,6 +10,7 @@ from typing import Literal
 from .errors import PolicyViolation
 
 Signal = Literal["supportive", "neutral", "conflicting", "unavailable"]
+MarketRegime = Literal["risk_on", "neutral", "risk_off"]
 SourceQuality = Literal["primary", "independent", "weak"]
 
 
@@ -88,11 +89,17 @@ class TradeCandidate:
     target_or_review_condition: str
     expected_portfolio_weight: Decimal
     max_slippage_pct: Decimal
+    market_regime: MarketRegime = "risk_on"
+    data_quality_score: int = 100
 
-    def validate(self, *, max_spread_pct: Decimal, max_position_weight: Decimal) -> None:
+    def validate(
+        self, *, max_spread_pct: Decimal, max_position_weight: Decimal, minimum_score: int = 90,
+    ) -> None:
         self.snapshot.validate()
-        if self.score < 90:
-            raise PolicyViolation("New purchases require an exceptional score of at least 90.")
+        if self.data_quality_score != 100:
+            raise PolicyViolation("New purchases require a complete data-quality score of 100.")
+        if self.score < minimum_score:
+            raise PolicyViolation(f"New purchases require a score of at least {minimum_score} in this regime.")
         if self.reward_risk < Decimal("2"):
             raise PolicyViolation("Expected reward/risk must be at least 2:1.")
         if not self.thesis.strip() or not self.counter_argument.strip():

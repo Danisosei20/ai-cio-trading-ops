@@ -51,6 +51,7 @@ class RiskLimits:
     max_spread_pct: Decimal = Decimal("0.005")
     max_order_pct_avg_volume: Decimal = Decimal("0.001")
     max_order_value: Decimal = Decimal("999999999")
+    max_symbol_exposure: Decimal = Decimal("999999999")
     min_cash_dollars: Decimal = Decimal("0")
     max_open_positions: int = 999999
     max_daily_loss: Decimal = Decimal("999999999")
@@ -69,6 +70,9 @@ class RiskLimits:
             raise PolicyViolation("Portfolio equity must be positive.")
         if order_value > self.max_order_value:
             raise PolicyViolation("Purchase exceeds the maximum order value.")
+        current_symbol_value = portfolio.position_weights.get(symbol, Decimal("0")) * portfolio.equity
+        if current_symbol_value + order_value > self.max_symbol_exposure:
+            raise PolicyViolation("Purchase would exceed the maximum total exposure for this symbol.")
         if portfolio.open_positions >= self.max_open_positions and symbol not in portfolio.position_weights:
             raise PolicyViolation("Maximum number of open positions has been reached.")
         if portfolio.realized_pnl_today <= -self.max_daily_loss:

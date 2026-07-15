@@ -27,7 +27,8 @@ CONFIG_SCHEMA: dict[str, Any] = {
         "automatic_profit_sales": None, "profitable_positions_action": None,
     },
     "risk_limits": {
-        "max_order_value_usd": None, "minimum_cash_reserve_usd": None, "max_open_positions": None,
+        "max_order_value_usd": None, "max_symbol_exposure_usd": None,
+        "minimum_cash_reserve_usd": None, "max_open_positions": None,
         "max_daily_loss_usd": None, "max_weekly_loss_usd": None, "max_position_weight": None,
         "max_sector_weight": None, "minimum_cash_weight": None, "max_daily_approved_capital_usd": None,
         "max_pending_approvals": None, "max_bid_ask_spread_pct": None,
@@ -37,6 +38,15 @@ CONFIG_SCHEMA: dict[str, Any] = {
         "earnings_blackout_trading_days": None, "loss_cooldown_trading_days": None,
         "require_data_quality_score": None, "risk_on_minimum_score": None,
         "neutral_minimum_score": None, "risk_off_minimum_score": None,
+    },
+    "paper_autonomy": {
+        "enabled": None, "human_approval_required": None, "max_order_value_usd": None,
+        "max_symbol_exposure_usd": None, "regular_session_only": None,
+        "earliest_entry_time_et": None, "latest_entry_time_et": None,
+        "require_limit_orders": None, "forbid_price_chasing": None,
+        "notify_slack_after_execution": None, "tradingview_confirmation_when_available": None,
+        "panic_entry_minimum_relative_volume": None, "panic_entry_minimum_stabilization_bars": None,
+        "panic_entry_minimum_reward_risk": None,
     },
     "runtime": {
         "database_path": None, "dashboard_path": None, "paper_database_path": None,

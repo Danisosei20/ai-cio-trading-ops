@@ -174,6 +174,12 @@ class AlpacaPaperBackend:
             raise ConnectorUnavailable("Alpaca paper orders response was invalid.")
         return orders
 
+    def market_clock(self) -> dict[str, Any]:
+        clock = self.transport.request("GET", "/v2/clock")
+        if not isinstance(clock, dict) or "is_open" not in clock:
+            raise ConnectorUnavailable("Alpaca paper market clock response was invalid.")
+        return clock
+
     def cancel_equity_order(self, order_id: str) -> CancelResult:
         existing = self.get_equity_order(order_id)
         self.transport.request("DELETE", f"/v2/orders/{quote(order_id)}")

@@ -26,6 +26,8 @@ class RobinhoodTradingService:
         approval_store: Any | None = None,
         sp500_snapshot: Sp500Snapshot | None = None,
         execution_guard: Callable[[], None] | None = None,
+        broker_environment: str = "live",
+        require_human_confirmation: bool = True,
     ):
         self.backend = backend
         self.authorizer = authorizer or ToolAuthorizer(
@@ -43,6 +45,12 @@ class RobinhoodTradingService:
         self.approval_store = approval_store
         self.sp500_snapshot = sp500_snapshot
         self.execution_guard = execution_guard
+        if broker_environment not in {"paper", "live"}:
+            raise PolicyViolation("Broker environment must be paper or live.")
+        if not require_human_confirmation and broker_environment != "paper":
+            raise PolicyViolation("Human confirmation can be disabled only for paper execution.")
+        self.broker_environment = broker_environment
+        self.require_human_confirmation = require_human_confirmation
 
     def review_equity_order(self, request: EquityOrderRequest) -> OrderReview:
         self.authorizer.require("robinhood.read", "robinhood.trade_review")
@@ -75,7 +83,8 @@ class RobinhoodTradingService:
             raise PolicyViolation("An approval_id is required before placing an equity order.")
         if not self.approval_store:
             raise PolicyViolation("A durable approval store is required for real order placement.")
-        require_confirmation(confirmed, "placing a real equity order")
+        if self.require_human_confirmation:
+            require_confirmation(confirmed, "placing a real equity order")
         reserve = getattr(self.approval_store, "reserve_execution", None)
         if reserve:
             reserve(approval_id, request, review_id)
@@ -100,7 +109,8 @@ class RobinhoodTradingService:
         require_agentic_account(account)
         order = self.backend.get_equity_order(order_id)
         require_cancel_allowed(account, order)
-        require_confirmation(confirmed, "cancelling a real equity order")
+        if self.require_human_confirmation:
+            require_confirmation(confirmed, "cancelling a real equity order")
         return self.backend.cancel_equity_order(order_id)
 
     def review_option_order(self, request: OptionOrderRequest) -> OrderReview:
