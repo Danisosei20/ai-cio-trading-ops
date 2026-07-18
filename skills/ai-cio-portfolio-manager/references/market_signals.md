@@ -35,11 +35,29 @@ Check the next earnings date, investor day, dividend/ex-date, material SEC filin
 
 Use a current broker quote, current company/SEC source, current news, and at least one independent reliable source. Record timestamps and links. Treat social sentiment only as a weak secondary indicator and never as primary evidence.
 
+## Public Disclosure Intelligence
+
+Check official House and Senate periodic transaction reports, SEC Form 4 insider transactions, and selected
+professional-manager Form 13F filings when available. Compare Berkshire Hathaway, Pershing Square Capital
+Management, and Akre Capital Management as distinct long-horizon styles, not as endorsements. Record the filer, symbol, transaction or reporting period,
+direction, disclosed value range, filing date, observation time, source URL, and lag. Congressional reports can
+arrive up to 45 days after a transaction, and 13F holdings can arrive up to 45 days after quarter end, so neither
+reveals a current entry price or proves that a position is still open. Form 4 is more timely, but distinguish
+open-market code `P` purchases from awards, gifts, exercises, planned sales, and other non-discretionary activity.
+
+Classify these observations as `supportive`, `neutral`, `conflicting`, or `unavailable`, with zero score
+contribution. They may corroborate or challenge a fully independent thesis; they cannot create a candidate,
+override news/fundamentals/price/liquidity, weaken any gate, or trigger copy trading. Do not rank politicians by
+party or reputation. For professional managers, identify the filer and SEC record rather than relying on a social
+media personality or a third-party leaderboard.
+
 Use TradingView as an optional visual cross-check when browser access is available. Record its symbol, exchange,
 timeframe, data source, and observation time. Never scrape around authentication, never treat a community idea
 or aggregate technical rating as primary evidence, and never let TradingView replace the broker quote, Alpaca
 bars, filings, earnings checks, or independent news. A conflicting TradingView chart blocks autonomous paper
-entry until reconciled; an unavailable TradingView session is not fabricated.
+entry until reconciled; an unavailable TradingView session is not fabricated. When the browser produces a
+structured chart-analysis summary, record it as secondary confirmation only and keep the underlying chart
+evidence auditable.
 
 For a panic-seller setup, require elevated relative volume plus a completed VWAP or opening-range reclaim and
 multiple higher-low or stabilization bars. Reject the setup when price is still discovering new lows, the spread

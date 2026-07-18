@@ -10,7 +10,7 @@ from robinhood_tools.analysis import ExitPlan, MarketSnapshot, ResearchSource, T
 from robinhood_tools.database import CioDatabase
 from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.models import Account, EquityOrderRequest, Order, OrderReview
-from robinhood_tools.paper_autonomy import PaperAutoExecutor, PaperEntryContext
+from robinhood_tools.paper_autonomy import PaperAutoExecutor, PaperEntryContext, TradingViewChartAnalysis
 from robinhood_tools.risk import PortfolioState, RiskLimits
 from robinhood_tools.runtime import PaperAutonomySettings, RuntimeSettings
 from robinhood_tools.service import RobinhoodTradingService
@@ -113,7 +113,16 @@ class PaperAutonomyTests(unittest.TestCase):
         )
         self.context = PaperEntryContext(
             datetime.now(timezone.utc).isoformat(), True, "supportive", "Alpaca 5-minute bars",
-            False, tradingview_confirmation="supportive",
+            False, tradingview_analysis=TradingViewChartAnalysis(
+                symbol="AAPL",
+                exchange="NASDAQ",
+                timeframe="5m",
+                observed_at=datetime.now(timezone.utc).isoformat(),
+                source_url="https://www.tradingview.com/chart/test/",
+                signal="supportive",
+                pattern="bull flag",
+                notes="Price held above the opening range.",
+            ),
         )
         self.exit_plan = ExitPlan(
             "AAPL", "Durable cash flow", datetime.now(timezone.utc).isoformat(),
@@ -180,6 +189,24 @@ class PaperAutonomyTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyViolation, "only for paper"):
             RobinhoodTradingService(
                 Backend(), broker_environment="live", require_human_confirmation=False,
+            )
+
+    def test_conflicting_tradingview_analysis_blocks_entry(self):
+        context = PaperEntryContext(
+            datetime.now(timezone.utc).isoformat(), True, "supportive", "Alpaca 5-minute bars",
+            False, tradingview_analysis=TradingViewChartAnalysis(
+                symbol="AAPL",
+                exchange="NASDAQ",
+                timeframe="5m",
+                observed_at=datetime.now(timezone.utc).isoformat(),
+                source_url="https://www.tradingview.com/chart/test/",
+                signal="conflicting",
+            ),
+        )
+        with self.assertRaisesRegex(PolicyViolation, "TradingView conflicts"):
+            self.executor.execute_purchase(
+                request=self.request, candidate=_candidate(), portfolio=self.portfolio,
+                sector="Technology", exit_plan=self.exit_plan, context=context,
             )
 
 

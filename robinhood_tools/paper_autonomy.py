@@ -27,6 +27,31 @@ class PaperJournal(Protocol):
 
 
 @dataclass(frozen=True)
+class TradingViewChartAnalysis:
+    symbol: str
+    exchange: str
+    timeframe: str
+    observed_at: str
+    source_url: str
+    signal: Signal
+    pattern: str = ""
+    notes: str = ""
+
+    def validate(self, expected_symbol: str) -> None:
+        observed = datetime.fromisoformat(self.observed_at.replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            raise PolicyViolation("TradingView analysis timestamp must include a timezone.")
+        if self.symbol.strip().upper() != expected_symbol.strip().upper():
+            raise PolicyViolation("TradingView analysis symbol does not match the candidate symbol.")
+        if not self.exchange.strip():
+            raise PolicyViolation("TradingView analysis requires an exchange label.")
+        if not self.timeframe.strip():
+            raise PolicyViolation("TradingView analysis requires a timeframe label.")
+        if not self.source_url.strip().startswith("https://"):
+            raise PolicyViolation("TradingView analysis requires an HTTPS source URL.")
+
+
+@dataclass(frozen=True)
 class PaperEntryContext:
     observed_at: str
     market_is_open: bool
@@ -34,6 +59,7 @@ class PaperEntryContext:
     chart_source: str
     material_negative_news: bool
     tradingview_confirmation: Signal | None = None
+    tradingview_analysis: TradingViewChartAnalysis | None = None
     panic_selloff: bool = False
     reclaimed_vwap_or_opening_range: bool = False
     stabilization_bars: int = 0
@@ -44,7 +70,14 @@ class PaperEntryContext:
         self.validate_session(policy)
         if self.chart_confirmation != "supportive" or not self.chart_source.strip():
             raise PolicyViolation("A supportive, source-identified chart confirmation is required.")
+        if self.tradingview_analysis is not None:
+            self.tradingview_analysis.validate(candidate.snapshot.symbol)
+            if self.tradingview_confirmation is not None and self.tradingview_confirmation != self.tradingview_analysis.signal:
+                raise PolicyViolation("TradingView confirmation metadata disagrees with the structured analysis.")
+        tv_signal = self.tradingview_analysis.signal if self.tradingview_analysis else self.tradingview_confirmation
         if self.tradingview_confirmation == "conflicting":
+            raise PolicyViolation("TradingView conflicts with the primary chart analysis; do not enter.")
+        if tv_signal == "conflicting":
             raise PolicyViolation("TradingView conflicts with the primary chart analysis; do not enter.")
         if self.material_negative_news:
             raise PolicyViolation("Material negative company news blocks an autonomous paper entry.")
@@ -325,7 +358,7 @@ class PaperAutoExecutor:
         correlation_id: str,
     ) -> str:
         sources = "\n".join(f"- [{item.title}]({item.url})" for item in candidate.snapshot.sources)
-        tradingview = context.tradingview_confirmation or "not available"
+        tradingview = _format_tradingview_analysis(context)
         panic = "confirmed capitulation recovery" if context.panic_selloff else "not a panic-sell setup"
         message = (
             f"**AI CIO — PAPER TRADE SUBMITTED**\n"
@@ -340,7 +373,7 @@ class PaperAutoExecutor:
             f"- Liquidity: **${candidate.snapshot.avg_daily_dollar_volume}** average daily dollar volume; "
             f"spread **{candidate.snapshot.spread_pct:.3%}**\n"
             f"- Chart: **{context.chart_confirmation}** from {context.chart_source}; "
-            f"TradingView cross-check: **{tradingview}**\n"
+            f"{tradingview}\n"
             f"- Panic-seller check: **{panic}**\n"
             f"- Invalidation: **${candidate.invalidation_level}**\n"
             f"- Target/review: {candidate.target_or_review_condition}\n"
@@ -415,3 +448,19 @@ def _add_weekdays(start: date, days: int) -> date:
         if current.weekday() < 5:
             added += 1
     return current
+
+
+def _format_tradingview_analysis(context: PaperEntryContext) -> str:
+    if context.tradingview_analysis is not None:
+        analysis = context.tradingview_analysis
+        bits = [
+            f"TradingView analysis: **{analysis.signal}**",
+            f"({analysis.symbol.upper()} · {analysis.exchange} · {analysis.timeframe})",
+            f"source {analysis.source_url}",
+        ]
+        if analysis.pattern.strip():
+            bits.append(f"pattern {analysis.pattern.strip()}")
+        if analysis.notes.strip():
+            bits.append(f"notes {analysis.notes.strip()}")
+        return " ".join(bits)
+    return f"TradingView cross-check: **{context.tradingview_confirmation or 'not available'}**"
