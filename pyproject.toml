@@ -13,7 +13,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.3", "ruff==0.15.21", "mypy==1.19.1", "coverage==7.10.7", "pip-audit==2.9.0"]
+dev = ["pytest==9.0.3", "ruff==0.15.22", "mypy==1.19.1", "coverage==7.10.7", "pip-audit==2.9.0"]
 
 [project.scripts]
 cio = "robinhood_tools.cli:main"
