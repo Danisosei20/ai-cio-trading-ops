@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Desk console, always on: loopback UI + API. KeepAlive restarts it on
+  crash; it also returns after reboot (RunAtLoad).
+  Install: replace REPLACE_WITH_* placeholders, then
+    cp deploy/com.openai.ai-cio-desk.plist.example ~/Library/LaunchAgents/com.openai.ai-cio-desk.plist
+    launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-desk.plist
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-desk</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_WITH_VENV_BIN/python</string>
+    <string>scripts/desk_server.py</string><string>--port</string><string>8100</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/desk-server.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/desk-server-error.log</string>
+</dict></plist>
