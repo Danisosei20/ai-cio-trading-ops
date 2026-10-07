@@ -5,10 +5,13 @@
 <nav class="top"><span class="brand">AI Trading Desk</span>
 <a data-page="index" href="/">Overview</a><a data-page="desk" href="/desk">Debates</a><a data-page="backtests" href="/backtests">Backtests</a><a data-page="positions" href="/positions">Positions</a><a data-page="logs" href="/logs">Logs</a><a data-page="health" href="/health">Health</a></nav>
 <h1>Desk debates</h1>
-<small>Bull/bear/red arguments with confidence; judge verdict + deterministic risk gate per candidate.</small>
+<small>One candidate at a time: verdict first, then both sides, then the red flag, then the full trail.</small>
 <div class="card"><label>Candidate <select id="cand"></select></label></div>
-<div class="card"><h2 id="chead">…</h2><div id="cbars"></div>
-<h3>Timeline</h3><ol class="timeline" id="ctimeline"></ol>
-<h3>Risk rules</h3><div id="crisk"></div></div>
+<div class="card" id="hero"></div>
+<div class="card"><h2>The two sides</h2><div class="debate-cols" id="cols"></div></div>
+<div class="card" id="redcard" hidden><div class="redflag" id="redbox"></div></div>
+<div class="card"><h2>Signals</h2><div class="chips" id="chips"></div><div id="cbars"></div></div>
+<div class="card"><h2>Trail</h2><ol class="stepper" id="ctimeline"></ol><div id="crisk"></div></div>
 <script src="/static/app.js"></script>
-<script src="/static/desk.js"></script></body></html>
+<script src="/static/desk.js"></script>
+</body></html>
