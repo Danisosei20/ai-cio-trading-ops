@@ -165,9 +165,9 @@ class SimulationBroker:
         qty = request.quantity or Decimal("0")
         if request.order_type == "limit" and request.limit_price is not None:
             touch = mark * (1 + self.slip) if request.side == "buy" else mark * (1 - self.slip)
-            if request.side == "buy" and request.limit_price < touch:
+            if request.side == "buy" and request.limit_price < mark:
                 return self._resting(request, review_id, qty)
-            if request.side == "sell" and request.limit_price > touch:
+            if request.side == "sell" and request.limit_price > mark:
                 return self._resting(request, review_id, qty)
             fill_px = min(request.limit_price, touch) if request.side == "buy" else max(request.limit_price, touch)
         else:
@@ -203,7 +203,7 @@ class SimulationBroker:
             if held is None or held.quantity < leg.quantity:
                 raise PolicyViolation("Options are long-only in simulation; sell only to close.")
             fill_px = quote.bid * (1 - self.slip)
-            if request.limit_price is not None and request.limit_price > fill_px:
+            if request.limit_price is not None and request.limit_price > quote.bid:
                 return self._resting_option(request, review_id, leg)
             self._check_option_fill(quote, fill_px)
             proceeds = Decimal(leg.quantity) * fill_px * CONTRACT_MULTIPLIER
@@ -214,7 +214,7 @@ class SimulationBroker:
                 del self.option_positions[leg.symbol]
             return self._filled_option(request, review_id, leg, fill_px, fee)
         ask_touch = quote.ask * (1 + self.slip)
-        if request.limit_price is not None and request.limit_price < ask_touch:
+        if request.limit_price is not None and request.limit_price < quote.ask:
             return self._resting_option(request, review_id, leg)
         fill_px = min(request.limit_price, ask_touch) if request.limit_price else ask_touch
         self._check_option_fill(quote, fill_px)

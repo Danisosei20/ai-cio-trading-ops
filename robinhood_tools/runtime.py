@@ -263,8 +263,7 @@ def build_paper_service(
         earliest=None, latest=None)
 
 
-def build_paper_service_with_session(
-    *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
+def build_paper_service_with_session(    *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
     transport: AlpacaPaperTransport | None = None,
     earliest_entry_et: str, latest_entry_et: str,
 ):
@@ -310,6 +309,27 @@ def _build_paper_service(
         paper_backend, authorizer=authorizer,
         approval_store=build_database(settings), sp500_snapshot=sp500_snapshot,
         execution_guard=require_open_paper_session, broker_environment="paper",
+        require_human_confirmation=settings.paper_autonomy.human_approval_required,
+    )
+
+
+def build_paper_options_service(
+    *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
+    transport=None,
+):
+    """Paper service wired to the options backend (long-only enforced there)."""
+    from .alpaca_options import AlpacaOptionsBackend
+
+    settings.require_paper_trading()
+    _base = _build_paper_service(
+        settings=settings, sp500_snapshot=sp500_snapshot, env_path=env_path,
+        authorizer=authorizer, transport=transport,
+        earliest=None, latest=None)
+    options_backend = AlpacaOptionsBackend(_base.backend.transport)
+    return RobinhoodTradingService(
+        options_backend, authorizer=authorizer,
+        approval_store=build_database(settings), sp500_snapshot=sp500_snapshot,
+        execution_guard=_base.execution_guard, broker_environment="paper",
         require_human_confirmation=settings.paper_autonomy.human_approval_required,
     )
 

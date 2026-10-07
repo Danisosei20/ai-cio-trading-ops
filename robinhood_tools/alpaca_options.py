@@ -14,7 +14,8 @@ from datetime import date
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from .errors import PolicyViolation
+from .errors import AuthorizationRequired, ConnectorUnavailable, PolicyViolation
+from .models import Account, Order, OrderReview
 from .options import OptionContract, OptionQuote
 
 ALPACA_OPTIONS_BASE_URL = "https://data.alpaca.markets"
@@ -159,10 +160,8 @@ class AlpacaOptionsData:
         try:
             snaps = self.snapshots([c.option_symbol for c in contracts])
         except Exception as exc:
-            from .errors import AuthorizationRequired as _AR
-            from .errors import ConnectorUnavailable as _CU
-
-            if isinstance(exc, (_AR, _CU, PolicyViolation)):
+            if isinstance(exc, (AuthorizationRequired, ConnectorUnavailable,
+                                PolicyViolation)):
                 raise
             raise PolicyViolation(f"Chain quote failed: {type(exc).__name__}.") from exc
         quotes = []
@@ -187,23 +186,20 @@ class AlpacaOptionsBackend:
         self.transport = transport
 
     def list_accounts(self) -> list:
-        from .models import Account as _Account
-
         account = self.transport.request("GET", "/v2/account")
         account_id = str(account.get("id") or account.get("account_number") or "")
         if not account_id:
-            from .errors import ConnectorUnavailable as _CU
+            from .errors import ConnectorUnavailable
 
-            raise _CU("Alpaca paper account response did not include an account ID.")
+            raise ConnectorUnavailable("Alpaca paper account response did not include an account ID.")
         number = str(account.get("account_number") or account_id)
-        return [_Account(account_id, "Alpaca Paper", True, account_type="paper",
+        return [Account(account_id, "Alpaca Paper", True, account_type="paper",
                          masked_account_number=f"----{number[-4:]}")]
 
-    def review_option_order(self, request) -> "object":
+    def review_option_order(self, request) -> OrderReview:
         import uuid as _uuid
 
         from .approvals import option_fingerprint
-        from .models import OrderReview as _Review
         from .policy import validate_paper_option_request
 
         validate_paper_option_request(request)
@@ -211,7 +207,7 @@ class AlpacaOptionsBackend:
         quote = self._quote_for_close(leg.symbol)
         estimated = leg.quantity * (request.limit_price or quote.ask) * 100
         fingerprint = option_fingerprint(request)
-        return _Review(
+        return OrderReview(
             review_id=f"alpaca-paper-option-review-{fingerprint}-{_uuid.uuid4()}",
             account_id=request.account_id,
             estimated_cost=estimated,
@@ -223,16 +219,15 @@ class AlpacaOptionsBackend:
 
     def place_option_order(self, request, review_id: str | None):
         from .approvals import option_fingerprint
-        from .errors import ConnectorUnavailable as _CU
-        from .errors import PolicyViolation as _PV
-        from .models import Order as _Order
+        from .errors import ConnectorUnavailable
+        from .errors import PolicyViolation
         from .policy import validate_paper_option_request
 
         validate_paper_option_request(request)
         fingerprint = option_fingerprint(request)
         expected_prefix = f"alpaca-paper-option-review-{fingerprint}-"
         if not review_id or not review_id.startswith(expected_prefix):
-            raise _PV("A matching fresh Alpaca paper option review is required.")
+            raise PolicyViolation("A matching fresh Alpaca paper option review is required.")
         leg = request.legs[0]
         payload = {"symbol": leg.symbol.upper(), "qty": str(leg.quantity),
                    "side": leg.side, "type": request.order_type,
@@ -243,22 +238,52 @@ class AlpacaOptionsBackend:
         result = self.transport.request("POST", "/v2/orders", payload)
         order_id = str(result.get("id") or result.get("order_id") or "")
         if not order_id:
-            raise _CU("Alpaca paper option order response lacked an order ID.")
-        return _Order(id=order_id, account_id=str(result.get("account_id") or ""),
+            raise ConnectorUnavailable("Alpaca paper option order response lacked an order ID.")
+        return Order(id=order_id, account_id=str(result.get("account_id") or ""),
                       symbol=leg.symbol.upper(), side=leg.side,
                       status="queued", raw=result)
 
     def get_option_order(self, order_id: str):
         from urllib.parse import quote as _q
 
-        from .models import Order as _Order
-
+        
         result = self.transport.request("GET", f"/v2/orders/{_q(order_id)}")
-        return _Order(id=str(result.get("id") or order_id),
+        return Order(id=str(result.get("id") or order_id),
                       account_id=str(result.get("account_id") or ""),
                       symbol=str(result.get("symbol") or ""),
                       side=result.get("side") or "buy",
                       status="queued", raw=result)
+
+    # -- equity surface: explicitly refused (venue separation) --------------
+    def review_equity_order(self, request):
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Equity routes through the equity venue, not the options backend.")
+
+    def place_equity_order(self, request, review_id):
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Equity routes through the equity venue, not the options backend.")
+
+    def get_equity_order(self, order_id: str):
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Equity routes through the equity venue, not the options backend.")
+
+    def cancel_equity_order(self, order_id: str):
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Equity routes through the equity venue, not the options backend.")
+
+    def get_orders(self):
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Equity routes through the equity venue, not the options backend.")
+
+    def get_fills(self, order_id: str):
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Equity routes through the equity venue, not the options backend.")
 
     def _quote_for_close(self, option_symbol: str):
         """Latest ask for cost estimates. Fails closed on any gap."""
@@ -268,9 +293,9 @@ class AlpacaOptionsBackend:
 
         from urllib.error import HTTPError, URLError
 
-        from .errors import AuthorizationRequired as _AR
-        from .errors import ConnectorUnavailable as _CU
-        from .errors import PolicyViolation as _PV
+        from .errors import AuthorizationRequired
+        from .errors import ConnectorUnavailable
+        from .errors import PolicyViolation
 
         url = (f"{ALPACA_OPTIONS_BASE_URL}/v1beta1/options/snapshots?"
                + urlencode({"symbols": option_symbol}))
@@ -283,14 +308,14 @@ class AlpacaOptionsBackend:
                 payload = json.loads(response.read() or b"{}")
         except HTTPError as exc:
             if exc.code in {401, 403}:
-                raise _AR("Alpaca rejected options-data access.") from exc
-            raise _CU(f"Options snapshot returned HTTP {exc.code}.") from exc
+                raise AuthorizationRequired("Alpaca rejected options-data access.") from exc
+            raise ConnectorUnavailable(f"Options snapshot returned HTTP {exc.code}.") from exc
         except (URLError, TimeoutError, OSError) as exc:
-            raise _CU("Options data could not be reached.") from exc
+            raise ConnectorUnavailable("Options data could not be reached.") from exc
         snap = (payload.get("snapshots") or {}).get(option_symbol)
         if not snap:
-            raise _PV(f"No option quote for {option_symbol}.")
+            raise PolicyViolation(f"No option quote for {option_symbol}.")
         try:
             return Decimal(str((snap["latestQuote"])["ap"]))
         except (KeyError, TypeError, ValueError) as exc:
-            raise _PV(f"Option quote for {option_symbol} lacks an ask.") from exc
+            raise PolicyViolation(f"Option quote for {option_symbol} lacks an ask.") from exc
