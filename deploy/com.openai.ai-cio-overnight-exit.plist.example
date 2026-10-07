@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Overnight pilot EXIT: weekdays 09:40 ET (inside 09:35-10:00 strategy window).
+  Sells pilot entries recorded in outputs/paper/overnight.json at the open.
+  Install: replace REPLACE_WITH_* placeholders, then
+    cp deploy/com.openai.ai-cio-overnight-exit.plist.example ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-overnight-exit.plist
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-overnight-exit</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_WITH_TRADINGAGENTS_VENV_BIN/python</string>
+    <string>scripts/overnight_pilot.py</string><string>--exit</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <key>StartCalendarInterval</key><array><dict>
+    <key>Weekday</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>40</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>40</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>40</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>40</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>40</integer>
+  </dict></array>
+  <key>StandardOutPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/overnight-exit.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/overnight-exit-error.log</string>
+</dict></plist>

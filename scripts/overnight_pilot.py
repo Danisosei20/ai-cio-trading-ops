@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -136,7 +137,7 @@ def main(argv=None) -> int:
                     rec["reason"] = f"price {price} exceeds ${args.notional} pilot notional"
                     print(json.dumps(rec))
                     continue
-                candidate_id = f"{ticker}:{date.today().isoformat()}:overnight"
+                candidate_id = f"{ticker}:{date.today().isoformat()}:overnight:{uuid.uuid4().hex[:8]}"
                 db.record_candidate(candidate_id, ticker, "buy",
                                     {"source": "overnight-rule", "trend": args.trend,
                                      "close": str(price)})

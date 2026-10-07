@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Overnight pilot ENTRY: weekdays 15:45 ET (inside 15:30-15:55 strategy window).
+  Buys trend-filtered tickers at $250 notional for the overnight gap.
+  Install: replace REPLACE_WITH_* placeholders, then
+    cp deploy/com.openai.ai-cio-overnight-enter.plist.example ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-overnight-enter.plist
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-overnight-enter</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_WITH_TRADINGAGENTS_VENV_BIN/python</string>
+    <string>scripts/overnight_pilot.py</string><string>--enter</string><string>--tickers</string><string>NVDA</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <key>StartCalendarInterval</key><array><dict>
+    <key>Weekday</key><integer>2</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>3</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>4</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>6</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>45</integer>
+  </dict></array>
+  <key>StandardOutPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/overnight-enter.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/overnight-enter-error.log</string>
+</dict></plist>

@@ -120,17 +120,15 @@ def fetch_sp500() -> Sp500Snapshot:
     )
 
 
-def current_price(symbol: str) -> Decimal:
-    import yfinance as yf  # TradingAgents venv provides this
+def current_quote(symbol: str, data_client=None) -> tuple[Decimal, str, str]:
+    """Authoritative quote: Alpaca snapshot first, yfinance fallback.
 
-    t = yf.Ticker(symbol)
-    hist = t.history(period="1d", interval="1m")
-    if hist is not None and len(hist):
-        return Decimal(str(hist["Close"].iloc[-1]))
-    hist = t.history(period="5d", interval="1d")
-    if hist is None or not len(hist):
-        raise PolicyViolation(f"No market price available for {symbol}.")
-    return Decimal(str(hist["Close"].iloc[-1]))
+    Returns (price, source, as_of). Stale quotes fail closed.
+    """
+    from robinhood_tools.market_prices import get_quote  # noqa: E402
+
+    quote = get_quote(symbol, data_client=data_client, max_age_minutes=5)
+    return quote.price, quote.source, quote.as_of
 
 
 def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
@@ -196,6 +194,12 @@ def main(argv=None) -> int:
     from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
 
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+    try:
+        from robinhood_tools.alpaca_market_data import AlpacaMarketDataHttpClient  # noqa: E402
+
+        data_client = AlpacaMarketDataHttpClient.from_values(env)
+    except Exception:
+        data_client = None
     accounts = backend.list_accounts()
     clock = backend.market_clock()
     print(f"Alpaca paper account {accounts[0].masked_account_number}, market open: {clock.get('is_open')}")
@@ -257,8 +261,10 @@ def main(argv=None) -> int:
                 set_stage(ticker, "skip", rec["reason"])
             else:
                 set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
-                price = current_price(ticker)
+                price, price_source, price_as_of = current_quote(ticker, data_client)
                 rec["price"] = str(price)
+                rec["price_source"] = price_source
+                rec["price_as_of"] = price_as_of
                 cap = min(args.max_notional, settings.risk_limits.max_order_value)
                 if sig in BUY_SIGNALS:
                     earnings = lookup_earnings_date(ticker)
