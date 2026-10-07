@@ -177,30 +177,34 @@ def signal_confidence(decision: str) -> tuple[str, int]:
     return "neutral", 50
 
 
-def desk_input_from_signal(ticker: str, decision: str, provider: str = "") -> DeskInput:
+def desk_input_from_signal(ticker: str, decision: str, provider: str = "",
+                           analyst_reports: dict | None = None) -> DeskInput:
     """Advisory DeskInput from a single-model debate outcome.
 
     The bull opinion carries the decision; the bear/red opinions are
     explicitly synthetic counterweights (single-model limitation, data
     gaps), so the ledger never pretends at independent confirmation.
+    Real analyst report text (when supplied) rides as evidence strings.
     """
+    reports = analyst_reports or {}
+    snippets = tuple(f"{name}: {str(text)[:500]}" for name, text in reports.items() if text)
     direction, conf = signal_confidence(decision)
     counter = max(30, 120 - conf - 10)
     if direction == "bullish":
         side_hint = "buy"
-        market = MarketView("bullish", conf, evidence=(f"tradingagents:{decision}", provider))
+        market = MarketView("bullish", conf, evidence=(f"tradingagents:{decision}", provider, *snippets))
         bull = DebateOpinion("bull", "bullish", conf, thesis=f"Debate concluded {decision}")
         bear = DebateOpinion("bear", "bearish", counter,
                              thesis="Single-model debate; Yahoo sampled, no FRED macro")
     elif direction == "bearish":
         side_hint = "sell"
-        market = MarketView("bearish", conf, evidence=(f"tradingagents:{decision}", provider))
+        market = MarketView("bearish", conf, evidence=(f"tradingagents:{decision}", provider, *snippets))
         bull = DebateOpinion("bull", "bullish", counter,
                              thesis="Single-model debate; upside surprise possible")
         bear = DebateOpinion("bear", "bearish", conf, thesis=f"Debate concluded {decision}")
     else:
         side_hint = "buy"
-        market = MarketView("neutral", 50, evidence=(f"tradingagents:{decision}", provider))
+        market = MarketView("neutral", 50, evidence=(f"tradingagents:{decision}", provider, *snippets))
         bull = DebateOpinion("bull", "bullish", 45, thesis="No actionable edge")
         bear = DebateOpinion("bear", "bearish", 45, thesis="No actionable edge")
     red = DebateOpinion("red", "challenge", 35,

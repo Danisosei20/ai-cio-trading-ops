@@ -30,6 +30,8 @@ def parse_args(argv=None):
     p.add_argument("--ticker", default="NVDA")
     p.add_argument("--direction", default="call", choices=["call", "put"])
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("250"))
+    p.add_argument("--max-positions", type=int, default=1,
+                   help="max open option positions (OCC symbols held)")
     p.add_argument("--max-age-minutes", type=int, default=5,
                    help="quote freshness; raise explicitly for after-hours scouting")
     p.add_argument("--dry-run", action="store_true")
@@ -92,6 +94,21 @@ def main(argv=None) -> int:
         print(json.dumps({"ticker": ticker, "action": "skip",
                           "reason": f"ask {quote.ask} exceeds ${args.premium_cap} cap"}))
         return 0
+    open_option_positions = 0
+    try:
+        from robinhood_tools.alpaca_paper import (  # noqa: E402
+            AlpacaPaperBackend, AlpacaPaperHttpTransport)
+
+        _backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        open_option_positions = sum(
+            1 for p in _backend.list_positions()
+            if len(str(p.get("symbol", ""))) > 10)
+    except Exception:
+        open_option_positions = 0
+    if open_option_positions >= args.max_positions:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "reason": f"{open_option_positions} open option positions (max {args.max_positions})"}))
+        return 0
     rec = {"ticker": ticker, "contract": quote.contract.option_symbol,
            "expiry": quote.contract.expiry, "strike": str(quote.contract.strike),
            "bid": str(quote.bid), "ask": str(quote.ask), "delta": str(quote.delta),
@@ -102,11 +119,25 @@ def main(argv=None) -> int:
         rec["action"] = "dry_run_buy"
         print(json.dumps(rec, indent=2))
         return 0
+    from robinhood_tools.database import CioDatabase  # noqa: E402
+
+    candidate_id = f"{ticker}:{today.isoformat()}:long-{args.direction}"
+    db = CioDatabase(build_settings(args.config, args.env_file).database_path)
+    db.record_candidate(candidate_id, ticker, "buy",
+                        {"source": "options-scout", "contract": quote.contract.option_symbol,
+                         "delta": str(quote.delta), "iv": str(quote.iv)})
+    db.record_opinion(candidate_id, "scout", args.direction, 65,
+                      {"contract": quote.contract.option_symbol,
+                       "bid": str(quote.bid), "ask": str(quote.ask)})
+    db.update_candidate_status(candidate_id, "risk_review")
     result = place_long_option(
         settings=settings, snapshot=snapshot, quote=quote, contracts=contracts,
-        earnings_date=lookup_earnings_date(ticker), premium_cap=args.premium_cap)
+        earnings_date=lookup_earnings_date(ticker), premium_cap=args.premium_cap,
+        database=db)
+    db.update_candidate_status(candidate_id, "approved")
     rec.update({"action": "buy_placed", "order_id": result["order_id"],
-                "status": result["status"], "approval_id": result["approval_id"]})
+                "status": result["status"], "approval_id": result["approval_id"],
+                "candidate_id": candidate_id})
     print(json.dumps(rec, indent=2))
     return 0
 

@@ -148,6 +148,11 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     selected = [a.strip() for a in args.analysts.split(",") if a.strip()]
     ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
     state, decision = ta.propagate(ticker, trade_date)
+    reports = {}
+    if isinstance(state, dict):
+        for key, value in state.items():
+            if key.endswith("_report") and isinstance(value, str) and value.strip():
+                reports[key] = value.strip()[:2000]
     try:
         ta.save_reports(state, ticker)
     except Exception:
@@ -157,6 +162,7 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
         "quick_model": args.quick_model,
         "deep_model": args.deep_model,
         "analysts": selected,
+        "analyst_reports": reports,
     }
 
 
@@ -238,7 +244,8 @@ def main(argv=None) -> int:
                     candidate_id=f"{ticker}:{trade_date}:signal:{_uuid.uuid4().hex[:8]}",
                     desk_input=desk_input_from_signal(
                         ticker, decision,
-                        f"{args.provider}/{args.quick_model}"))
+                        f"{args.provider}/{args.quick_model}",
+                        analyst_reports=meta.get("analyst_reports")))
                 rec["desk_verdict"] = advisory["judgment"].verdict
                 rec["desk_outcome"] = advisory["outcome"]
                 log_line(f"[{ticker}] desk: {advisory['judgment'].verdict} "

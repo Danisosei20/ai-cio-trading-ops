@@ -182,6 +182,15 @@ class DeskPipelineTest(unittest.TestCase):
         self.assertEqual(buy_in.side_hint, "buy")
         self.assertEqual(buy_in.market.bias, "bullish")
 
+    def test_analyst_reports_ride_as_evidence(self):
+        from robinhood_tools.agents import desk_input_from_signal
+
+        desk_input = desk_input_from_signal(
+            "NVDA", "Overweight", "test",
+            analyst_reports={"market_report": "trend strong", "news_report": ""})
+        self.assertIn("market_report: trend strong", desk_input.market.evidence)
+        self.assertEqual(len(desk_input.market.evidence), 3)  # decision + provider + 1
+
     def test_advisory_path_records_no_risk(self):
         from robinhood_tools.agents import desk_input_from_signal, run_desk_analysis
 
