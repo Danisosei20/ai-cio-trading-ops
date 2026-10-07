@@ -8,4 +8,4 @@ pip-audit==2.9.0
 pytest==9.0.3
 requests==2.33.0
 ruff==0.15.21
-urllib3==2.7.0
+urllib3==2.8.0
