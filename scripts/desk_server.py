@@ -113,36 +113,50 @@ def load_guard() -> dict:
         return {}
 
 
-def account_snapshot(settings) -> dict:
+_ACCOUNT_CACHE: dict = {"at": 0.0, "payload": None}
+
+
+def account_snapshot(settings, ttl_seconds: float = 10.0) -> dict:
     from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
     from robinhood_tools.settings import load_env
     import os
+    import time
 
-    try:
-        env = {**load_env(".env"), **os.environ}
-        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
-        acct = backend.transport.request("GET", "/v2/account")
-        equity_curve = []
+    now = time.time()
+    if _ACCOUNT_CACHE["payload"] is not None and now - _ACCOUNT_CACHE["at"] < ttl_seconds:
+        return _ACCOUNT_CACHE["payload"]
+    last_error = "unknown"
+    for attempt in (1, 2):
         try:
-            hist = backend.transport.request(
-                "GET", "/v2/account/portfolio/history?period=1D&timeframe=5Min")
-            eq = hist.get("equity") or []
-            ts = hist.get("timestamp") or []
-            base = hist.get("base_value") or (eq[0] if eq else 0)
-            equity_curve = [{"t": t, "v": round(float(v) / float(base or 1), 5)}
-                            for t, v in zip(ts, eq) if v]
-        except Exception:
+            env = {**load_env(".env"), **os.environ}
+            backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+            acct = backend.transport.request("GET", "/v2/account")
             equity_curve = []
-        return {"ok": True,
-                "account": backend.list_accounts()[0].masked_account_number,
-                "cash": str(acct.get("cash")), "buying_power": str(acct.get("buying_power")),
-                "portfolio": str(acct.get("portfolio_value")),
-                "clock": backend.market_clock().get("is_open"),
-                "positions": backend.list_positions(),
-                "orders": backend.list_open_orders()[:25],
-                "equity_curve": equity_curve}
-    except Exception as exc:  # noqa: BLE001 - UI degrades, never crashes
-        return {"ok": False, "error": f"{type(exc).__name__}"}
+            try:
+                hist = backend.transport.request(
+                    "GET", "/v2/account/portfolio/history?period=1D&timeframe=5Min")
+                eq = hist.get("equity") or []
+                ts = hist.get("timestamp") or []
+                base = hist.get("base_value") or (eq[0] if eq else 0)
+                equity_curve = [{"t": t, "v": round(float(v) / float(base or 1), 5)}
+                                for t, v in zip(ts, eq) if v]
+            except Exception:
+                equity_curve = []
+            payload = {"ok": True,
+                       "account": backend.list_accounts()[0].masked_account_number,
+                       "cash": str(acct.get("cash")), "buying_power": str(acct.get("buying_power")),
+                       "portfolio": str(acct.get("portfolio_value")),
+                       "clock": backend.market_clock().get("is_open"),
+                       "positions": backend.list_positions(),
+                       "orders": backend.list_open_orders()[:25],
+                       "equity_curve": equity_curve}
+            _ACCOUNT_CACHE.update(at=time.time(), payload=payload)
+            return payload
+        except Exception as exc:  # noqa: BLE001 - UI degrades, never crashes
+            last_error = f"{type(exc).__name__}"
+            print(f"desk account_snapshot attempt {attempt} failed: {last_error}", flush=True)
+            time.sleep(1)
+    return {"ok": False, "error": last_error}
 
 
 class Handler(BaseHTTPRequestHandler):
