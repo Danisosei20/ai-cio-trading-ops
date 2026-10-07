@@ -4,7 +4,8 @@ No chain-listing endpoint exists on this subscription, so the scout
 constructs standard OCC symbols (monthly expirations, strikes around
 spot) and quotes them directly via the snapshots endpoint — a pattern
 proven live against the paper account. Order placement lives elsewhere;
-this module never places, holds credentials, or touches the ledger.
+this module sends no orders and logs no credentials (keys live only in
+the transport headers).
 """
 from __future__ import annotations
 
@@ -44,6 +45,8 @@ def option_symbol(underlying: str, expiry: date, right: str, strike: Decimal) ->
     """Build an OCC option symbol, e.g. NVDA261120C00240000."""
     if right not in {"call", "put"}:
         raise PolicyViolation("Option right must be call or put.")
+    if not underlying.strip():
+        raise PolicyViolation("Underlying symbol is required.")
     if strike <= 0:
         raise PolicyViolation("Strike must be positive.")
     cents = int((strike * 1000).to_integral_value())
@@ -70,7 +73,7 @@ def snapshot_to_quote(contract: OptionContract, snapshot: dict,
         quoted_at = str(quote.get("t") or trade.get("t") or "")
         iv_raw = snapshot.get("impliedVolatility", snapshot.get("iv"))
         greeks = snapshot.get("greeks") or {}
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         raise PolicyViolation(
             f"Option snapshot for {contract.option_symbol} is incomplete.") from exc
     if not quoted_at:
@@ -83,18 +86,18 @@ def snapshot_to_quote(contract: OptionContract, snapshot: dict,
     oi_raw = snapshot.get("openInterest", snapshot.get("open_interest"))
     try:
         open_interest = int(oi_raw) if oi_raw is not None else None
-    except (TypeError, ValueError):
-        open_interest = None
+        iv = Decimal(str(iv_raw)) if iv_raw is not None else None
+        delta = Decimal(str(greeks["delta"])) if greeks.get("delta") is not None else None
+        gamma = Decimal(str(greeks["gamma"])) if greeks.get("gamma") is not None else None
+        theta = Decimal(str(greeks["theta"])) if greeks.get("theta") is not None else None
+        vega = Decimal(str(greeks["vega"])) if greeks.get("vega") is not None else None
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise PolicyViolation(
+            f"Option snapshot for {contract.option_symbol} has bad numerics.") from exc
     return OptionQuote(
         contract=contract, bid=bid, ask=ask, underlying_price=underlying_price,
-        quoted_at=quoted_at,
-        iv=Decimal(str(iv_raw)) if iv_raw is not None else None,
-        delta=Decimal(str(greeks["delta"])) if greeks.get("delta") is not None else None,
-        gamma=Decimal(str(greeks["gamma"])) if greeks.get("gamma") is not None else None,
-        theta=Decimal(str(greeks["theta"])) if greeks.get("theta") is not None else None,
-        vega=Decimal(str(greeks["vega"])) if greeks.get("vega") is not None else None,
-        open_interest=open_interest,
-        volume=volume)
+        quoted_at=quoted_at, iv=iv, delta=delta, gamma=gamma, theta=theta,
+        vega=vega, open_interest=open_interest, volume=volume)
 
 
 class AlpacaOptionsData:
@@ -145,9 +148,14 @@ class AlpacaOptionsData:
                     steps: int = 3) -> list[OptionQuote]:
         """Build candidate contracts and quote them. Skips unlisted symbols."""
         expiries = expiries or monthly_expiries(today)
-        contracts = [OptionContract(underlying.upper(), exp.isoformat(), strike, right,
-                                    option_symbol(underlying, exp, right, strike))
-                     for exp in expiries for strike in strike_ladder(spot, steps)]
+        contracts = []
+        for exp in expiries:
+            for strike in strike_ladder(spot, steps):
+                if strike <= 0:
+                    continue  # low-priced underlyings: skip, never abort
+                contracts.append(OptionContract(
+                    underlying.upper(), exp.isoformat(), strike, right,
+                    option_symbol(underlying, exp, right, strike)))
         try:
             snaps = self.snapshots([c.option_symbol for c in contracts])
         except Exception as exc:
