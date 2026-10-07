@@ -50,7 +50,7 @@ class OptionQuote:
     gamma: Decimal | None = None
     theta: Decimal | None = None
     vega: Decimal | None = None
-    open_interest: int = 0
+    open_interest: int | None = None
     volume: int = 0
 
     def __post_init__(self) -> None:
@@ -127,7 +127,9 @@ def select_long_option(quotes: list[OptionQuote], *, direction: str,
             reasons.append(f"spread {q.spread_pct():.1%} too wide")
         if q.volume < filters.min_option_volume:
             reasons.append(f"volume {q.volume} below minimum")
-        if q.open_interest < filters.min_open_interest:
+        # Snapshots carry no open-interest field; the OI gate applies only
+        # when OI is actually known, and volume carries the liquidity check.
+        if q.open_interest is not None and q.open_interest < filters.min_open_interest:
             reasons.append(f"OI {q.open_interest} below minimum")
         if q.delta is None or not filters.min_delta <= abs(q.delta) <= filters.max_delta:
             reasons.append(f"delta {q.delta} outside band")

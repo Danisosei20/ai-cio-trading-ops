@@ -82,7 +82,7 @@ def get_quote(symbol: str, *, data_client=None, max_age_minutes: int = 5,
         except Exception as exc:  # noqa: BLE001 - fall through to backup source
             errors.append(f"alpaca: {type(exc).__name__}")
     try:
-        import yfinance as yf  # noqa: PLC0415
+        import yfinance as yf  # type: ignore[import-not-found]  # noqa: PLC0415
 
         quote = from_yfinance(symbol, yf.Ticker(symbol).history(period="1d", interval="1m"))
         age = _age_minutes(quote.as_of, now)
