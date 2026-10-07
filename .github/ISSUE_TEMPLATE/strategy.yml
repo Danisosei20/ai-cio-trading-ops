@@ -1,0 +1,26 @@
+name: Strategy proposal
+description: Propose a strategy for backtest → incubation → shadow → approval
+labels: [strategy]
+body:
+  - type: textarea
+    id: thesis
+    attributes:
+      label: Thesis
+      description: What edge, in which regime, over what horizon?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence so far
+      description: Backtest command, IS/OOS numbers, trade counts, costs applied
+    validations:
+      required: true
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Promotion gates
+      options:
+        - label: Backtested with costs and min-trades gate
+        - label: Passed 70/30 out-of-sample incubation
+        - label: No live trading requested in this issue

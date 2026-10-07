@@ -1,4 +1,51 @@
-# AI CIO Trading Tools
+# AI Trading Desk
+
+[![CI](https://github.com/Danisosei20/ai-cio-trading-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/Danisosei20/ai-cio-trading-ops/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
+An autonomous, safety-gated **multi-agent trading desk**: AI analysts debate,
+a deterministic risk engine disposes, and every decision lands in an auditable
+ledger. Paper-first on Alpaca — live Robinhood stays behind explicit human
+approval, always.
+
+> **Not financial advice.** Research software. Strategies can and do lose
+> money; backtested edges routinely die out-of-sample (ours publish their
+> failures too).
+
+```bash
+git clone https://github.com/Danisosei20/ai-cio-trading-ops.git
+cd ai-cio-trading-ops && cp .env.example .env   # no secrets in git, ever
+python3 scripts/paper_dashboard.py              # read-only status
+python3 scripts/desk_server.py --port 8100      # live console: http://127.0.0.1:8100/
+```
+
+```mermaid
+flowchart LR
+    S[Signal: debate / alert / screen] --> D[Desk debate: bull vs bear vs red]
+    D --> J[Judge: CALL / PUT / NO_TRADE]
+    J --> R{Risk engine: deterministic}
+    R -- FAIL --> X[Rejected + logged]
+    R -- PASS --> V[Broker review]
+    V --> L[Approval ledger]
+    L --> P[Guarded placement]
+    P --> G[Position guard: stop / target]
+```
+
+| Track | Entry point | What it does |
+|---|---|---|
+| Research | `scripts/tradingagents_research.py` | Multi-agent LLM debate per ticker. Never orders. |
+| Auto-trade | `scripts/tradingagents_paper_auto.py` | Debate → gated Alpaca paper orders (`--screen` for universe top-N). |
+| Alerts | `scripts/alert_webhook.py` | External signals → same gates → paper. HMAC secret. |
+| Backtests | `scripts/strategy_backtest.py` | Strategy grid + costs + 70/30 incubation. Promotes nothing that fails. |
+| Overnight | `scripts/overnight_pilot.py` | Close-to-open gap pilot (enter 15:30–15:55, exit 09:35–10:00). |
+| Guard | `scripts/paper_position_guard.py` | Stop/target exits on broker marks. |
+| Console | `scripts/desk_server.py` | 6-page live UI + API + kill switch. |
+| Deploy | `deploy/k8s/` | Staging manifests (research-only defaults). |
+
+---
+
+# AI CIO Trading Tools (legacy core)
 
 A safety-gated AI Chief Investment Officer workflow using Alpaca for paper trading, Robinhood for live trading,
 and Slack for notifications.
@@ -578,3 +625,8 @@ Before a live CIO task:
 - Stop before execution and wait for matching explicit Codex approval.
 
 When evidence is incomplete or no idea clears the hurdle, the correct result is **No Action Recommended**.
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE). Research software, provided as-is;
+see [SECURITY.md](SECURITY.md) for reporting security issues privately.

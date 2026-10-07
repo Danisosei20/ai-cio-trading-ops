@@ -1,0 +1,25 @@
+name: Bug report
+description: Something broken, unsafe, or misbehaving
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Commands, config (redacted), and logs showing the issue
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: No live orders were placed or affected
+        - label: No secrets are included in this report
