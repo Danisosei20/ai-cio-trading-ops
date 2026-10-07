@@ -129,10 +129,6 @@ def render(output: Path, database_path: str) -> Path:
     settings = build_settings()
     db = CioDatabase(database_path)
     try:
-        dash = db.dashboard()
-    except Exception as exc:  # noqa: BLE001
-        dash = {"error": str(exc)}
-    try:
         approvals = db.list_approvals(25)
     except Exception:
         approvals = []
@@ -222,9 +218,9 @@ def render(output: Path, database_path: str) -> Path:
         for a in approvals
     ) or "<tr><td colspan='4'>No approvals</td></tr>"
     life_rows = "".join(
-        f"<tr><td><b>{html.escape(str(l.get('task_name', '')))}</b></td><td>{html.escape(str(l.get('status', '')))}</td>"
-        f"<td>{html.escape(str(l.get('opened_at', '')))}</td><td>{html.escape(str(l.get('realized_profit') or ''))}</td></tr>"
-        for l in lifecycles
+        f"<tr><td><b>{html.escape(str(lc.get('task_name', '')))}</b></td><td>{html.escape(str(lc.get('status', '')))}</td>"
+        f"<td>{html.escape(str(lc.get('opened_at', '')))}</td><td>{html.escape(str(lc.get('realized_profit') or ''))}</td></tr>"
+        for lc in lifecycles
     ) or "<tr><td colspan='4'>No lifecycles</td></tr>"
 
     now_et = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
@@ -277,7 +273,8 @@ def main() -> int:
     out = render(Path(a.output), a.database)
     print(out)
     if a.serve:
-        import http.server, functools
+        import functools
+        import http.server
         handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(out.parent))
         with http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler) as httpd:
             print(f"Serving {out.parent} at http://127.0.0.1:{a.port}/{out.name}")

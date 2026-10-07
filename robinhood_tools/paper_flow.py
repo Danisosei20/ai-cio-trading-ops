@@ -76,10 +76,11 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
         require_earnings_clear(today=today, earnings_date=order.earnings_date,
                                blackout_days=settings.earnings_blackout_days)
 
-    cap = order.max_order_value
-    if cap is None:
-        cap = settings.risk_limits.max_order_value
+    cap = (order.max_order_value if order.max_order_value is not None
+           else settings.risk_limits.max_order_value)
     cap = min(cap, settings.risk_limits.max_order_value)
+    if order.quantity is None or order.limit_price is None:
+        raise PolicyViolation("Quantity and limit price are required.")
     if order.quantity * order.limit_price > cap:
         raise PolicyViolation(f"Order value exceeds ${cap} paper cap.")
 
@@ -131,7 +132,7 @@ def lookup_earnings_date(symbol: str) -> date | None:
     SignalOrder; the flow fails closed on None for buys.
     """
     try:
-        import yfinance as yf  # noqa: PLC0415
+        import yfinance as yf  # type: ignore[import-not-found]  # noqa: PLC0415
     except ImportError:
         return None
     try:

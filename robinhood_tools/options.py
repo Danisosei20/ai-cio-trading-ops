@@ -135,7 +135,9 @@ def select_long_option(quotes: list[OptionQuote], *, direction: str,
             rejected.append(OptionRejection(c.option_symbol, reasons))
             continue
         # Prefer at-the-money-ish liquid: score = spread penalty + distance from 0.45 delta.
-        score = q.spread_pct() + abs(abs(q.delta) - Decimal("0.45"))
+        delta = q.delta
+        assert delta is not None  # rejected above when None
+        score = q.spread_pct() + abs(abs(delta) - Decimal("0.45"))
         ranked.append((score, q))
     if not ranked:
         raise PolicyViolation(f"No suitable long {want}: {len(rejected)} rejected.")

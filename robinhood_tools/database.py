@@ -601,7 +601,9 @@ class CioDatabase:
                 )
             except sqlite3.IntegrityError as exc:
                 raise PolicyViolation(f"Unknown candidate {candidate_id}.") from exc
-            return int(cursor.lastrowid)
+            rowid = cursor.lastrowid
+            assert rowid is not None
+            return rowid
 
     def record_option_candidate(self, candidate_id: str, *, option_symbol: str,
                                 strike: Decimal, expiry: str, right: str,
@@ -624,7 +626,9 @@ class CioDatabase:
                 )
             except sqlite3.IntegrityError as exc:
                 raise PolicyViolation(f"Unknown candidate {candidate_id}.") from exc
-            return int(cursor.lastrowid)
+            rowid = cursor.lastrowid
+            assert rowid is not None
+            return rowid
 
     def mark_option_selected(self, candidate_id: str, option_symbol: str) -> None:
         with self.connect() as db:

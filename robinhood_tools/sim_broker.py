@@ -266,14 +266,14 @@ class SimulationBroker:
         for order_id, bracket in list(self.brackets.items()):
             if bracket["status"] != "open":
                 continue
-            mark = self.equity_marks.get(bracket["symbol"])
-            if mark is None:
+            current = self.equity_marks.get(bracket["symbol"])
+            if current is None:
                 continue
-            exit_px = None
+            exit_px: Decimal | None = None
             reason = ""
-            if bracket["stop"] is not None and mark <= bracket["stop"]:
+            if bracket["stop"] is not None and current <= bracket["stop"]:
                 exit_px, reason = bracket["stop"], "stop"
-            elif bracket["take_profit"] is not None and mark >= bracket["take_profit"]:
+            elif bracket["take_profit"] is not None and current >= bracket["take_profit"]:
                 exit_px, reason = bracket["take_profit"], "target"
             if exit_px is None:
                 continue

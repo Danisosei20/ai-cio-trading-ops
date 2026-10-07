@@ -61,7 +61,7 @@ class SlackWebApiNotifier:
             if response.get("ok") is not True:
                 raise RuntimeError(f"Slack paper summary failed ({response.get('error', 'unknown_error')}).")
             result = {"message_ts": str(response.get("ts", "")), "message_link": response.get("permalink")}
-            if image_path is not None:
+            if image_path is not None and result["message_ts"]:
                 image_result = self._upload_image(
                     channel_id=channel_id,
                     image_path=image_path,
@@ -129,7 +129,8 @@ class SlackWebApiNotifier:
         )
         if response.get("ok") is not True:
             raise RuntimeError(f"Slack file upload failed ({response.get('error', 'unknown_error')}).")
-        file_info = response.get("file") if isinstance(response.get("file"), dict) else {}
+        file_raw = response.get("file") if isinstance(response, dict) else None
+        file_info = file_raw if isinstance(file_raw, dict) else {}
         return {
             "file_id": str(file_info.get("id", "")),
             "file_permalink": file_info.get("permalink"),
