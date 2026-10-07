@@ -122,13 +122,25 @@ def account_snapshot(settings) -> dict:
         env = {**load_env(".env"), **os.environ}
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
         acct = backend.transport.request("GET", "/v2/account")
+        equity_curve = []
+        try:
+            hist = backend.transport.request(
+                "GET", "/v2/account/portfolio/history?period=1D&timeframe=5Min")
+            eq = hist.get("equity") or []
+            ts = hist.get("timestamp") or []
+            base = hist.get("base_value") or (eq[0] if eq else 0)
+            equity_curve = [{"t": t, "v": round(float(v) / float(base or 1), 5)}
+                            for t, v in zip(ts, eq) if v]
+        except Exception:
+            equity_curve = []
         return {"ok": True,
                 "account": backend.list_accounts()[0].masked_account_number,
                 "cash": str(acct.get("cash")), "buying_power": str(acct.get("buying_power")),
                 "portfolio": str(acct.get("portfolio_value")),
                 "clock": backend.market_clock().get("is_open"),
                 "positions": backend.list_positions(),
-                "orders": backend.list_open_orders()[:25]}
+                "orders": backend.list_open_orders()[:25],
+                "equity_curve": equity_curve}
     except Exception as exc:  # noqa: BLE001 - UI degrades, never crashes
         return {"ok": False, "error": f"{type(exc).__name__}"}
 

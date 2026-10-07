@@ -10,6 +10,20 @@ async function tick(){
   $('today').innerHTML=a.ok?
    `<span class="kpi">$${esc(a.portfolio)}</span><br>Cash $${esc(a.cash)} · Buying power $${esc(a.buying_power)}`:
    '<span class="empty">broker unreachable</span>';
+  if(a.ok&&a.equity_curve&&a.equity_curve.length>1){
+   const pts=a.equity_curve.map(p=>p.v);
+   const cv=$('spark'),ctx=cv.getContext('2d');
+   ctx.clearRect(0,0,cv.width,cv.height);
+   const lo=Math.min(...pts),hi=Math.max(...pts),rg=(hi-lo)||1;
+   const X=i=>8+i*(cv.width-16)/(pts.length-1);
+   const Y=v=>cv.height-8-(v-lo)*(cv.height-16)/rg;
+   const up=pts[pts.length-1]>=pts[0];
+   ctx.strokeStyle=up?'#1a7f37':'#cf222e';ctx.lineWidth=2;ctx.beginPath();
+   pts.forEach((v,i)=>{i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v));});
+   ctx.stroke();
+   const chg=(pts[pts.length-1]/pts[0]-1)*100;
+   $('daychg').innerHTML=`Day: <b class="${chg>=0?'pos':'neg'}">${chg>=0?'▲ +':'▼ '}${chg.toFixed(2)}%</b>`;
+  } else {$('daychg').innerHTML='<span class="empty">No intraday curve yet.</span>';}
   $('autonomy').innerHTML=`Policy <b>${esc(h.exec_policy)}</b> · window ${esc(h.window)} · max $${esc(h.max_order)}`;
   $('res').innerHTML=r.length?'<table><tr><th>Ticker</th><th>Date</th><th>Action</th><th>Decision</th><th>Note</th></tr>'+
    r.slice(0,8).map(x=>`<tr><td><b>${esc(x.ticker)}</b></td><td>${esc(x.date)}</td><td>${esc(x.action||'')}</td><td>${esc(x.decision||'')}</td><td>${esc((x.reason||x.status||x.order_id||'').slice(0,90))}</td></tr>`).join('')+'</table>':

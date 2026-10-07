@@ -4,12 +4,14 @@ async function tick(){
   $('acct').innerHTML=a.ok?
    `<span class="kpi">$${esc(a.portfolio)}</span><br>Cash $${esc(a.cash)} · Buying power $${esc(a.buying_power)} · Acct <small>${esc(a.account)}</small>`:
    '<span class="empty">broker unreachable ('+esc(a.error||'')+')</span>';
-  $('pos').innerHTML=a.ok&&a.positions.length?'<table><tr><th>Symbol</th><th>Qty</th><th>Price</th><th>Entry</th><th>Day P&amp;L</th></tr>'+
+  $('pos').innerHTML=a.ok&&a.positions.length?(()=>{const pf=parseFloat(a.portfolio)||0;
+   return '<table><tr><th>Symbol</th><th>Qty</th><th>Price</th><th>Entry</th><th>Day P&amp;L</th><th>Alloc</th></tr>'+
    a.positions.map(p=>{
     const pl=parseFloat(p.unrealized_intraday_pl ?? p.unrealized_pl);
     const cls=isNaN(pl)?'':(pl>0?'pos':(pl<0?'neg':''));
     const arrow=isNaN(pl)?'':(pl>0?'▲ ':(pl<0?'▼ ':''));
-    return `<tr><td><b>${esc(p.symbol)}</b></td><td>${esc(p.qty)}</td><td>$${esc(p.current_price||'')}</td><td>$${esc(p.avg_entry_price||'')}</td><td class="${cls}">${arrow}${esc(p.unrealized_intraday_pl ?? p.unrealized_pl ?? '')}</td></tr>`;}).join('')+'</table>':
+    const mv=parseFloat(p.market_value)||0, ap=pf?Math.min(100,mv/pf*100):0;
+    return `<tr><td><b>${esc(p.symbol)}</b></td><td>${esc(p.qty)}</td><td>$${esc(p.current_price||'')}</td><td>$${esc(p.avg_entry_price||'')}</td><td class="${cls}">${arrow}${esc(p.unrealized_intraday_pl ?? p.unrealized_pl ?? '')}</td><td><span class="bar bar-inline"><i data-w="${ap.toFixed(1)}"></i></span> ${ap.toFixed(1)}%</td></tr>`;}).join('')+'</table>';})():
    '<span class="empty">No positions.</span>';
   $('ord').innerHTML=a.ok&&a.orders.length?'<table><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Status</th></tr>'+
    a.orders.map(o=>{
@@ -24,5 +26,6 @@ async function tick(){
    `${p.order_id?` · sold <small>${esc(p.order_id)}</small>`:''}</div>`;}).join('')
    :'<span class="empty">No guarded positions.</span>';
  }catch(e){showError('acct',e);}
+ paintBars(document);
 }
 tick();setInterval(tick,5000);
