@@ -11,7 +11,7 @@
   <key>Label</key><string>com.openai.ai-cio-paper</string>
   <key>ProgramArguments</key><array>
     <string>REPLACE_WITH_TRADINGAGENTS_VENV_BIN/python</string>
-    <string>scripts/tradingagents_paper_auto.py</string><string>--tickers</string><string>NVDA</string>
+    <string>scripts/tradingagents_paper_auto.py</string><string>--screen</string><string>outputs/screener/latest.json</string><string>--screen-top</string><string>2</string>
   </array>
   <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
   <key>StartCalendarInterval</key><array><dict>

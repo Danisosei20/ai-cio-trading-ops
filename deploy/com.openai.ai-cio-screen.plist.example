@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly universe screen: weekdays 18:05 ET (after close).
+  Ranks the S&P 500 for the next morning's run -> outputs/screener/latest.json.
+  Install: replace REPLACE_WITH_* placeholders, then
+    cp deploy/com.openai.ai-cio-screen.plist.example ~/Library/LaunchAgents/com.openai.ai-cio-screen.plist
+    launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-screen.plist
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-screen</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_WITH_TRADINGAGENTS_VENV_BIN/python</string>
+    <string>scripts/universe_screen.py</string><string>--top</string><string>20</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <key>StartCalendarInterval</key><array><dict>
+    <key>Weekday</key><integer>2</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>5</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>3</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>5</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>4</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>5</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>5</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>5</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>6</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>5</integer>
+  </dict></array>
+  <key>StandardOutPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/screener.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/screener-error.log</string>
+</dict></plist>
