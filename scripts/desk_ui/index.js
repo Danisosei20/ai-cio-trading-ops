@@ -1,0 +1,29 @@
+async function tick(){
+ try{
+  const [h,a,r,g]=await Promise.all([api('/api/health'),api('/api/account'),api('/api/research'),api('/api/guard')]);
+  $('pills').innerHTML=
+   pill('LIVE '+(h.live_enabled?'ON':'OFF'),h.live_enabled?'bad':'ok')+' '+
+   pill('PAPER '+(h.paper_auto?'AUTO':'OFF'),h.paper_auto?'info':'warn')+' '+
+   pill(h.killed?'KILLED':'ARMED',h.killed?'bad':'ok')+' '+
+   pill(h.mode,'info');
+  $('clock').textContent=h.now_et+' · market '+(h.market_open?'OPEN':'CLOSED');
+  $('today').innerHTML=a.ok?
+   `<span class="kpi">$${esc(a.portfolio)}</span><br>Cash $${esc(a.cash)} · Buying power $${esc(a.buying_power)}`:
+   '<span class="empty">broker unreachable</span>';
+  $('autonomy').innerHTML=`Policy <b>${esc(h.exec_policy)}</b> · window ${esc(h.window)} · max $${esc(h.max_order)}`;
+  $('res').innerHTML=r.length?'<table><tr><th>Ticker</th><th>Date</th><th>Action</th><th>Decision</th><th>Note</th></tr>'+
+   r.slice(0,8).map(x=>`<tr><td><b>${esc(x.ticker)}</b></td><td>${esc(x.date)}</td><td>${esc(x.action||'')}</td><td>${esc(x.decision||'')}</td><td>${esc((x.reason||x.status||x.order_id||'').slice(0,90))}</td></tr>`).join('')+'</table>':
+   '<span class="empty">No runs yet.</span>';
+  $('guard').innerHTML=g.positions&&g.positions.length?g.positions.map(p=>
+   `<div><b>${esc(p.symbol)}</b> ${esc(p.qty)} @ $${esc(p.entry)} → $${esc(p.mark)} `+
+   `<b>${esc(p.signal)}</b> (${esc(p.return_pct)}) · stop $${esc(p.stop)} · target $${esc(p.target)}</div>`).join('')
+   :'<span class="empty">No guarded positions.</span>';
+ }catch(e){showError('today',e);}
+}
+$('kill').onclick=async()=>{if(!confirm('STOP ALL trading? (positions kept, no liquidation)'))return;
+ try{await api('/api/kill',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"confirm":true}'});alert('Kill switch ENGAGED');}
+ catch(e){alert('Failed: '+e.message);}tick();};
+$('resume').onclick=async()=>{if(!confirm('Resume trading? Explicit operator action.'))return;
+ try{await api('/api/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"confirm":true}'});alert('Resumed');}
+ catch(e){alert('Failed: '+e.message);}tick();};
+tick();setInterval(tick,5000);

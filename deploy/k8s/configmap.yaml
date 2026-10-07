@@ -1,0 +1,13 @@
+# Non-secret configuration. Safe defaults: research only, placement disabled.
+# Promotion to paper shadow mode is an operator edit + rollout, never model output.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-config
+  namespace: trading
+data:
+  TRADING_MODE: research_only
+  TRADING_ENABLED: "false"
+  PAPER_TRADING_ENABLED: "false"
+  ALERT_WEBHOOK_PORT: "8090"
+  TZ: America/New_York

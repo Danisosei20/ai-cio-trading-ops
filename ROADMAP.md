@@ -47,6 +47,7 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Implement safe `YES`, `NO`, dollar-size, share-size, timeout, and blocked-execution parsing.
 - [x] Provide a fixed-channel Slack Web API adapter for exact-thread reads and acknowledgements.
 - [x] Run and record an end-to-end health-channel test message.
+- [x] Send and verify a clearly labeled non-executable example paper-trade message to the live trading Slack route.
 - [x] Verify the same task detects a real Slack reply without the operator asking Codex to check.
 - [ ] Verify timeout, duplicate reply, connector failure, and task-restart behavior with the real Slack connector.
 
@@ -76,7 +77,9 @@ This roadmap tracks the path from a safety-gated prototype to a dependable AI-CI
 - [x] Gate research acceptance on at least 10 observations and recorded human review without changing live authority.
 - [x] Persist source-specific freshness manifests that identify stale and missing inputs.
 - [x] Provide read-only Alpaca snapshots, historical bars, and news access with a fixed official data endpoint.
+- [x] Add official public-disclosure intelligence as zero-score confirmation context with lag disclosure and a copy-trading prohibition.
 - [x] Require at least 10 comparable observations before changing durable policy.
+- [x] Persist structured TradingView candle, indicator, and volume observations for later learning.
 - [ ] Add sector-benchmark returns and factor/correlation exposure to outcome analysis.
 - [ ] Calibrate recommendation probabilities against observed results.
 - [ ] Compare entry and exit decisions with a simple S&P 500 buy-and-hold baseline.

@@ -28,3 +28,12 @@ finishing the task.
 To install the repository copy into another Codex home, copy the `ai-cio-portfolio-manager` directory into that
 environment's `$CODEX_HOME/skills/` directory. Review `agents/openai.yaml` first and confirm the listed Robinhood
 and Slack integrations are appropriate for that environment.
+
+## AI Trading Desk
+
+`ai-trading-desk/` is the operator skill for the autonomous paper desk:
+research, debate ledger, backtests, webhook, position guard, desk UI,
+and Kubernetes rollout. Standalone (no sync script yet — edit in place
+and review the diff for secrets before publishing). To install into a
+Codex home, copy the `ai-trading-desk` directory into
+`$CODEX_HOME/skills/`.

@@ -17,6 +17,10 @@ masked account identifier. When the official market clock is closed, limit the s
 reconciliation, and safety guards; wait for complete fresh market-session inputs before creating an order
 review, approval, or Slack execution notice.
 
+Run the read-only research review before the market opens and wait until the configured post-open entry time
+before autonomous paper placement. Refresh every intraday input after the open; premarket quotes and disclosure
+research cannot substitute for current regular-session price, spread, volume, VWAP, breadth, and market-clock data.
+
 ## Account Rules
 
 Use Robinhood `_get_accounts` before trading if the account number is not already explicitly and safely known from the current conversation.

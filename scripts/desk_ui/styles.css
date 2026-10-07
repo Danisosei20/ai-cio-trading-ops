@@ -1,0 +1,43 @@
+/* AI Trading Desk — shared styles. Light + dark via color-scheme. */
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { font: 15px -apple-system, "Segoe UI", system-ui, sans-serif;
+  max-width: 1180px; margin: 0 auto; padding: 0 16px 48px; line-height: 1.45; }
+nav.top { display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid #8884; margin-bottom: 16px; }
+nav.top a { padding: 8px 14px; border-radius: 10px; text-decoration: none; color: inherit; }
+nav.top a:hover { background: #8882; }
+nav.top a.active { background: #0969da; color: #fff; }
+.brand { font-weight: 700; font-size: 17px; margin-right: 8px; }
+.pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.pill { padding: 2px 12px; border-radius: 14px; font-size: 13px; color: #fff; background: #666; }
+.ok { background: #1a7f37; } .bad { background: #cf222e; }
+.warn { background: #9a6700; } .info { background: #0969da; }
+.card { border: 1px solid #8885; border-radius: 12px; padding: 14px; margin: 14px 0; }
+.card h2 { margin: 0 0 8px; font-size: 18px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+td, th { padding: 7px; text-align: left; border-bottom: 1px solid #8883; }
+th { opacity: .65; font-weight: 600; }
+.bar { height: 14px; background: #8883; border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: #0969da; width: 0; }
+.bar-inline { display: inline-block; width: 180px; vertical-align: middle; }
+.brow { margin: 4px 0; }
+.blabel { display: inline-block; min-width: 140px; }
+pre.log { max-height: 300px; overflow: auto; white-space: pre-wrap;
+  font-size: 12px; padding: 10px; border-radius: 8px; background: #8881; }
+button { padding: 8px 16px; border-radius: 8px; border: 1px solid #888; font-size: 14px; cursor: pointer; }
+button.danger { background: #cf222e; color: #fff; border-color: #cf222e; }
+small.muted, small { opacity: .7; }
+.kpi { font-size: 22px; font-weight: 650; }
+canvas.chart { width: 100%; border: 1px solid #8884; border-radius: 8px; }
+iframe.tv { width: 100%; height: 480px; border: 1px solid #8884; border-radius: 8px; margin-top: 8px; }
+.ticker-btns button { margin: 0 6px 6px 0; }
+.ticker-btns button.on { background: #0969da; color: #fff; border-color: #0969da; }
+.empty { opacity: .65; font-style: italic; }
+.error { color: #cf222e; }
+.health-ok { color: #1a7f37; font-weight: 600; }
+.health-bad { color: #cf222e; font-weight: 600; }
+.timeline { font-size: 13.5px; }
+.timeline li { margin: 4px 0; }
+select { padding: 8px; border-radius: 8px; font-size: 14px; }

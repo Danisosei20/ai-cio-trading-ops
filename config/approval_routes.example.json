@@ -44,7 +44,7 @@
     "max_order_value_usd": 500,
     "max_symbol_exposure_usd": 500,
     "regular_session_only": true,
-    "earliest_entry_time_et": "11:35",
+    "earliest_entry_time_et": "10:15",
     "latest_entry_time_et": "15:30",
     "require_limit_orders": true,
     "forbid_price_chasing": true,
@@ -53,6 +53,23 @@
     "panic_entry_minimum_relative_volume": 1.5,
     "panic_entry_minimum_stabilization_bars": 3,
     "panic_entry_minimum_reward_risk": 2.5
+  },
+  "disclosure_intelligence": {
+    "enabled": true,
+    "track_congressional_ptrs": true,
+    "track_sec_form4": true,
+    "track_sec_13f": true,
+    "require_official_sources": true,
+    "confirmation_only": true,
+    "max_score_contribution": 0,
+    "disclose_reporting_lag": true,
+    "prohibit_copy_trading": true,
+    "politician_scope": "all_house_and_senate_ptrs",
+    "tracked_professional_managers": [
+      "Berkshire Hathaway",
+      "Pershing Square Capital Management",
+      "Akre Capital Management"
+    ]
   },
   "entry_controls": {
     "earnings_blackout_trading_days": 5,
@@ -73,7 +90,7 @@
     "live_broker": "robinhood",
     "structured_logging": true,
     "broker_reconciliation_required_after_uncertain_failure": true,
-    "database_schema_version": 5,
+    "database_schema_version": 7,
     "lifecycle_lease_seconds": 300,
     "backup_before_migration": true,
     "audit_retention_days": 2555,
@@ -81,7 +98,7 @@
   },
   "schedule": {
     "enabled": true,
-    "time_local": "09:45",
+    "time_local": "08:45",
     "timezone": "${TIMEZONE}",
     "weekdays_only": true,
     "require_official_market_calendar_open_day": true,
@@ -100,7 +117,8 @@
     "market_regime": 30,
     "earnings_corporate_events": 1440,
     "sp500_membership": 1440,
-    "research_news_filings": 1440
+    "research_news_filings": 1440,
+    "public_disclosures": 1440
   },
   "shadow_equity": {
     "enabled": true,

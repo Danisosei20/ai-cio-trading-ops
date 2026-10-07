@@ -38,6 +38,20 @@ def validate_equity_order_request(request: EquityOrderRequest) -> None:
         raise PolicyViolation("limit_price is required for limit and stop_limit equity orders.")
     if request.order_type in {"stop", "stop_limit"} and request.stop_price is None:
         raise PolicyViolation("stop_price is required for stop and stop_limit equity orders.")
+    bracket = request.take_profit_price is not None or request.bracket_stop_price is not None
+    if bracket:
+        if request.side != "buy" or request.order_type != "limit":
+            raise PolicyViolation("Brackets attach only to limit buy entries.")
+        if request.limit_price is None:
+            raise PolicyViolation("Bracket entries require a limit price.")
+        if request.take_profit_price is None or request.bracket_stop_price is None:
+            raise PolicyViolation("Brackets require both take-profit and stop legs.")
+        if request.take_profit_price <= request.limit_price:
+            raise PolicyViolation("Take-profit must sit above the entry limit.")
+        if request.bracket_stop_price >= request.limit_price:
+            raise PolicyViolation("Bracket stop must sit below the entry limit.")
+        if request.quantity is None or request.quantity != request.quantity.to_integral_value():
+            raise PolicyViolation("Brackets require whole-share quantity (no notional/fractional).")
 
 
 def validate_option_order_request(request: OptionOrderRequest) -> None:

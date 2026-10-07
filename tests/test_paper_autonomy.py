@@ -121,6 +121,10 @@ class PaperAutonomyTests(unittest.TestCase):
                 source_url="https://www.tradingview.com/chart/test/",
                 signal="supportive",
                 pattern="bull flag",
+                candle_summary="Higher lows into a tight range",
+                indicator_summary="VWAP reclaim, RSI > 50, MACD turning up",
+                volume_summary="Relative volume 1.7x with steady accumulation",
+                diagram="   ███\n  █ ███\n ███   █\n█       █",
                 notes="Price held above the opening range.",
             ),
         )
@@ -144,7 +148,16 @@ class PaperAutonomyTests(unittest.TestCase):
         self.assertIn("PAPER TRADE SUBMITTED", message)
         self.assertIn("no fill above this price", message)
         self.assertIn("no live funds", message)
+        self.assertIn("candles Higher lows into a tight range", message)
+        self.assertIn("indicators VWAP reclaim", message)
+        self.assertIn("volume Relative volume 1.7x", message)
+        self.assertIn("```", message)
         self.assertIn(result.order_fingerprint, message)
+        with self.db.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM tradingview_learning_events").fetchone()[0], 3)
+        summary = self.db.tradingview_pattern_summary()
+        self.assertEqual(summary[0]["pattern"], "bull flag")
+        self.assertEqual(summary[0]["observations"], 3)
 
     def test_slack_failure_does_not_misreport_or_retry_broker_order(self):
         self.executor.notifier = Notifier(fail=True)
@@ -204,6 +217,29 @@ class PaperAutonomyTests(unittest.TestCase):
             ),
         )
         with self.assertRaisesRegex(PolicyViolation, "TradingView conflicts"):
+            self.executor.execute_purchase(
+                request=self.request, candidate=_candidate(), portfolio=self.portfolio,
+                sector="Technology", exit_plan=self.exit_plan, context=context,
+            )
+
+    def test_supportive_tradingview_analysis_with_bearish_language_blocks_entry(self):
+        context = PaperEntryContext(
+            datetime.now(timezone.utc).isoformat(), True, "supportive", "Alpaca 5-minute bars",
+            False, tradingview_analysis=TradingViewChartAnalysis(
+                symbol="AAPL",
+                exchange="NASDAQ",
+                timeframe="5m",
+                observed_at=datetime.now(timezone.utc).isoformat(),
+                source_url="https://www.tradingview.com/chart/test/",
+                signal="supportive",
+                pattern="bull flag",
+                candle_summary="higher lows into a tight range",
+                indicator_summary="VWAP reclaim with RSI turning up",
+                volume_summary="relative volume 1.7x",
+                notes="selloff and breakdown risk remain high",
+            ),
+        )
+        with self.assertRaisesRegex(PolicyViolation, "bearish language"):
             self.executor.execute_purchase(
                 request=self.request, candidate=_candidate(), portfolio=self.portfolio,
                 sector="Technology", exit_plan=self.exit_plan, context=context,

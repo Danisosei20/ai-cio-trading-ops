@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Backtests — AI Trading Desk</title>
+<link rel="stylesheet" href="/static/styles.css"></head><body>
+<nav class="top"><span class="brand">AI Trading Desk</span>
+<a data-page="index" href="/">Overview</a><a data-page="desk" href="/desk">Debates</a><a data-page="backtests" href="/backtests">Backtests</a><a data-page="positions" href="/positions">Positions</a><a data-page="logs" href="/logs">Logs</a><a data-page="health" href="/health">Health</a></nav>
+<h1>Backtests + incubation</h1>
+<small>Ranked by in-sample Sharpe with costs. PASS = positive out-of-sample with min trades. Only PASS variants are tradable.</small>
+<div class="card"><h2>Leaderboard <small id="runid"></small></h2><div id="bt">…</div></div>
+<div class="card"><h2>Charts</h2><div class="ticker-btns" id="tickers"></div>
+<canvas id="chart" class="chart" width="1000" height="320"></canvas>
+<small id="chartnote"></small>
+<iframe id="tv" class="tv" title="TradingView chart"></iframe>
+<small>Upper: normalized price (dark) vs top-3 strategy equity (colors). Lower: live TradingView.</small></div>
+<script src="/static/app.js"></script>
+<script src="/static/backtests.js"></script></body></html>

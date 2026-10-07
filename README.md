@@ -363,14 +363,24 @@ ticker lifecycle. Broker and market credentials never enter the CLI or repositor
 Legacy `paper` and `live` values normalize to `paper_auto` and `live_approval`.
 
 Paper autonomous execution also requires `PAPER_TRADING_ENABLED=true`; new installations default it to false.
-It runs only during the configured regular-session window (11:35–15:30 ET), requires a DAY limit order at the
+It runs only during the configured regular-session window (10:15–15:30 ET), requires a DAY limit order at the
 reviewed intended price, blocks price chasing, and sends Slack after submission. It retains the exact fingerprint,
 internal policy authorization, atomic reservation, reconciliation, lifecycle, and learning checkpoints. A Slack
 failure is recorded but never causes an order retry.
 
 TradingView may be used as an optional chart cross-check when authenticated browser access is available. Primary
 inputs remain Alpaca quotes/bars, current S&P 500 membership, company/SEC material, earnings/event checks, and
-independent news. Community ideas and aggregate technical ratings never create execution authority.
+independent news. Community ideas and aggregate technical ratings never create execution authority. Structured
+TradingView observations can also be stored as learnable candle, indicator, and volume memory and summarized in
+Slack, but they remain secondary to broker data and independent research.
+
+The research layer also checks official House and Senate periodic transaction reports, SEC Form 4 insider
+transactions, and Form 13F filings from Berkshire Hathaway, Pershing Square Capital Management, and Akre Capital
+Management as a small, style-diverse professional-manager comparison set. These disclosures are delayed, incomplete,
+and sometimes report value ranges rather than exact sizes. They contribute zero points to the candidate score,
+must show the transaction date and filing/observation lag, and may only confirm or contradict a thesis already
+supported by current fundamentals, news, price, volume, and liquidity. The system never copy-trades a politician,
+insider, or manager and never assumes that an old disclosed position remains open.
 
 Panic-selling setups are not bought automatically. They require elevated relative volume, no material adverse
 news, a completed VWAP or opening-range reclaim, multiple stabilization bars, supportive market/sector context,
@@ -394,7 +404,7 @@ ticker lifecycle state. Any unexplained difference blocks the recommendation unt
 
 ### Independent missed-run watchdog
 
-Install the separate weekday 10:05 ET watchdog with:
+Install the separate weekday 09:05 ET watchdog with:
 
 ```bash
 python3 scripts/install_watchdog.py
@@ -403,7 +413,7 @@ python3 scripts/install_watchdog.py
 The installer copies a dependency-free checker to `~/Library/Application Support/OpenAI-AICIO-Watchdog`,
 stores the Slack bot token in the login Keychain, and loads `com.openai.ai-cio-watchdog`. The background job
 reads the automation memory under `$CODEX_HOME`, avoiding macOS background access restrictions on Desktop.
-It posts to `HEALTH_SLACK_CHANNEL_ID` only when the 09:45 review is still incomplete after the configured grace
+It posts to `HEALTH_SLACK_CHANNEL_ID` only when the 08:45 review is still incomplete after the configured grace
 period, and deduplicates one alert per automation/date. This detects a missed run; it does not execute a trade.
 
 To verify the real Keychain and Slack route with one explicitly labeled, non-trading test message, run:
@@ -460,14 +470,14 @@ The output defaults to `outputs/dashboard.html` and summarizes approval states a
 
 ## Automated Reviews
 
-The operating setup includes a 09:45 ET read-only daily review, a separate 11:35 ET autonomous Alpaca paper
+The operating setup includes an 08:45 ET read-only premarket review, a separate 10:15 ET autonomous Alpaca paper
 session, and a monthly performance report. These are Codex automations, not credential-bearing processes in this
 repository; recreate or inspect them in Codex when installing on another machine. A review can also be run
 manually in the current Codex task. Every run must check the official current U.S. exchange calendar and skip
 exchange holidays or special closures.
 
-The 09:45 review owns reconciliation, portfolio health, research, and the watchlist, but cannot place or cancel
-an order. The 11:35 paper session may start or resume one ticker lifecycle and autonomously place only an
+The 08:45 review owns reconciliation, portfolio health, research, and the watchlist, but cannot place or cancel
+an order. The 10:15 paper session may start or resume one ticker lifecycle and autonomously place only an
 unchanged, policy-qualified Alpaca paper limit order. A live Robinhood lifecycle remains a manually active
 Codex task and still requires broker review plus matching explicit Codex approval. The monthly report summarizes
 realized and unrealized performance, benchmark-relative outcomes, execution quality, risk-limit events, and
@@ -484,7 +494,7 @@ On an open day it performs a read-only portfolio and market review, then sends o
 - A structured broker-reviewed approval section only for a live trade that clears every hurdle
 - Any blocked candidates under `WATCHLIST ONLY — NOT A BUY RECOMMENDATION`
 
-The 09:45 review never places or cancels an order. The 11:35 paper session sends Slack only after its broker
+The 08:45 review never places or cancels an order. The 10:15 paper session sends Slack only after its broker
 action; Slack remains notification-only and creates no execution authority.
 
 Trade approval messages also show current buying power, proposed cost, estimated buying power remaining, and the exact reviewed dollar/share sizing. If funds are insufficient, Slack receives a `No Approval Created` notice showing the shortfall. The user must return to Codex and specify a smaller exact dollar amount or share quantity for a fresh broker review; changing size in Slack is not accepted as execution approval.

@@ -74,6 +74,24 @@ class ProductionHardeningTests(unittest.TestCase):
             with self.assertRaisesRegex(PolicyViolation, "paper_broker=alpaca"):
                 self.build_test_settings(directory, config_path)
 
+    def test_public_disclosures_are_confirmation_only_and_never_copy_trade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = self.build_test_settings(directory)
+            self.assertEqual(settings.schedule_time_local, "08:45")
+            self.assertEqual(settings.paper_autonomy.earliest_entry_time_et, "10:15")
+            self.assertTrue(settings.disclosure_intelligence.require_official_sources)
+            self.assertEqual(settings.disclosure_intelligence.max_score_contribution, 0)
+            self.assertTrue(settings.disclosure_intelligence.prohibit_copy_trading)
+            self.assertEqual(settings.disclosure_intelligence.politician_scope, "all_house_and_senate_ptrs")
+            self.assertIn("Berkshire Hathaway", settings.disclosure_intelligence.tracked_professional_managers)
+
+            config = json.loads(Path("config/approval_routes.example.json").read_text(encoding="utf-8"))
+            config["disclosure_intelligence"]["max_score_contribution"] = 1
+            config_path = Path(directory) / "unsafe-disclosures.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(PolicyViolation, "zero score contribution"):
+                self.build_test_settings(directory, config_path)
+
     def test_live_kill_switch_defaults_off(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = self.build_test_settings(directory)

@@ -56,7 +56,7 @@ then compare them with the decision snapshot at the 1-, 5-, and 20-day checkpoin
 
 Autonomous paper execution removes the human approval pause only for Alpaca paper. It retains a durable internal
 policy authorization, exact fingerprint, atomic execution reservation, idempotent client order ID, and broker
-reconciliation. Entries are regular-session DAY limit orders from 11:35 through 15:30 ET, at the unchanged
+reconciliation. Entries are regular-session DAY limit orders from 10:15 through 15:30 ET, at the unchanged
 reviewed price, with no more than $500 per order or $500 total exposure to one symbol. The one-position cap,
 $50 cash floor, daily/weekly realized-loss stops, earnings blackout, cooldown, current S&P 500 membership,
 freshness, score, liquidity, news, and source rules remain enforced.
@@ -69,6 +69,17 @@ Use the read-only Alpaca market-data client for snapshots, historical bars, and 
 optional visual cross-check; record its exchange, timeframe, data source, and observation time, and block entry
 when it conflicts with the primary chart analysis.
 
+Official congressional PTRs, SEC Form 4 transactions, and the configured Berkshire Hathaway, Pershing Square
+Capital Management, and Akre Capital Management Form 13F holdings are
+optional disclosure context. Record the transaction/reporting period, filing date, observation time, filer,
+official source, and reporting lag. They add zero candidate-score points and never justify copying a trade.
+Form 4 open-market purchases may corroborate a thesis; planned sales, grants, gifts, and exercises must be
+distinguished. Congressional and 13F data are too delayed to establish a current entry on their own.
+
 Sources: [Alpaca paper trading](https://docs.alpaca.markets/us/docs/paper-trading),
 [authentication and paper endpoint](https://docs.alpaca.markets/us/v1.1/docs/authentication-1), and
-[fractional trading](https://docs.alpaca.markets/us/docs/fractional-trading).
+[fractional trading](https://docs.alpaca.markets/us/docs/fractional-trading). Disclosure sources:
+[House PTR guidance](https://ethics.house.gov/periodic-transaction-report-calculator/),
+[Senate financial disclosures](https://www.ethics.senate.gov/public/index.cfm/financialdisclosure),
+[SEC Form 4](https://www.sec.gov/files/form4data%2C0.pdf), and
+[SEC Form 13F guidance](https://www.sec.gov/rules-regulations/staff-guidance/division-investment-management-frequently-asked-questions/frequently-asked-questions-about-form-13f).

@@ -20,7 +20,7 @@ class PaperAutonomySettings:
     enabled: bool = False
     human_approval_required: bool = True
     regular_session_only: bool = True
-    earliest_entry_time_et: str = "11:35"
+    earliest_entry_time_et: str = "10:15"
     latest_entry_time_et: str = "15:30"
     require_limit_orders: bool = True
     forbid_price_chasing: bool = True
@@ -29,6 +29,25 @@ class PaperAutonomySettings:
     panic_entry_minimum_relative_volume: Decimal = Decimal("1.5")
     panic_entry_minimum_stabilization_bars: int = 3
     panic_entry_minimum_reward_risk: Decimal = Decimal("2.5")
+
+
+@dataclass(frozen=True)
+class DisclosureIntelligenceSettings:
+    enabled: bool = True
+    track_congressional_ptrs: bool = True
+    track_sec_form4: bool = True
+    track_sec_13f: bool = True
+    require_official_sources: bool = True
+    confirmation_only: bool = True
+    max_score_contribution: int = 0
+    disclose_reporting_lag: bool = True
+    prohibit_copy_trading: bool = True
+    politician_scope: str = "all_house_and_senate_ptrs"
+    tracked_professional_managers: tuple[str, ...] = (
+        "Berkshire Hathaway",
+        "Pershing Square Capital Management",
+        "Akre Capital Management",
+    )
 
 
 @dataclass(frozen=True)
@@ -42,13 +61,16 @@ class RuntimeSettings:
     risk_limits: RiskLimits
     health_channel_id: str = ""
     timezone: str = "America/New_York"
-    schedule_time_local: str = "09:45"
+    schedule_time_local: str = "08:45"
     watchdog_grace_minutes: int = 15
     freshness_max_age_minutes: dict[str, int] = field(default_factory=dict)
     paper_broker: str = "alpaca"
     live_broker: str = "robinhood"
     paper_trading_enabled: bool = False
     paper_autonomy: PaperAutonomySettings = field(default_factory=PaperAutonomySettings)
+    disclosure_intelligence: DisclosureIntelligenceSettings = field(
+        default_factory=DisclosureIntelligenceSettings
+    )
     entry_minimum_scores: dict[str, int] = field(
         default_factory=lambda: {"risk_on": 90, "neutral": 93, "risk_off": 97}
     )
@@ -128,6 +150,36 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
         panic_entry_minimum_stabilization_bars=int(paper["panic_entry_minimum_stabilization_bars"]),
         panic_entry_minimum_reward_risk=Decimal(str(paper["panic_entry_minimum_reward_risk"])),
     )
+    disclosure = config["disclosure_intelligence"]
+    disclosure_intelligence = DisclosureIntelligenceSettings(
+        enabled=bool(disclosure["enabled"]),
+        track_congressional_ptrs=bool(disclosure["track_congressional_ptrs"]),
+        track_sec_form4=bool(disclosure["track_sec_form4"]),
+        track_sec_13f=bool(disclosure["track_sec_13f"]),
+        require_official_sources=bool(disclosure["require_official_sources"]),
+        confirmation_only=bool(disclosure["confirmation_only"]),
+        max_score_contribution=int(disclosure["max_score_contribution"]),
+        disclose_reporting_lag=bool(disclosure["disclose_reporting_lag"]),
+        prohibit_copy_trading=bool(disclosure["prohibit_copy_trading"]),
+        politician_scope=str(disclosure["politician_scope"]),
+        tracked_professional_managers=tuple(
+            str(name) for name in disclosure["tracked_professional_managers"]
+        ),
+    )
+    if (
+        not disclosure_intelligence.require_official_sources
+        or not disclosure_intelligence.confirmation_only
+        or disclosure_intelligence.max_score_contribution != 0
+        or not disclosure_intelligence.disclose_reporting_lag
+        or not disclosure_intelligence.prohibit_copy_trading
+        or disclosure_intelligence.politician_scope != "all_house_and_senate_ptrs"
+        or len(set(disclosure_intelligence.tracked_professional_managers)) < 2
+    ):
+        raise PolicyViolation(
+            "Public-disclosure intelligence must use official sources, expose reporting lag, "
+            "remain confirmation-only with zero score contribution, prohibit copy trading, cover all House/Senate "
+            "PTRs without party filtering, and compare at least two identified professional managers."
+        )
     risk_limits = _base_risk_limits(risk)
     if mode == "paper_auto":
         risk_limits = replace(
@@ -145,6 +197,7 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
         risk_limits=risk_limits,
         paper_trading_enabled=env.get("PAPER_TRADING_ENABLED", "false").lower() == "true",
         paper_autonomy=paper_autonomy,
+        disclosure_intelligence=disclosure_intelligence,
         entry_minimum_scores={
             "risk_on": int(config["entry_controls"]["risk_on_minimum_score"]),
             "neutral": int(config["entry_controls"]["neutral_minimum_score"]),
@@ -155,7 +208,7 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
         # Remaining fields follow below.
         health_channel_id=config.get("channels", {}).get("health_slack", {}).get("channel_id", ""),
         timezone=str(config.get("schedule", {}).get("timezone", "America/New_York")),
-        schedule_time_local=str(config.get("schedule", {}).get("time_local", "09:45")),
+        schedule_time_local=str(config.get("schedule", {}).get("time_local", "08:45")),
         watchdog_grace_minutes=int(config.get("watchdog", {}).get("grace_minutes", 15)),
         freshness_max_age_minutes={
             str(key): int(value)
@@ -204,13 +257,52 @@ def build_paper_service(
     transport: AlpacaPaperTransport | None = None,
 ):
     """Build an Alpaca-only paper service; the transport rejects every live Alpaca URL."""
+    return _build_paper_service(
+        settings=settings, sp500_snapshot=sp500_snapshot, env_path=env_path,
+        authorizer=authorizer, transport=transport,
+        earliest=None, latest=None)
+
+
+def build_paper_service_with_session(
+    *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
+    transport: AlpacaPaperTransport | None = None,
+    earliest_entry_et: str, latest_entry_et: str,
+):
+    """Paper service with a strategy-specific session window.
+
+    Used by strategies whose entries/exits live outside the global
+    autonomy window (e.g. overnight gaps: enter 15:30-15:55, exit
+    09:35-10:00). The window is explicit per call-site, never inferred.
+    """
+    return _build_paper_service(
+        settings=settings, sp500_snapshot=sp500_snapshot, env_path=env_path,
+        authorizer=authorizer, transport=transport,
+        earliest=earliest_entry_et, latest=latest_entry_et)
+
+
+def _build_paper_service(
+    *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
+    transport: AlpacaPaperTransport | None = None,
+    earliest: str | None, latest: str | None,
+):
     settings.require_paper_trading()
     values = {**load_env(env_path), **os.environ}
     paper_transport = transport or AlpacaPaperHttpTransport.from_values(values)
     paper_backend = AlpacaPaperBackend(paper_transport)
 
     def require_open_paper_session() -> None:
-        settings.require_paper_execution()
+        if earliest is not None and latest is not None:
+            from datetime import datetime as _datetime
+
+            now_et = _datetime.now(ZoneInfo("America/New_York"))
+            if now_et.weekday() >= 5:
+                raise PolicyViolation("Weekend; strategy session closed.")
+            start = _datetime.strptime(earliest, "%H:%M").time()
+            end = _datetime.strptime(latest, "%H:%M").time()
+            if not start <= now_et.time().replace(tzinfo=None) <= end:
+                raise PolicyViolation(f"Outside strategy session {earliest}-{latest} ET.")
+        else:
+            settings.require_paper_execution()
         if settings.paper_autonomy.regular_session_only and not paper_backend.market_clock().get("is_open"):
             raise PolicyViolation("Autonomous Alpaca paper execution requires the official market clock open.")
 

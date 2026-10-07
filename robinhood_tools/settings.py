@@ -48,6 +48,13 @@ CONFIG_SCHEMA: dict[str, Any] = {
         "panic_entry_minimum_relative_volume": None, "panic_entry_minimum_stabilization_bars": None,
         "panic_entry_minimum_reward_risk": None,
     },
+    "disclosure_intelligence": {
+        "enabled": None, "track_congressional_ptrs": None, "track_sec_form4": None,
+        "track_sec_13f": None, "require_official_sources": None,
+        "confirmation_only": None, "max_score_contribution": None,
+        "disclose_reporting_lag": None, "prohibit_copy_trading": None,
+        "politician_scope": None, "tracked_professional_managers": None,
+    },
     "runtime": {
         "database_path": None, "dashboard_path": None, "paper_database_path": None,
         "paper_dashboard_path": None, "live_database_path": None, "live_dashboard_path": None,
@@ -67,7 +74,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
     "data_freshness_max_age_minutes": {
         "broker_account": None, "positions_orders_fills": None, "quotes_spreads_volume": None,
         "market_regime": None, "earnings_corporate_events": None, "sp500_membership": None,
-        "research_news_filings": None,
+        "research_news_filings": None, "public_disclosures": None,
     },
     "shadow_equity": {
         "enabled": None, "paper_only": None, "maximum_daily_candidates": None,

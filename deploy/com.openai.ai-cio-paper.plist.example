@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Autonomous paper trader: weekdays 10:20 ET (after the 10:15 window opens).
+  Install: replace REPLACE_WITH_* placeholders, then
+    cp deploy/com.openai.ai-cio-paper.plist.example ~/Library/LaunchAgents/com.openai.ai-cio-paper.plist
+    launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-paper.plist
+  Paper only. Outside the session window the run researches and skips.
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-paper</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_WITH_TRADINGAGENTS_VENV_BIN/python</string>
+    <string>scripts/tradingagents_paper_auto.py</string><string>--tickers</string><string>NVDA</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <key>StartCalendarInterval</key><array><dict>
+    <key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>20</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>20</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>20</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>20</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>6</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>20</integer>
+  </dict></array>
+  <key>StandardOutPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/paper-trader.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/paper-trader-error.log</string>
+</dict></plist>

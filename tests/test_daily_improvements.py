@@ -86,7 +86,7 @@ class DailyImprovementTests(unittest.TestCase):
                 [
                     sys.executable, "scripts/standalone_watchdog.py",
                     "--memory", str(memory), "--state-file", str(state),
-                    "--health-channel", "C_HEALTH", "--now", "2026-07-13T10:05:00-04:00", "--dry-run",
+                    "--health-channel", "C_HEALTH", "--now", "2026-07-13T09:05:00-04:00", "--dry-run",
                 ],
                 check=False, capture_output=True, text=True,
             )
@@ -207,7 +207,7 @@ class DailyImprovementTests(unittest.TestCase):
             action="NO TRADE TODAY — HOLD VOO",
             what_to_do="Do not buy or sell anything.",
             why="The one-position cap is occupied.",
-            next_review="2026-07-14 09:45 ET",
+            next_review="2026-07-14 08:45 ET",
             live_trading_enabled=False,
             changes=("No material changes since the previous review.",),
             data_as_of={"quote": "2026-07-13T14:00:00+00:00"},

@@ -33,6 +33,12 @@ class EquityOrderRequest:
     limit_price: Decimal | None = None
     stop_price: Decimal | None = None
     extended_hours: bool = False
+    # Bracket legs (entry must be a limit buy). take_profit_price and
+    # bracket_stop_price attach OCO exit children at the broker (both
+    # required together). None = no bracket. Distinct from stop_price,
+    # which belongs to standalone stop/stop_limit entries.
+    take_profit_price: Decimal | None = None
+    bracket_stop_price: Decimal | None = None
 
 
 @dataclass(frozen=True)

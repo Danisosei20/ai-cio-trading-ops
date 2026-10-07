@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -35,6 +36,10 @@ class TradingViewChartAnalysis:
     source_url: str
     signal: Signal
     pattern: str = ""
+    candle_summary: str = ""
+    indicator_summary: str = ""
+    volume_summary: str = ""
+    diagram: str = ""
     notes: str = ""
 
     def validate(self, expected_symbol: str) -> None:
@@ -49,6 +54,78 @@ class TradingViewChartAnalysis:
             raise PolicyViolation("TradingView analysis requires a timeframe label.")
         if not self.source_url.strip().startswith("https://"):
             raise PolicyViolation("TradingView analysis requires an HTTPS source URL.")
+        self._validate_directional_consistency()
+
+    def render_summary(self) -> str:
+        lines = [
+            f"TradingView analysis: **{self.signal}**",
+            f"({self.symbol.upper()} · {self.exchange} · {self.timeframe})",
+            f"source {self.source_url}",
+        ]
+        if self.pattern.strip():
+            lines.append(f"pattern {self.pattern.strip()}")
+        if self.candle_summary.strip():
+            lines.append(f"candles {self.candle_summary.strip()}")
+        if self.indicator_summary.strip():
+            lines.append(f"indicators {self.indicator_summary.strip()}")
+        if self.volume_summary.strip():
+            lines.append(f"volume {self.volume_summary.strip()}")
+        if self.notes.strip():
+            lines.append(f"notes {self.notes.strip()}")
+        return " ".join(lines)
+
+    def render_diagram(self) -> str:
+        if self.diagram.strip():
+            return self.diagram.strip()
+        return "\n".join(
+            [
+                f"pattern   : {self.pattern.strip() or 'n/a'}",
+                f"candles   : {self.candle_summary.strip() or 'n/a'}",
+                f"indicators: {self.indicator_summary.strip() or 'n/a'}",
+                f"volume    : {self.volume_summary.strip() or 'n/a'}",
+            ]
+        )
+
+    def payload(self) -> dict[str, str]:
+        return asdict(self)
+
+    def _validate_directional_consistency(self) -> None:
+        text = " ".join(
+            part.strip().lower()
+            for part in (
+                self.pattern,
+                self.candle_summary,
+                self.indicator_summary,
+                self.volume_summary,
+                self.diagram,
+                self.notes,
+            )
+            if part.strip()
+        )
+        if not text:
+            return
+        bearish_terms = (
+            "bearish", "selloff", "breakdown", "lower low", "lower highs", "rejection",
+            "rejected", "weak", "distribution", "failed", "fade", "short", "downtrend",
+        )
+        bullish_terms = (
+            "bullish", "bull flag", "bull", "breakout", "higher low", "higher highs",
+            "reclaim", "accumulation", "support", "strong", "uptrend", "upside", "continuation",
+        )
+        bearish_hits = _matching_terms(text, bearish_terms)
+        bullish_hits = _matching_terms(text, bullish_terms)
+        if self.signal == "supportive" and bearish_hits:
+            raise PolicyViolation(
+                "TradingView structured analysis contains bearish language that conflicts with a supportive signal."
+            )
+        if self.signal == "neutral" and bullish_hits and bearish_hits:
+            raise PolicyViolation(
+                "TradingView structured analysis mixes bullish and bearish language; keep neutral observations clean."
+            )
+
+
+def _matching_terms(text: str, terms: tuple[str, ...]) -> list[str]:
+    return [term for term in terms if re.search(rf"\b{re.escape(term)}\b", text)]
 
 
 @dataclass(frozen=True)
@@ -202,6 +279,21 @@ class PaperAutoExecutor:
             authorization.approval_id,
             {day: _add_weekdays(date.today(), day).isoformat() for day in (1, 5, 20)},
         )
+        if context.tradingview_analysis is not None:
+            analysis_payload = context.tradingview_analysis.payload()
+            analysis_payload["diagram"] = context.tradingview_analysis.render_diagram()
+            analysis_payload["approval_id"] = authorization.approval_id
+            self.database.schedule_tradingview_learning(
+                authorization.approval_id,
+                {day: _add_weekdays(date.today(), day).isoformat() for day in (1, 5, 20)},
+                {
+                    "analysis": analysis_payload,
+                    "approval_id": authorization.approval_id,
+                    "candidate_snapshot_id": candidate.snapshot.digest(),
+                    "candidate_score": candidate.score,
+                    "market_regime": candidate.market_regime,
+                },
+            )
         self.journal.append({
             "event": "paper_policy_authorization",
             "approval_id": authorization.approval_id,
@@ -453,14 +545,7 @@ def _add_weekdays(start: date, days: int) -> date:
 def _format_tradingview_analysis(context: PaperEntryContext) -> str:
     if context.tradingview_analysis is not None:
         analysis = context.tradingview_analysis
-        bits = [
-            f"TradingView analysis: **{analysis.signal}**",
-            f"({analysis.symbol.upper()} · {analysis.exchange} · {analysis.timeframe})",
-            f"source {analysis.source_url}",
-        ]
-        if analysis.pattern.strip():
-            bits.append(f"pattern {analysis.pattern.strip()}")
-        if analysis.notes.strip():
-            bits.append(f"notes {analysis.notes.strip()}")
-        return " ".join(bits)
+        summary = analysis.render_summary()
+        diagram = analysis.render_diagram()
+        return f"{summary}\n```{diagram}```"
     return f"TradingView cross-check: **{context.tradingview_confirmation or 'not available'}**"

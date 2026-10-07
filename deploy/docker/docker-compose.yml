@@ -1,0 +1,47 @@
+# Local parity stack. App still uses SQLite; postgres/redis are provisioned
+# for the later ledger migration (no app dependency yet — see roadmap Phase 2+).
+services:
+  webhook:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      TRADING_MODE: research_only
+      TRADING_ENABLED: "false"
+      PAPER_TRADING_ENABLED: "false"
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET:-unset}
+    volumes:
+      - trading-outputs:/app/outputs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trading
+      # No default: set POSTGRES_PASSWORD in your shell (future ledger migration).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - trading-pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - trading-redis:/data
+    ports:
+      - "6379:6379"
+
+volumes:
+  trading-outputs:
+  trading-pgdata:
+  trading-redis:

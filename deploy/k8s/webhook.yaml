@@ -1,0 +1,114 @@
+# Paper webhook (alert receiver). Single replica: only one submitter per
+# symbol until leader election lands (roadmap). Research-only defaults come
+# from the ConfigMap, so a fresh install cannot place orders.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paper-webhook
+  namespace: trading
+  labels:
+    app: paper-webhook
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # no in-memory placement state; safe to recreate
+  selector:
+    matchLabels:
+      app: paper-webhook
+  template:
+    metadata:
+      labels:
+        app: paper-webhook
+    spec:
+      serviceAccountName: trading-webhook
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webhook
+          image: trading-paper:local # CI/pipeline retags per build
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+          envFrom:
+            - configMapRef:
+                name: trading-config
+          env:
+            - name: ALERT_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: trading-secrets
+                  key: ALERT_WEBHOOK_SECRET
+            - name: ALPACA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: trading-secrets
+                  key: ALPACA_API_KEY
+                  optional: true
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: trading-secrets
+                  key: ALPACA_SECRET_KEY
+                  optional: true
+          volumeMounts:
+            - name: outputs
+              mountPath: /app/outputs
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: outputs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paper-webhook
+  namespace: trading
+  labels:
+    app: paper-webhook
+spec:
+  type: ClusterIP
+  selector:
+    app: paper-webhook
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trading-webhook
+  namespace: trading
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: paper-webhook
+  namespace: trading
+spec:
+  minAvailable: 0 # single replica by design (see Deployment note)
+  selector:
+    matchLabels:
+      app: paper-webhook

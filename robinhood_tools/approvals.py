@@ -35,6 +35,8 @@ def order_fingerprint(request: EquityOrderRequest) -> str:
         "notional": _decimal_text(request.notional),
         "limit_price": _decimal_text(request.limit_price),
         "stop_price": _decimal_text(request.stop_price),
+        "take_profit_price": _decimal_text(request.take_profit_price),
+        "bracket_stop_price": _decimal_text(request.bracket_stop_price),
         "extended_hours": request.extended_hours,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

@@ -106,15 +106,22 @@ class AlpacaPaperBackend:
             estimated_cost = request.quantity * price
         fingerprint = order_fingerprint(request)
         review_id = f"alpaca-paper-review-{fingerprint}-{uuid.uuid4()}"
+        warnings = ["Alpaca paper fills are simulations and may differ from live execution."]
+        bracket = None
+        if request.take_profit_price is not None or request.bracket_stop_price is not None:
+            bracket = {"take_profit": str(request.take_profit_price),
+                       "stop": str(request.bracket_stop_price)}
+            warnings.append("Bracket exits (take-profit/stop) ride with this entry as OCO.")
         return OrderReview(
             review_id=review_id,
             account_id=request.account_id,
             estimated_cost=estimated_cost,
             estimated_quantity=request.quantity,
-            warnings=("Alpaca paper fills are simulations and may differ from live execution.",),
+            warnings=tuple(warnings),
             raw={
                 "broker": "alpaca", "environment": "paper", "asset_id": asset.get("id"),
                 "symbol": request.symbol.upper(), "order_fingerprint": fingerprint,
+                "bracket": bracket,
             },
         )
 
@@ -223,6 +230,12 @@ def _order_payload(request: EquityOrderRequest, review_id: str) -> dict[str, Any
         "extended_hours": request.extended_hours,
         "client_order_id": f"cio-{hashlib.sha256(review_id.encode()).hexdigest()[:40]}",
     }
+    if request.take_profit_price is not None or request.bracket_stop_price is not None:
+        payload["order_class"] = "bracket"
+        if request.take_profit_price is not None:
+            payload["take_profit"] = {"limit_price": str(request.take_profit_price)}
+        if request.bracket_stop_price is not None:
+            payload["stop_loss"] = {"stop_price": str(request.bracket_stop_price)}
     if request.quantity is not None:
         payload["qty"] = str(request.quantity)
     if request.notional is not None:

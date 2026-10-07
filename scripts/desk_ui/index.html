@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overview — AI Trading Desk</title>
+<link rel="stylesheet" href="/static/styles.css"></head><body>
+<nav class="top"><span class="brand">AI Trading Desk</span>
+<a data-page="index" href="/">Overview</a><a data-page="desk" href="/desk">Debates</a><a data-page="backtests" href="/backtests">Backtests</a><a data-page="positions" href="/positions">Positions</a><a data-page="logs" href="/logs">Logs</a><a data-page="health" href="/health">Health</a></nav>
+<div class="pills" id="pills"></div>
+<small id="clock" class="muted"></small>
+<div class="grid">
+<div class="card"><h2>Today</h2><div id="today">…</div></div>
+<div class="card"><h2>Autonomy</h2><div id="autonomy">…</div>
+<button id="kill" class="danger">STOP ALL TRADING</button>
+<button id="resume">Resume</button><br>
+<small>Kill blocks new orders immediately; never liquidates. Resume is explicit.</small></div>
+</div>
+<div class="card"><h2>Latest research</h2><div id="res">…</div></div>
+<div class="card"><h2>Position guard</h2><div id="guard">…</div></div>
+<script src="/static/app.js"></script>
+<script src="/static/index.js"></script></body></html>

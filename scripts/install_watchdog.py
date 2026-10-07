@@ -70,15 +70,15 @@ def main(argv=None) -> int:
     <string>--state-file</string><string>{escaped["state"]}</string>
     <string>--health-channel</string><string>{escaped["channel"]}</string>
     <string>--timezone</string><string>{escaped["timezone"]}</string>
-    <string>--scheduled-time</string><string>09:45</string>
+    <string>--scheduled-time</string><string>08:45</string>
     <string>--grace-minutes</string><string>15</string>
   </array>
   <key>StartCalendarInterval</key><array>
-    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
-    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
-    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
-    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
-    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
   </array>
   <key>StandardOutPath</key><string>{escaped["stdout"]}</string>
   <key>StandardErrorPath</key><string>{escaped["stderr"]}</string>
@@ -98,7 +98,7 @@ def main(argv=None) -> int:
                 "--state-file", state_file,
                 "--health-channel", channel,
                 "--timezone", timezone_name,
-                "--scheduled-time", "09:45",
+                "--scheduled-time", "08:45",
                 "--grace-minutes", "15",
                 "--test-alert",
             ],

@@ -31,7 +31,7 @@ For detailed rules, read:
    news, valuation, earnings, and fundamentals when making investment judgments. Persist a source-specific
    freshness manifest and fail closed on missing or stale required inputs.
 4. Separate facts from judgment. State uncertainty when data is incomplete.
-5. Score holdings and candidates using the policy and market-signal references, including liquidity, volume, trend, volatility, event risk, and execution quality.
+5. Score holdings and candidates using the policy and market-signal references, including liquidity, volume, trend, volatility, event risk, and execution quality. Treat official politician, insider, and professional-manager disclosures only as lagged zero-score context; never copy-trade them.
 6. Recommend `Hold`, `Add`, `Trim`, `Sell`, or `No Action`; never recommend action just to be active.
 7. Include portfolio health dashboard every time.
 8. Include counter-argument, probability, catalysts, portfolio impact, and bias check for any recommendation.

@@ -100,14 +100,14 @@ Phone routing is disabled. Slack mobile push notifications are the phone notific
 
 Use two separate weekday automations in U.S. Eastern Time:
 
-- `09:45 ET — AI CIO Daily Review`: reconciliation, portfolio health, research, watchlist, dashboard, and an
+- `08:45 ET — AI CIO Daily Review`: premarket reconciliation, portfolio health, research, watchlist, dashboard, and an
   action-first summary only. It must not place or cancel paper or live orders.
-- `11:35 ET — AI CIO Paper Session`: Alpaca paper only. It may autonomously place one unchanged policy-qualified
+- `10:15 ET — AI CIO Paper Session`: Alpaca paper only. It may autonomously place one unchanged policy-qualified
   DAY limit order after every session, data, score, liquidity, news, chart, price, cash, position, loss, earnings,
   cooldown, fingerprint, and internal policy-authorization gate passes. It sends Slack after the broker action
   and never opens an approval monitor.
 
-The later session lets the first two regular-session hours complete before a new entry can be considered. A
+The later session lets the first 45 regular-session minutes complete before a new entry can be considered. A
 live Robinhood lifecycle remains a manually active Codex task with matching explicit Codex approval.
 
 ## Daily Review Prompt
@@ -115,7 +115,7 @@ live Robinhood lifecycle remains a manually active Codex task with matching expl
 Use this as the Codex automation prompt:
 
 ```text
-Use $ai-cio-portfolio-manager to run the 09:45 ET read-only daily equity CIO review; options remain prohibited. Read TRADING_MODE before broker access. In paper_auto, use only the authenticated Alpaca paper account with the paper database/dashboard; never call Robinhood or Alpaca live. In live_approval, use only the Robinhood Agentic account with the live database/dashboard. In research_only, create no broker service. Never fall back between brokers. Resume recovery and reconcile the selected broker's positions, orders, fills, dividends, corporate actions, and uncertain approvals before research. Require complete source-specific freshness, current S&P 500 membership, a current quote, current news, company or SEC material, and another reliable source. Update only the selected mode's dashboard and journal. Record at most one shadow candidate or shadow no action, lead Slack with ACTION, WHAT YOU SHOULD DO, WHY, NEXT REVIEW, BROKER ENVIRONMENT, CHANGED SINCE YESTERDAY, and DATA AS OF, and clearly label blocked ideas WATCHLIST ONLY — NOT A BUY RECOMMENDATION. Never place or cancel a paper or live order, create a trade approval, or open a paper approval monitor. The separate 11:35 ET paper session owns autonomous paper entry. Slack is notification only. Update 1/5/20-day outcomes and change durable rules only after repeated documented evidence.
+Use $ai-cio-portfolio-manager to run the 08:45 ET read-only premarket equity CIO review; options remain prohibited. Read TRADING_MODE before broker access. In paper_auto, use only the authenticated Alpaca paper account with the paper database/dashboard; never call Robinhood or Alpaca live. In live_approval, use only the Robinhood Agentic account with the live database/dashboard. In research_only, create no broker service. Never fall back between brokers. Resume recovery and reconcile the selected broker's positions, orders, fills, dividends, corporate actions, and uncertain approvals before research. Require complete source-specific freshness, current S&P 500 membership, current premarket quote/news, company or SEC material, and another reliable source. Search official House and Senate PTRs, SEC Form 4, and selected professional-manager Form 13F filings as zero-score confirmation context; record transaction and filing dates, disclose lag, distinguish open-market trades from grants/plans, and never copy-trade. Update only the selected mode's dashboard and journal. Record at most one shadow candidate or shadow no action, lead Slack with ACTION, WHAT YOU SHOULD DO, WHY, NEXT REVIEW, BROKER ENVIRONMENT, CHANGED SINCE YESTERDAY, and DATA AS OF, and clearly label blocked ideas WATCHLIST ONLY — NOT A BUY RECOMMENDATION. Never place or cancel a paper or live order, create a trade approval, or open a paper approval monitor. The separate 10:15 ET paper session owns autonomous paper entry. Slack is notification only. Update 1/5/20-day outcomes and change durable rules only after repeated documented evidence.
 ```
 
 For Slack mobile push setup, see `docs/slack_required_tools.md`. Slack is a notification route unless a validated Slack reply-reading approval loop is added.
@@ -132,7 +132,7 @@ delivery verification.
 
 Install the independent missed-run watchdog with `python3 scripts/install_watchdog.py`. It stores the Slack bot
 token in the login Keychain, runs from Application Support rather than Desktop, and checks the automation memory
-at 10:05 ET on weekdays. It sends one deduplicated message to `HEALTH_SLACK_CHANNEL_ID` when the 09:45 review
+at 09:05 ET on weekdays. It sends one deduplicated message to `HEALTH_SLACK_CHANNEL_ID` when the 08:45 review
 has not completed after its grace period. A watchdog alert never creates trading authority.
 
 ## Production Connector Contract

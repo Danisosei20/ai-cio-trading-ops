@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Debates — AI Trading Desk</title>
+<link rel="stylesheet" href="/static/styles.css"></head><body>
+<nav class="top"><span class="brand">AI Trading Desk</span>
+<a data-page="index" href="/">Overview</a><a data-page="desk" href="/desk">Debates</a><a data-page="backtests" href="/backtests">Backtests</a><a data-page="positions" href="/positions">Positions</a><a data-page="logs" href="/logs">Logs</a><a data-page="health" href="/health">Health</a></nav>
+<h1>Desk debates</h1>
+<small>Bull/bear/red arguments with confidence; judge verdict + deterministic risk gate per candidate.</small>
+<div class="card"><label>Candidate <select id="cand"></select></label></div>
+<div class="card"><h2 id="chead">…</h2><div id="cbars"></div>
+<h3>Timeline</h3><ol class="timeline" id="ctimeline"></ol>
+<h3>Risk rules</h3><div id="crisk"></div></div>
+<script src="/static/app.js"></script>
+<script src="/static/desk.js"></script></body></html>

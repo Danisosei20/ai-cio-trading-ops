@@ -57,7 +57,8 @@ or aggregate technical rating as primary evidence, and never let TradingView rep
 bars, filings, earnings checks, or independent news. A conflicting TradingView chart blocks autonomous paper
 entry until reconciled; an unavailable TradingView session is not fabricated. When the browser produces a
 structured chart-analysis summary, record it as secondary confirmation only and keep the underlying chart
-evidence auditable.
+evidence auditable. Preserve candle, indicator, and volume context so later outcomes can learn repeatable
+patterns without elevating TradingView above broker data or independent research.
 
 For a panic-seller setup, require elevated relative volume plus a completed VWAP or opening-range reclaim and
 multiple higher-low or stabilization bars. Reject the setup when price is still discovering new lows, the spread

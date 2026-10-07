@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from .approvals import ApprovalRecord, order_fingerprint
@@ -14,7 +15,7 @@ from .models import EquityOrderRequest, OrderReview
 from .research import ResearchExperiment, ResearchRun
 
 
-DATABASE_SCHEMA_VERSION = 5
+DATABASE_SCHEMA_VERSION = 7
 
 
 class CioDatabase:
@@ -57,6 +58,33 @@ class CioDatabase:
                     recommendation_id TEXT NOT NULL, trading_day INTEGER NOT NULL,
                     due_date TEXT NOT NULL, completed_at TEXT, payload TEXT,
                     PRIMARY KEY(recommendation_id, trading_day)
+                );
+                CREATE TABLE IF NOT EXISTS tradingview_learning_events (
+                    event_id TEXT PRIMARY KEY,
+                    recommendation_id TEXT NOT NULL,
+                    approval_id TEXT,
+                    symbol TEXT NOT NULL,
+                    horizon_days INTEGER NOT NULL,
+                    due_date TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    exchange TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    signal TEXT NOT NULL,
+                    pattern TEXT NOT NULL,
+                    candle_summary TEXT NOT NULL,
+                    indicator_summary TEXT NOT NULL,
+                    volume_summary TEXT NOT NULL,
+                    diagram TEXT NOT NULL,
+                    market_regime TEXT NOT NULL,
+                    outcome_return_pct TEXT,
+                    benchmark_return_pct TEXT,
+                    thesis_accurate INTEGER,
+                    execution_slippage_pct TEXT,
+                    error_category TEXT,
+                    payload TEXT NOT NULL,
+                    CHECK(horizon_days IN (1,5,20))
                 );
                 CREATE TABLE IF NOT EXISTS deliveries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, approval_id TEXT NOT NULL,
@@ -171,10 +199,48 @@ class CioDatabase:
                     CHECK(market_regime IN ('risk_on','neutral','risk_off')),
                     CHECK(observation_count > 0)
                 );
+                CREATE TABLE IF NOT EXISTS trade_candidates (
+                    candidate_id TEXT PRIMARY KEY, symbol TEXT NOT NULL,
+                    side TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    CHECK(side IN ('buy','sell')),
+                    CHECK(status IN ('discovered','researching','debating','options_scanning','risk_review','approved','rejected'))
+                );
+                CREATE TABLE IF NOT EXISTS agent_opinions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    candidate_id TEXT NOT NULL, agent TEXT NOT NULL,
+                    verdict TEXT NOT NULL, confidence INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, evidence TEXT NOT NULL,
+                    FOREIGN KEY(candidate_id) REFERENCES trade_candidates(candidate_id),
+                    CHECK(agent IN ('market','news','macro','scout','bull','bear','red','judge')),
+                    CHECK(confidence BETWEEN 0 AND 100)
+                );
+                CREATE TABLE IF NOT EXISTS option_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    candidate_id TEXT NOT NULL, option_symbol TEXT NOT NULL,
+                    strike TEXT NOT NULL, expiry TEXT NOT NULL, right TEXT NOT NULL,
+                    bid TEXT NOT NULL, ask TEXT NOT NULL, spread_pct TEXT NOT NULL,
+                    iv TEXT, delta TEXT, open_interest INTEGER NOT NULL,
+                    volume INTEGER NOT NULL, selected INTEGER NOT NULL DEFAULT 0,
+                    rejection_reasons TEXT NOT NULL DEFAULT '[]',
+                    FOREIGN KEY(candidate_id) REFERENCES trade_candidates(candidate_id),
+                    CHECK(right IN ('call','put')),
+                    UNIQUE(candidate_id, option_symbol)
+                );
+                CREATE TABLE IF NOT EXISTS risk_decisions (
+                    decision_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
+                    approved INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    failed_rules TEXT NOT NULL, results TEXT NOT NULL,
+                    FOREIGN KEY(candidate_id) REFERENCES trade_candidates(candidate_id),
+                    CHECK(approved IN (0,1))
+                );
                 """
             )
             if db.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 0:
                 db.execute("INSERT INTO schema_version VALUES (?)", (DATABASE_SCHEMA_VERSION,))
+            else:
+                db.execute("UPDATE schema_version SET version=?", (DATABASE_SCHEMA_VERSION,))
             db.execute(
                 "INSERT OR IGNORE INTO system_controls VALUES('emergency_kill','off',?)",
                 (datetime.now(timezone.utc).isoformat(),),
@@ -477,6 +543,135 @@ class CioDatabase:
                 (correlation_id, approval_id, event, datetime.now(timezone.utc).isoformat(), json.dumps(payload, default=str)),
             )
 
+    def record_candidate(self, candidate_id: str, symbol: str, side: str,
+                           payload: dict | None = None) -> dict:
+        """Phase 2: persist a discovered candidate (DISCOVERED state)."""
+        if side not in {"buy", "sell"}:
+            raise PolicyViolation("Candidate side must be buy or sell.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            try:
+                db.execute(
+                    "INSERT INTO trade_candidates(candidate_id,symbol,side,status,created_at,updated_at,payload)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (candidate_id, symbol.upper(), side, "discovered", now, now,
+                     json.dumps(payload or {}, default=str)),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PolicyViolation(f"Duplicate candidate {candidate_id}.") from exc
+        return self.get_candidate(candidate_id)
+
+    def update_candidate_status(self, candidate_id: str, status: str) -> dict:
+        allowed = {"discovered", "researching", "debating", "options_scanning",
+                   "risk_review", "approved", "rejected"}
+        if status not in allowed:
+            raise PolicyViolation(f"Unknown candidate status {status}.")
+        with self.connect() as db:
+            row = db.execute(
+                "UPDATE trade_candidates SET status=?, updated_at=? WHERE candidate_id=?",
+                (status, datetime.now(timezone.utc).isoformat(), candidate_id),
+            )
+            if row.rowcount == 0:
+                raise PolicyViolation(f"Unknown candidate {candidate_id}.")
+        return self.get_candidate(candidate_id)
+
+    def get_candidate(self, candidate_id: str) -> dict:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM trade_candidates WHERE candidate_id=?",
+                             (candidate_id,)).fetchone()
+        if row is None:
+            raise PolicyViolation(f"Unknown candidate {candidate_id}.")
+        return dict(row)
+
+    def record_opinion(self, candidate_id: str, agent: str, verdict: str,
+                       confidence: int, evidence: dict | None = None) -> int:
+        """Phase 2: one agent's typed opinion on a candidate."""
+        if agent not in {"market", "news", "macro", "scout", "bull", "bear", "red", "judge"}:
+            raise PolicyViolation(f"Unknown agent {agent}.")
+        if not 0 <= confidence <= 100:
+            raise PolicyViolation("Confidence must be 0-100.")
+        with self.connect() as db:
+            try:
+                cursor = db.execute(
+                    "INSERT INTO agent_opinions(candidate_id,agent,verdict,confidence,created_at,evidence)"
+                    " VALUES(?,?,?,?,?,?)",
+                    (candidate_id, agent, verdict, confidence,
+                     datetime.now(timezone.utc).isoformat(),
+                     json.dumps(evidence or {}, default=str)),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PolicyViolation(f"Unknown candidate {candidate_id}.") from exc
+            return int(cursor.lastrowid)
+
+    def record_option_candidate(self, candidate_id: str, *, option_symbol: str,
+                                strike: Decimal, expiry: str, right: str,
+                                bid: Decimal, ask: Decimal, spread_pct: Decimal,
+                                iv: Decimal | None = None, delta: Decimal | None = None,
+                                open_interest: int = 0, volume: int = 0,
+                                rejection_reasons: list | None = None) -> int:
+        if right not in {"call", "put"}:
+            raise PolicyViolation("Option right must be call or put.")
+        with self.connect() as db:
+            try:
+                cursor = db.execute(
+                    "INSERT INTO option_candidates(candidate_id,option_symbol,strike,expiry,right,"
+                    "bid,ask,spread_pct,iv,delta,open_interest,volume,rejection_reasons)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (candidate_id, option_symbol, str(strike), expiry, right,
+                     str(bid), str(ask), str(spread_pct),
+                     None if iv is None else str(iv), None if delta is None else str(delta),
+                     open_interest, volume, json.dumps(rejection_reasons or [])),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PolicyViolation(f"Unknown candidate {candidate_id}.") from exc
+            return int(cursor.lastrowid)
+
+    def mark_option_selected(self, candidate_id: str, option_symbol: str) -> None:
+        with self.connect() as db:
+            row = db.execute(
+                "UPDATE option_candidates SET selected=1 WHERE candidate_id=? AND option_symbol=?",
+                (candidate_id, option_symbol),
+            )
+            if row.rowcount == 0:
+                raise PolicyViolation(f"Unknown option candidate {option_symbol}.")
+
+    def record_risk_decision(self, decision_id: str, candidate_id: str, *, approved: bool,
+                             failed_rules: list, results: list) -> None:
+        with self.connect() as db:
+            exists = db.execute("SELECT 1 FROM trade_candidates WHERE candidate_id=?",
+                                (candidate_id,)).fetchone()
+            if exists is None:
+                raise PolicyViolation(f"Unknown candidate {candidate_id}.")
+            try:
+                db.execute(
+                    "INSERT INTO risk_decisions(decision_id,candidate_id,approved,created_at,failed_rules,results)"
+                    " VALUES(?,?,?,?,?,?)",
+                    (decision_id, candidate_id, 1 if approved else 0,
+                     datetime.now(timezone.utc).isoformat(),
+                     json.dumps(failed_rules, default=str), json.dumps(results, default=str)),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PolicyViolation(f"Duplicate risk decision {decision_id}.") from exc
+
+    def list_trade_candidates(self, limit: int = 10) -> list[dict]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT * FROM trade_candidates ORDER BY updated_at DESC LIMIT ?",
+                (limit,))]
+
+    def candidate_timeline(self, candidate_id: str) -> dict:
+        """Full audit timeline: candidate + opinions + option scans + risk verdicts."""
+        candidate = self.get_candidate(candidate_id)
+        with self.connect() as db:
+            opinions = [dict(r) for r in db.execute(
+                "SELECT * FROM agent_opinions WHERE candidate_id=? ORDER BY id", (candidate_id,))]
+            options = [dict(r) for r in db.execute(
+                "SELECT * FROM option_candidates WHERE candidate_id=? ORDER BY id", (candidate_id,))]
+            decisions = [dict(r) for r in db.execute(
+                "SELECT * FROM risk_decisions WHERE candidate_id=? ORDER BY created_at", (candidate_id,))]
+        return {"candidate": candidate, "opinions": opinions,
+                "option_candidates": options, "risk_decisions": decisions}
+
     def save_exit_plan(self, symbol: str, payload: dict):
         with self.connect() as db:
             db.execute(
@@ -490,6 +685,166 @@ class CioDatabase:
                 "INSERT OR REPLACE INTO learning_checkpoints(recommendation_id,trading_day,due_date) VALUES(?,?,?)",
                 [(recommendation_id, day, due) for day, due in due_dates.items()],
             )
+
+    def schedule_tradingview_learning(
+        self, recommendation_id: str, due_dates: dict[int, str], payload: dict,
+    ) -> list[dict]:
+        analysis = payload.get("analysis", {}) if isinstance(payload, dict) else {}
+        rows = []
+        with self.connect() as db:
+            for horizon_days, due_date in due_dates.items():
+                event_id = f"{recommendation_id}:{horizon_days}"
+                row = (
+                    event_id,
+                    recommendation_id,
+                    payload.get("approval_id"),
+                    str(analysis.get("symbol", "")).upper(),
+                    horizon_days,
+                    due_date,
+                    datetime.now(timezone.utc).isoformat(),
+                    None,
+                    str(analysis.get("exchange", "")),
+                    str(analysis.get("timeframe", "")),
+                    str(analysis.get("source_url", "")),
+                    str(analysis.get("signal", "")),
+                    str(analysis.get("pattern", "")),
+                    str(analysis.get("candle_summary", "")),
+                    str(analysis.get("indicator_summary", "")),
+                    str(analysis.get("volume_summary", "")),
+                    str(analysis.get("diagram", "")),
+                    str(payload.get("market_regime", "unknown")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    self._json(payload),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO tradingview_learning_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    row,
+                )
+                rows.append(dict(
+                    event_id=event_id,
+                    recommendation_id=recommendation_id,
+                    approval_id=payload.get("approval_id"),
+                    symbol=str(analysis.get("symbol", "")).upper(),
+                    horizon_days=horizon_days,
+                    due_date=due_date,
+                    observed_at=row[6],
+                    completed_at=None,
+                    exchange=str(analysis.get("exchange", "")),
+                    timeframe=str(analysis.get("timeframe", "")),
+                    source_url=str(analysis.get("source_url", "")),
+                    signal=str(analysis.get("signal", "")),
+                    pattern=str(analysis.get("pattern", "")),
+                    candle_summary=str(analysis.get("candle_summary", "")),
+                    indicator_summary=str(analysis.get("indicator_summary", "")),
+                    volume_summary=str(analysis.get("volume_summary", "")),
+                    diagram=str(analysis.get("diagram", "")),
+                    market_regime=str(payload.get("market_regime", "unknown")),
+                    outcome_return_pct=None,
+                    benchmark_return_pct=None,
+                    thesis_accurate=None,
+                    execution_slippage_pct=None,
+                    error_category=None,
+                    payload=payload,
+                ))
+        return rows
+
+    def complete_tradingview_learning(
+        self,
+        recommendation_id: str,
+        horizon_days: int,
+        *,
+        outcome_return_pct: str | None,
+        benchmark_return_pct: str | None,
+        thesis_accurate: bool | None,
+        execution_slippage_pct: str | None,
+        error_category: str | None = None,
+    ) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            changed = db.execute(
+                "UPDATE tradingview_learning_events SET completed_at=?, outcome_return_pct=?, benchmark_return_pct=?, "
+                "thesis_accurate=?, execution_slippage_pct=?, error_category=? "
+                "WHERE recommendation_id=? AND horizon_days=?",
+                (now, outcome_return_pct, benchmark_return_pct,
+                 None if thesis_accurate is None else int(thesis_accurate),
+                 execution_slippage_pct, error_category, recommendation_id, horizon_days),
+            ).rowcount
+            if changed != 1:
+                raise PolicyViolation(
+                    f"TradingView learning event {recommendation_id!r} for horizon {horizon_days} was not found."
+                )
+            row = db.execute(
+                "SELECT * FROM tradingview_learning_events WHERE recommendation_id=? AND horizon_days=?",
+                (recommendation_id, horizon_days),
+            ).fetchone()
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def list_tradingview_learning_events(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM tradingview_learning_events ORDER BY observed_at DESC, horizon_days LIMIT ?",
+                (limit,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"])
+            result.append(item)
+        return result
+
+    def tradingview_pattern_summary(self, limit: int = 20) -> list[dict]:
+        groups: dict[tuple[str, str, str, str, str], dict] = {}
+        for row in self.list_tradingview_learning_events(500):
+            key = (
+                str(row["signal"]),
+                str(row["pattern"]),
+                str(row["candle_summary"]),
+                str(row["indicator_summary"]),
+                str(row["volume_summary"]),
+            )
+            group = groups.setdefault(key, {
+                "signal": row["signal"],
+                "pattern": row["pattern"],
+                "candle_summary": row["candle_summary"],
+                "indicator_summary": row["indicator_summary"],
+                "volume_summary": row["volume_summary"],
+                "observations": 0,
+                "completed": 0,
+                "average_excess_return": Decimal("0"),
+                "thesis_accuracy": Decimal("0"),
+            })
+            group["observations"] += 1
+            if row["completed_at"] is None:
+                continue
+            group["completed"] += 1
+            outcome = Decimal(str(row["outcome_return_pct"]))
+            benchmark = Decimal(str(row["benchmark_return_pct"]))
+            group["average_excess_return"] += outcome - benchmark
+            if row["thesis_accurate"] is not None:
+                group["thesis_accuracy"] += Decimal(int(row["thesis_accurate"]))
+
+        summarized: list[dict] = []
+        for group in groups.values():
+            completed = group["completed"] or 1
+            summarized.append({
+                "signal": group["signal"],
+                "pattern": group["pattern"],
+                "candle_summary": group["candle_summary"],
+                "indicator_summary": group["indicator_summary"],
+                "volume_summary": group["volume_summary"],
+                "observations": group["observations"],
+                "completed": group["completed"],
+                "average_excess_return": str(group["average_excess_return"] / completed if group["completed"] else Decimal("0")),
+                "thesis_accuracy": str(group["thesis_accuracy"] / completed if group["completed"] else Decimal("0")),
+            })
+        summarized.sort(key=lambda item: (item["completed"], item["observations"]), reverse=True)
+        return summarized[:limit]
 
     def record_shadow_recommendation(
         self, *, recommendation_id: str, run_key: str, symbol: str | None, score: int | None,
@@ -932,10 +1287,12 @@ class CioDatabase:
     def audit_export(self) -> dict:
         tables = ("approvals", "audit_events", "exit_plans", "learning_checkpoints", "deliveries",
                   "daily_runs", "processed_slack_messages", "slack_reply_windows", "trade_lifecycles",
-                  "order_fills", "strategy_observations", "dashboard_snapshots", "symbol_cooldowns",
+                  "order_fills", "strategy_observations", "tradingview_learning_events",
+                  "dashboard_snapshots", "symbol_cooldowns",
                   "daily_run_checkpoints", "shadow_equity_recommendations", "daily_review_states",
                   "freshness_manifests", "broker_state_snapshots", "broker_events", "health_alerts",
-                  "decision_records", "research_experiments", "research_experiment_runs")
+                  "decision_records", "research_experiments", "research_experiment_runs",
+                  "trade_candidates", "agent_opinions", "option_candidates", "risk_decisions")
         with self.connect() as db:
             return {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")] for table in tables}
 

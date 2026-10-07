@@ -63,3 +63,7 @@ live authority. Replace human approval only with a durable internal policy autho
 atomic reservation, regular-session limit order, bounded per-order and per-symbol exposure, reconciliation, and
 post-trade notification. Treat chart-driven capitulation rules as paper experiments until repeated outcomes
 support them; never promise profitability or optimize policy from isolated wins.
+
+Treat public politician, insider, and manager filings as delayed research evidence rather than trading signals.
+Require official sources and explicit lag, contribute zero score, and prohibit copy trading. Re-evaluate the
+usefulness of each disclosure type only after comparable paper outcomes, not because a famous filer had one win.

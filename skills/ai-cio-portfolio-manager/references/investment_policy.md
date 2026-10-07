@@ -18,6 +18,7 @@ Evaluate the full available portfolio and market context:
 - Capital allocation, dilution, buybacks, dividends
 - Competitive advantage and industry structure
 - Insider and institutional activity when available
+- Official House/Senate transaction disclosures when available, with reporting lag shown
 - Analyst revisions and estimate direction
 - Relative strength versus S&P 500 and sector
 - Valuation versus peers and own history
@@ -29,6 +30,11 @@ Evaluate the full available portfolio and market context:
 - Upcoming earnings, filings, dividends, and other binary events
 
 Use current data for time-sensitive facts.
+
+Politician, insider, and professional-manager disclosures are secondary context, not recommendations. Use only
+official House/Senate financial-disclosure records and SEC filings, show the transaction/reporting period and
+filing lag, distinguish open-market trades from grants, gifts, exercises, and planned sales, and assign zero
+candidate-score points. Never copy-trade a filer or assume a disclosed position remains open.
 
 Persist a source-specific freshness manifest with observation timestamps for broker account state,
 positions/orders/fills, quotes/spreads/volume, regime inputs, earnings and corporate events, index membership,

@@ -56,7 +56,7 @@ def main(argv=None) -> int:
     parser.add_argument("--state-file", required=True)
     parser.add_argument("--health-channel", required=True)
     parser.add_argument("--timezone", default="America/New_York")
-    parser.add_argument("--scheduled-time", default="09:45")
+    parser.add_argument("--scheduled-time", default="08:45")
     parser.add_argument("--grace-minutes", type=int, default=15)
     parser.add_argument("--automation-id", default="ai-cio-daily-review")
     parser.add_argument("--keychain-service", default="openai.ai-cio-watchdog.slack")
