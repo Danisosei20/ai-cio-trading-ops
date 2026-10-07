@@ -158,10 +158,13 @@ class OptionOrderPathTest(unittest.TestCase):
         self.db.approve(auth.approval_id)
         for i, change in enumerate(({"direction": "credit"},
                                      {"option_id": "bogus-id-1"})):
-            new_leg = dataclasses.replace(base.legs[0], **change)
-            mutated = OptionOrderRequest(account_id="sim-1", legs=(new_leg,),
-                                         order_type="limit", time_in_force="gfd",
-                                         limit_price=Decimal("4.10"))
+            if "direction" in change:
+                mutated = dataclasses.replace(base, **change)
+            else:
+                new_leg = dataclasses.replace(base.legs[0], **change)
+                mutated = OptionOrderRequest(account_id="sim-1", legs=(new_leg,),
+                                             order_type="limit", time_in_force="gfd",
+                                             limit_price=Decimal("4.10"))
             with self.subTest(mutation=i):
                 with self.assertRaises(PolicyViolation):
                     self.service.place_option_order(
