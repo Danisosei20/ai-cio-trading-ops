@@ -68,6 +68,43 @@ def validate_option_order_request(request: OptionOrderRequest) -> None:
             raise PolicyViolation("Each option leg strike_price must be greater than zero.")
 
 
+def validate_paper_long_option(request: OptionOrderRequest) -> None:
+    """Paper-authorized scope: single-leg long openers only.
+
+    No spreads, no naked short, no 0DTE screening here (DTE gates belong to
+    the scout + risk layers with real chain data).
+    """
+    validate_option_order_request(request)
+    if len(request.legs) != 1:
+        raise PolicyViolation("Paper options are single-leg long only.")
+    leg = request.legs[0]
+    if leg.side != "buy" or leg.effect != "open":
+        raise PolicyViolation("Paper options open long positions only.")
+
+
+def validate_paper_long_close(request: OptionOrderRequest) -> None:
+    """Paper-authorized exits: single-leg closes of long positions."""
+    validate_option_order_request(request)
+    if len(request.legs) != 1:
+        raise PolicyViolation("Paper option exits are single-leg only.")
+    leg = request.legs[0]
+    if leg.side != "sell" or leg.effect != "close":
+        raise PolicyViolation("Paper option exits must sell to close.")
+
+
+def validate_paper_option_request(request: OptionOrderRequest) -> None:
+    """Dispatch openers and closers; reject everything else."""
+    validate_option_order_request(request)
+    if len(request.legs) != 1:
+        raise PolicyViolation("Paper options are single-leg only.")
+    leg = request.legs[0]
+    if leg.side == "buy" and leg.effect == "open":
+        return validate_paper_long_option(request)
+    if leg.side == "sell" and leg.effect == "close":
+        return validate_paper_long_close(request)
+    raise PolicyViolation("Paper options allow buy/open and sell/close only.")
+
+
 def require_confirmation(confirmation: bool, action: str) -> None:
     if not confirmation:
         raise ConfirmationRequired(f"Explicit confirmation is required before {action}.")

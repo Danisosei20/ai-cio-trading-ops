@@ -32,3 +32,6 @@ class RobinhoodBackend(Protocol):
 
     def review_option_order(self, request: OptionOrderRequest) -> OrderReview:
         """Return a pre-trade review for an option order without placing it."""
+
+    def place_option_order(self, request: OptionOrderRequest, review_id: str | None) -> Order:
+        """Place a real option order."""

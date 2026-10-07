@@ -35,4 +35,6 @@ class PaperTradingBackend:
         return CancelResult(order_id, order.account_id, "cancelled", raw={"paper": True})
 
     def review_option_order(self, request):
-        raise RuntimeError("Options are disabled in paper and live CIO policy.")
+        from .errors import PolicyViolation
+
+        raise PolicyViolation("Options are disabled in the connector-free simulator.")

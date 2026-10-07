@@ -195,6 +195,9 @@ class AlpacaPaperBackend:
     def review_option_order(self, request: OptionOrderRequest) -> OrderReview:
         raise PolicyViolation("Options are disabled in Alpaca paper and Robinhood live CIO policy.")
 
+    def place_option_order(self, request: OptionOrderRequest, review_id: str | None) -> Order:
+        raise PolicyViolation("Equity venue cannot place options; route through AlpacaOptionsBackend.")
+
     def _account(self) -> dict[str, Any]:
         account = self.transport.request("GET", "/v2/account")
         if not isinstance(account, dict):

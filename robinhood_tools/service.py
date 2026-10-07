@@ -11,7 +11,7 @@ from .policy import (
     require_confirmation,
     require_explicit_account,
     validate_equity_order_request,
-    validate_option_order_request,
+    validate_paper_option_request,
 )
 from typing import Any, Callable
 
@@ -103,6 +103,51 @@ class RobinhoodTradingService:
             self.approval_store.mark_executed(approval_id)
         return order
 
+    def place_option_order(
+        self,
+        request: OptionOrderRequest,
+        *,
+        review_id: str,
+        approval_id: str,
+        confirmed: bool,
+    ) -> Order:
+        """Long-option placement behind the same guards as equity.
+
+        Paper-authorized scope only: the backend must enforce long-only.
+        """
+        self.authorizer.require("robinhood.read", "robinhood.trade_review", "robinhood.trade_write")
+        if self.broker_environment != "paper":
+            raise PolicyViolation("Option orders are paper-only.")
+        if self.execution_guard:
+            self.execution_guard()
+        account = require_explicit_account(request.account_id, self.backend.list_accounts())
+        require_agentic_account(account)
+        validate_paper_option_request(request)
+        if not review_id:
+            raise PolicyViolation("A review_id is required before placing an option order.")
+        if not approval_id:
+            raise PolicyViolation("An approval_id is required before placing an option order.")
+        if not self.approval_store:
+            raise PolicyViolation("A durable approval store is required for real order placement.")
+        if self.require_human_confirmation:
+            require_confirmation(confirmed, "placing a real option order")
+        reserve = getattr(self.approval_store, "reserve_option_execution", None)
+        if reserve is None:
+            raise PolicyViolation("The approval store does not support option execution.")
+        reserve(approval_id, request, review_id)
+        try:
+            order = self.backend.place_option_order(request, review_id)
+        except Exception as exc:
+            reconcile = getattr(self.approval_store, "mark_reconciliation_required", None)
+            if reconcile:
+                reconcile(approval_id, str(exc))
+            raise
+        try:
+            self.approval_store.mark_executed(approval_id, order.id)
+        except TypeError:
+            self.approval_store.mark_executed(approval_id)
+        return order
+
     def cancel_equity_order(self, *, account_id: str, order_id: str, confirmed: bool) -> CancelResult:
         self.authorizer.require("robinhood.read", "robinhood.trade_write")
         account = require_explicit_account(account_id, self.backend.list_accounts())
@@ -115,7 +160,9 @@ class RobinhoodTradingService:
 
     def review_option_order(self, request: OptionOrderRequest) -> OrderReview:
         self.authorizer.require("robinhood.read", "robinhood.option_review")
+        if self.broker_environment != "paper":
+            raise PolicyViolation("Option orders are paper-only.")
         account = require_explicit_account(request.account_id, self.backend.list_accounts())
         require_agentic_account(account)
-        validate_option_order_request(request)
+        validate_paper_option_request(request)
         return self.backend.review_option_order(request)

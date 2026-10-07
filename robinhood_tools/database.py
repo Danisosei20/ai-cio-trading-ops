@@ -507,6 +507,46 @@ class CioDatabase:
                 raise PolicyViolation(f"Approval {approval_id!r} cannot be reserved from status {row['status']!r}.")
             db.execute("COMMIT")
 
+    def create_option_approval(self, request, review, *, window_minutes: int, approval_id=None):
+        """Ledger authorization for single-leg long option orders."""
+        from .approvals import option_fingerprint as _option_fingerprint
+
+        now = datetime.now(timezone.utc)
+        record = ApprovalRecord(
+            approval_id=approval_id or str(uuid.uuid4()), review_id=review.review_id,
+            order_fingerprint=_option_fingerprint(request), account_id=request.account_id,
+            symbol=request.legs[0].symbol.upper(), created_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=window_minutes)).isoformat(), broker_review=review.raw,
+        )
+        with self.connect() as db:
+            try:
+                db.execute(
+                    "INSERT INTO approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (record.approval_id, record.review_id, record.order_fingerprint, record.account_id,
+                     record.symbol, record.created_at, record.expires_at, record.status, None, None,
+                     json.dumps(record.broker_review), None, None),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PolicyViolation("Approval ID already exists.") from exc
+        return record
+
+    def reserve_option_execution(self, approval_id: str, request, review_id: str):
+        from .approvals import option_fingerprint as _option_fingerprint
+
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self._row(db, approval_id)
+            self._expire(db, row)
+            if row["review_id"] != review_id or row["order_fingerprint"] != _option_fingerprint(request):
+                raise PolicyViolation("Approval does not match the exact reviewed option order.")
+            changed = db.execute(
+                "UPDATE approvals SET status='executing' WHERE approval_id=? AND status='approved'",
+                (approval_id,),
+            ).rowcount
+            if changed != 1:
+                raise PolicyViolation(f"Approval {approval_id!r} cannot be reserved from status {row['status']!r}.")
+            db.execute("COMMIT")
+
     def mark_executed(self, approval_id: str, order_id: str | None = None):
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as db:

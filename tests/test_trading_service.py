@@ -204,6 +204,10 @@ class RobinhoodTradingServiceTests(unittest.TestCase):
             self.service.review_equity_order(request)
 
     def test_option_review_requires_agentic_account_and_limit_order(self):
+        paper = RobinhoodTradingService(
+            self.backend, approval_store=self.approvals, sp500_snapshot=self.sp500,
+            broker_environment="paper", require_human_confirmation=False,
+        )
         request = OptionOrderRequest(
             account_id="agentic",
             legs=(
@@ -222,8 +226,30 @@ class RobinhoodTradingServiceTests(unittest.TestCase):
             limit_price=Decimal("2.50"),
             direction="debit",
         )
-        review = self.service.review_option_order(request)
+        review = paper.review_option_order(request)
         self.assertEqual(review.review_id, "option-review-1")
+
+    def test_option_review_refused_in_live_environment(self):
+        request = OptionOrderRequest(
+            account_id="agentic",
+            legs=(
+                OptionLeg(
+                    symbol="VOO",
+                    side="buy",
+                    effect="open",
+                    option_type="call",
+                    expiration_date="2026-12-18",
+                    strike_price=Decimal("500"),
+                    quantity=1,
+                ),
+            ),
+            order_type="limit",
+            time_in_force="gfd",
+            limit_price=Decimal("2.50"),
+            direction="debit",
+        )
+        with self.assertRaises(PolicyViolation):
+            self.service.review_option_order(request)
 
     def test_connector_unavailable_is_reported_before_backend_call(self):
         service = RobinhoodTradingService(

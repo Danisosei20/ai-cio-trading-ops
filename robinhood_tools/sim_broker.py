@@ -310,6 +310,12 @@ class SimulationBroker:
     def cancel_equity_order(self, order_id: str) -> CancelResult:
         return self.cancel_order(order_id)
 
+    def review_option_order(self, request) -> OrderReview:
+        return self.review_order(request)
+
+    def place_option_order(self, request, review_id: str | None) -> Order:
+        return self.place_order(request, review_id)
+
     def settle_expired(self, today: str) -> list[dict]:
         """Cash-settle long options at/after expiry; worthless when OTM."""
         from datetime import date as _date
@@ -349,16 +355,11 @@ class SimulationBroker:
             raise PolicyViolation(f"Fill {price} outside {symbol} day range; refusing.")
 
     def _single_long_leg(self, request: OptionOrderRequest):
+        from .policy import validate_paper_option_request
+
+        validate_paper_option_request(request)
         legs = list(request.legs)
-        if len(legs) != 1:
-            raise PolicyViolation("Simulation supports single-leg long options only.")
         leg = legs[0]
-        if request.order_type != "limit":
-            raise PolicyViolation("Simulation option orders must be limit.")
-        if leg.side == "buy" and leg.effect != "open":
-            raise PolicyViolation("Simulation buys must open a long position.")
-        if leg.side == "sell" and leg.effect != "close":
-            raise PolicyViolation("Simulation sells must close a long position.")
         if leg.side not in {"buy", "sell"}:
             raise PolicyViolation("Leg side must be buy or sell.")
         quote = self.get_option_quote(leg.symbol)

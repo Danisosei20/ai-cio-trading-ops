@@ -23,7 +23,9 @@ AI research → backtests → incubation → alert webhooks → auto-execution �
 - `TRADING_MODE=paper_auto`, `TRADING_ENABLED=false`, `PAPER_TRADING_ENABLED=true`.
 - S&P500-only buys, DAY limit orders only, no price chasing.
 - `.env` git-ignored, chmod 600. Secret scan clean.
-- Equity only. Options are disabled by policy (`review_option_order` raises).
+- Equity only, except: 2026-10-07 owner authorization permits **long calls/puts
+  in paper only** (0DTE, naked, short-premium disabled; read layer live-tested,
+  order layer reviewed, first live probe review-only 2026-10-07).
 
 ## Known gaps
 

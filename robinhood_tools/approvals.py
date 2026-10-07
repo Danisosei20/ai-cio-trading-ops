@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from .errors import PolicyViolation
-from .models import EquityOrderRequest, OrderReview
+from .models import EquityOrderRequest, OptionOrderRequest, OrderReview
 
 ApprovalStatus = Literal[
     "pending", "approved", "executing", "executed", "failed",
@@ -38,6 +38,32 @@ def order_fingerprint(request: EquityOrderRequest) -> str:
         "take_profit_price": _decimal_text(request.take_profit_price),
         "bracket_stop_price": _decimal_text(request.bracket_stop_price),
         "extended_hours": request.extended_hours,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def option_fingerprint(request: OptionOrderRequest) -> str:
+    """Fingerprint for single-leg option openers and closers (legs fully bound)."""
+    payload = {
+        "account_id": request.account_id,
+        "order_type": request.order_type,
+        "time_in_force": request.time_in_force,
+        "limit_price": _decimal_text(request.limit_price),
+        "direction": request.direction,
+        "legs": [
+            {
+                "symbol": leg.symbol.upper(),
+                "side": leg.side,
+                "effect": leg.effect,
+                "option_type": leg.option_type,
+                "option_id": leg.option_id,
+                "expiration_date": leg.expiration_date,
+                "strike_price": _decimal_text(leg.strike_price),
+                "quantity": leg.quantity,
+            }
+            for leg in request.legs
+        ],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

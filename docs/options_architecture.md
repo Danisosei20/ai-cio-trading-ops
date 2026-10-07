@@ -1,13 +1,12 @@
 # Options Architecture — requires an explicit owner decision first
 
-> **Policy conflict, read before building.** This repository is equity-only
-> by checked-in policy: `AlpacaPaperBackend.review_option_order` and the
-> paper simulator raise on any option order, and live buys are restricted
-> to S&P500 equity. Options trading therefore requires an explicit,
-> human-approved policy change (config + investment-policy docs + risk
-> limits), not a quiet code addition. Nothing in this file authorizes
-> options trading. Phase 2+ options work starts only after the owner
-> records that decision.
+> **Policy update 2026-10-07.** The owner explicitly authorized long
+> calls/puts in paper only (0DTE, naked short, and short premium remain
+> disabled). Read layer (`alpaca_options.py`) is live-tested against the
+> paper account; order layer (review → fingerprint → ledger → place →
+> reconcile) is implemented and sim-tested with one live review-only probe
+> (no order placed). Autonomous options execution still requires the
+> strategy layer + evidence gate, and live options remain fully off.
 
 ## Why options change the risk profile
 
