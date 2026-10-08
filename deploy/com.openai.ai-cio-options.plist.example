@@ -14,6 +14,12 @@
     <string>scripts/tradingagents_paper_auto.py</string><string>--screen</string><string>outputs/screener/latest.json</string><string>--screen-top</string><string>2</string><string>--options</string>
   </array>
   <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <!-- LLM key: launchd agents do NOT inherit shell env. Replace with the real
+       key at install time (file lives outside git in ~/Library/LaunchAgents). -->
+  <key>EnvironmentVariables</key><dict>
+    <key>NVIDIA_API_KEY</key><string>REPLACE_WITH_NVIDIA_API_KEY</string>
+    <key>SEC_EDGAR_USER_AGENT</key><string>desk-research@localhost</string>
+  </dict>
   <key>StartCalendarInterval</key><array><dict>
     <key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>20</integer>
   </dict><dict>
