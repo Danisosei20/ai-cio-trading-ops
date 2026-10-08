@@ -88,7 +88,7 @@ def load_lessons() -> dict:
         return {}
 
 
-TRIGGER_TICKERS = ("NVDA", "MRNA", "VRSN", "TSLA", "QQQ", "SPY")
+TRIGGER_TICKERS = ("NVDA", "MRNA", "VRSN", "TSLA", "QQQ", "SPY", "AMD")
 
 
 def load_triggers() -> list[dict]:
