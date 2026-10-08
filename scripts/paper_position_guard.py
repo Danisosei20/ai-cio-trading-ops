@@ -66,6 +66,8 @@ def main(argv=None) -> int:
     results = []
     for p in backend.list_positions():
         symbol = str(p.get("symbol", "")).upper()
+        if len(symbol) > 10:
+            continue  # OCC option contract: owned by options_guard
         if only and symbol not in only:
             continue
         try:
