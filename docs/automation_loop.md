@@ -29,3 +29,14 @@ Notes:
 - Watch everything at the desk UI (`scripts/desk_server.py --port 8100).
 - Logs: `outputs/paper-trader.log`, `outputs/paper-guard.log`,
   `outputs/screener.log`, `outputs/paper/tradingagents/live.log`.
+
+## Standing authorization (owner, 2026-10-08)
+
+The owner grants the desk standing authority to day-trade autonomously
+in paper and to send Slack alerts without per-trade approval. Standing
+limits that remain in force unless explicitly changed:
+
+- Paper only. Live Robinhood stays approval-gated per trade, always.
+- $500/order paper caps, S&P500 + ETF allowlist, session windows,
+  review → ledger → guarded placement on every order.
+- Slack is notify-only and never authorizes anything.
