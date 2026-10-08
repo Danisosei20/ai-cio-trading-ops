@@ -76,8 +76,18 @@ def watch() -> int:
     for sym, sig in current["guard"].items():
         if sig in {"STOP", "TARGET"} and previous.get("guard", {}).get(sym) != sig:
             notes.append(f"Guard {sig}: {sym}")
+    fills = [n for n in notes if n.startswith("Order ")]
+    guard = [n for n in notes if n.startswith("Guard ")]
+    positions = [n for n in notes if n not in fills and n not in guard]
+    blocks = ["*Desk alert*"]
+    if fills:
+        blocks.append("*Orders*\n• " + "\n• ".join(fills))
+    if guard:
+        blocks.append("*Guard*\n• " + "\n• ".join(guard))
+    if positions:
+        blocks.append("*Positions*\n• " + "\n• ".join(positions))
     if notes:
-        send("Desk alert:\n- " + "\n- ".join(notes))
+        send("\n\n".join(blocks))
         print("notified:", len(notes))
     else:
         print("no changes.")
