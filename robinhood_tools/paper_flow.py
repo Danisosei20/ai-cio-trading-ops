@@ -81,8 +81,9 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     cap = min(cap, settings.risk_limits.max_order_value)
     if order.quantity is None or order.limit_price is None:
         raise PolicyViolation("Quantity and limit price are required.")
-    if order.quantity * order.limit_price > cap:
+    if order.side == "buy" and order.quantity * order.limit_price > cap:
         raise PolicyViolation(f"Order value exceeds ${cap} paper cap.")
+    # Sells are never capped: blocking an exit traps risk instead of limiting it.
 
     if service is None:
         from datetime import datetime, timezone

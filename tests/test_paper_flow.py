@@ -81,6 +81,13 @@ class PaperFlowTest(unittest.TestCase):
             self.place(quantity=Decimal("10"))
         self.assertEqual(self.db.list_approvals(10), [])
 
+    def test_sells_ignore_cap(self):
+        result = self.place_with(
+            __import__("robinhood_tools.paper_flow", fromlist=["SignalOrder"]).SignalOrder(
+                symbol="NVDA", side="sell", quantity=Decimal("10"),
+                limit_price=Decimal("230.00")))
+        self.assertEqual(result["action"], "sell_placed")
+
     def test_kill_switch_blocks(self):
         self.db.set_emergency_kill(True)
         with self.assertRaises(PolicyViolation):
