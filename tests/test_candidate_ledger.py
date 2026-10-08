@@ -111,6 +111,21 @@ class CandidateLedgerTest(unittest.TestCase):
         with self.assertRaises(PolicyViolation):
             self.db.record_option_candidate("c1", **kwargs)
 
+    def test_learning_checkpoint_lifecycle(self):
+        self.db.schedule_learning("rec1", {1: "2026-10-08", 5: "2026-10-14"})
+        due = self.db.due_learning_checkpoints("2026-10-08")
+        self.assertEqual(len(due), 1)
+        self.db.complete_learning_checkpoint("rec1", 1)
+        self.assertEqual(self.db.due_learning_checkpoints("2026-10-08"), [])
+        with self.assertRaises(PolicyViolation):
+            self.db.complete_learning_checkpoint("rec1", 1)
+
+    def test_approval_record_carries_order_id(self):
+        from robinhood_tools.approvals import ApprovalRecord
+        rec = ApprovalRecord(approval_id="a", review_id="r", order_fingerprint="f",
+                             account_id="x", symbol="NVDA", created_at="t", expires_at="e")
+        self.assertIsNone(rec.order_id)
+
     def test_audit_export_includes_candidate_ledger(self):
         self.db.record_candidate("c1", "NVDA", "buy")
         self.db.record_opinion("c1", "bull", "bullish", 80, {})

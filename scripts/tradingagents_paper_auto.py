@@ -79,6 +79,9 @@ def log_line(message: str) -> None:
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Autonomous TradingAgents -> Alpaca paper trader.")
     p.add_argument("--tickers", default="NVDA", help="comma list, e.g. NVDA,AAPL,MSFT")
+    p.add_argument("--options", action="store_true",
+                   help="trade long calls/puts instead of stock (paper-authorized)")
+    p.add_argument("--premium-cap", type=Decimal, default=Decimal("250"))
     p.add_argument("--screen", default="",
                    help="screen JSON (outputs/screener/latest.json); overrides --tickers with top-N")
     p.add_argument("--screen-top", type=int, default=2,

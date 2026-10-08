@@ -574,6 +574,7 @@ class CioDatabase:
             symbol=row["symbol"], created_at=row["created_at"], expires_at=row["expires_at"],
             status=row["status"], approved_at=row["approved_at"], executed_at=row["executed_at"],
             broker_review=json.loads(row["broker_review"] or "null"),
+            order_id=row["order_id"] if "order_id" in row.keys() else None,
         )
 
     def audit(self, event: str, payload: dict, *, correlation_id: str, approval_id: str | None = None):
@@ -1104,6 +1105,23 @@ class CioDatabase:
                 "UPDATE health_alerts SET status=?,completed_at=?,error=? WHERE alert_key=?",
                 ("sent" if sent else "failed", datetime.now(timezone.utc).isoformat(), error, alert_key),
             )
+
+    def complete_learning_checkpoint(self, recommendation_id: str, trading_day: int) -> None:
+        with self.connect() as db:
+            changed = db.execute(
+                "UPDATE learning_checkpoints SET completed_at=? "
+                "WHERE recommendation_id=? AND trading_day=? AND completed_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), recommendation_id, trading_day),
+            ).rowcount
+            if changed != 1:
+                raise PolicyViolation("Learning checkpoint not found or already completed.")
+
+    def due_learning_checkpoints(self, today: str) -> list[dict]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT * FROM learning_checkpoints WHERE due_date<=? AND completed_at IS NULL "
+                "ORDER BY due_date",
+                (today,))]
 
     def record_strategy_observation(
         self, *, recommendation_id: str, symbol: str, strategy_version: str,

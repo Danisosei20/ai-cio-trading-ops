@@ -78,6 +78,16 @@ def load_research(root: Path, limit: int = 30) -> list[dict]:
     return rows[:limit]
 
 
+def load_lessons() -> dict:
+    f = Path("outputs/paper/lessons.json")
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return {}
+
+
 def load_backtest() -> dict:
     f = Path("outputs/backtests/latest.json")
     if not f.exists():
@@ -239,6 +249,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"tail": load_log()})
             elif parsed.path == "/api/guard":
                 self._send(200, load_guard())
+            elif parsed.path == "/api/lessons":
+                self._send(200, load_lessons())
             else:
                 self._send(404, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # noqa: BLE001

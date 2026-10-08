@@ -82,6 +82,7 @@ class ApprovalRecord:
     approved_at: str | None = None
     executed_at: str | None = None
     broker_review: dict | None = None
+    order_id: str | None = None
 
 
 class JsonApprovalStore:

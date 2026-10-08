@@ -1,6 +1,6 @@
 async function tick(){
  try{
-  const [h,a,r,g]=await Promise.all([api('/api/health'),api('/api/account'),api('/api/research'),api('/api/guard')]);
+  const [h,a,r,g,l]=await Promise.all([api('/api/health'),api('/api/account'),api('/api/research'),api('/api/guard'),api('/api/lessons')]);
   $('pills').innerHTML=
    pill('LIVE '+(h.live_enabled?'ON':'OFF'),h.live_enabled?'bad':'ok')+' '+
    pill('PAPER '+(h.paper_auto?'AUTO':'OFF'),h.paper_auto?'info':'warn')+' '+
@@ -32,6 +32,9 @@ async function tick(){
    `<div><b>${esc(p.symbol)}</b> ${esc(p.qty)} @ $${esc(p.entry)} → $${esc(p.mark)} `+
    `<b>${esc(p.signal)}</b> (${esc(p.return_pct)}) · stop $${esc(p.stop)} · target $${esc(p.target)}</div>`).join('')
    :'<span class="empty">No guarded positions.</span>';
+  $('lessons').innerHTML=l.standing&&l.standing.length?'<ul>'+
+   l.standing.map(s=>`<li><b>${esc(s.lesson)}</b><br><small>${esc(s.evidence||'')} → ${esc(s.rule||'')}</small></li>`).join('')+'</ul>':
+   '<span class="empty">No lessons recorded yet.</span>';
  }catch(e){showError('today',e);}
 }
 $('kill').onclick=async()=>{if(!confirm('STOP ALL trading? (positions kept, no liquidation)'))return;
