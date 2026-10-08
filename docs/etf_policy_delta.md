@@ -9,7 +9,7 @@ Purchase universe widens exactly this much:
 
 ```text
 BEFORE: S&P 500 constituents only (buys)
-AFTER:  S&P 500 constituents + allowlisted index ETFs (SPY, QQQ) for buys
+AFTER:  S&P 500 constituents + allowlisted index ETFs (SPY, QQQ, DIA, IWM, XLK, XLF — expanded 2026-10-08) for buys
 ```
 
 Everything else is untouched: earnings blackout, caps, session window,

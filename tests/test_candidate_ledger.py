@@ -145,11 +145,14 @@ class CandidateLedgerTest(unittest.TestCase):
         from robinhood_tools.universe import Sp500Snapshot
 
         fresh = Sp500Snapshot(frozenset({"NVDA"}), datetime.now(ZoneInfo("America/New_York")).isoformat(),
-                              "https://example.com/sp500", index_etfs=frozenset({"SPY"}))
+                              "https://example.com/sp500",
+                              index_etfs=frozenset({"SPY", "QQQ", "DIA", "IWM", "XLK", "XLF"}))
         fresh.require_eligible_purchase("nvda")  # case-insensitive member
         fresh.require_eligible_purchase("SPY")  # allowlisted ETF
+        for good in ("DIA", "IWM", "XLK", "XLF"):
+            fresh.require_eligible_purchase(good)
         with self.assertRaises(PolicyViolation):
-            fresh.require_eligible_purchase("DIA")  # not listed anywhere
+            fresh.require_eligible_purchase("TLT")  # not listed anywhere
         stale = Sp500Snapshot(frozenset({"NVDA"}), "2020-01-01T00:00:00+00:00",
                               "https://example.com/sp500", index_etfs=frozenset({"SPY"}))
         with self.assertRaises(PolicyViolation):

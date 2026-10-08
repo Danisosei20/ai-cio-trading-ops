@@ -34,7 +34,8 @@ class PaperFlowTest(unittest.TestCase):
         backend = PaperTradingBackend(
             [Account("sim-1", "Sim", True, account_type="paper")],
             {"NVDA": Decimal("230.00"), "SPY": Decimal("600.00"),
-             "DIA": Decimal("400.00")})
+             "DIA": Decimal("400.00"), "IWM": Decimal("200.00"),
+             "XLK": Decimal("100.00"), "XLF": Decimal("50.00")})
         import dataclasses as _dc
 
         snap = snapshot()
@@ -101,12 +102,17 @@ class PaperFlowTest(unittest.TestCase):
         self.assertEqual(self.db.list_approvals(10), [])
 
     def test_etf_allowlist(self):
-        self.assertEqual(tuple(self.settings.index_etf_allowlist), ("SPY", "QQQ"))
+        self.assertEqual(tuple(self.settings.index_etf_allowlist),
+                         ("SPY", "QQQ", "DIA", "IWM", "XLK", "XLF"))
         spy = self.place(symbol="SPY", side="buy", quantity=Decimal("1"),
                          limit_price=Decimal("400.00"))
         self.assertEqual(spy["action"], "buy_placed")
+        for good in ("DIA", "IWM", "XLK", "XLF"):
+            allowed = self.place(symbol=good, side="buy", quantity=Decimal("1"),
+                                 limit_price=Decimal("400.00"))
+            self.assertEqual(allowed["action"], "buy_placed")
         with self.assertRaises(PolicyViolation):
-            self.place(symbol="DIA", side="buy", quantity=Decimal("1"),
+            self.place(symbol="TLT", side="buy", quantity=Decimal("1"),
                        limit_price=Decimal("400.00"))
 
     def test_bad_shape_blocked(self):

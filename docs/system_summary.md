@@ -21,7 +21,7 @@ AI research → backtests → incubation → alert webhooks → auto-execution �
 ## Safety posture
 
 - `TRADING_MODE=paper_auto`, `TRADING_ENABLED=false`, `PAPER_TRADING_ENABLED=true`.
-- S&P500 + allowlisted index ETF (SPY, QQQ) buys (authorized 2026-10-08), DAY limit orders only, no price chasing.
+- S&P500 + allowlisted index ETFs (SPY, QQQ, DIA, IWM, XLK, XLF) buys, DAY limit orders only, no price chasing.
 - `.env` git-ignored, chmod 600. Secret scan clean.
 - Equity only, except: 2026-10-07 owner authorization permits **long calls/puts
   in paper only** (0DTE, naked, short-premium disabled; read layer live-tested,
