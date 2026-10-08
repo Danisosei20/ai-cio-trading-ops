@@ -42,13 +42,15 @@ spec:
             httpGet:
               path: /api/health
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
+            timeoutSeconds: 15
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /api/health
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
+            timeoutSeconds: 10
             periodSeconds: 10
           resources:
             requests:
