@@ -10,7 +10,8 @@
   },
   "investment_policy": {
     "strategy_version": "v1",
-    "purchase_universe": "sp500_current_constituents_only",
+    "purchase_universe": "sp500_plus_index_etfs",
+    "index_etf_allowlist": ["SPY", "QQQ"],
     "membership_max_age_hours": 24,
     "require_live_quote": true,
     "require_current_news": true,

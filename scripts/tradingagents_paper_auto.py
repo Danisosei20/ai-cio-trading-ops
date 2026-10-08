@@ -311,7 +311,12 @@ def main(argv=None) -> int:
         set_stage(ticker, "researching", "TradingAgents analysts running")
         log_line(f"[{ticker}] researching ({trade_date}) via {args.provider}/{args.quick_model}")
         try:
-            snapshot.require_current_member(ticker)
+            import dataclasses as _dc
+
+            _snap = snapshot
+            if settings.index_etf_allowlist:
+                _snap = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
+            _snap.require_eligible_purchase(ticker)
             set_stage(ticker, "researching", "S&P500 OK, LLM debate running")
             decision, meta = run_research(ticker, trade_date, args)
             rec.update(meta)

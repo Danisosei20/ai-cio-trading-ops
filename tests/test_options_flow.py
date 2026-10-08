@@ -83,6 +83,30 @@ class OptionsFlowTest(unittest.TestCase):
                 premium_cap=Decimal("500"), database=self.db, service=self.service,
                 today=date(2026, 10, 7))
 
+    def test_snapshot_none_blocked(self):
+        from robinhood_tools.options_flow import place_long_option
+
+        with self.assertRaises(PolicyViolation):
+            place_long_option(
+                settings=self.settings, snapshot=None, quote=quote(),
+                contracts=1, earnings_date=date(2026, 11, 20),
+                premium_cap=Decimal("500"), database=self.db, service=self.service,
+                today=date(2026, 10, 7))
+
+    def test_empty_allowlist_blocks_etf(self):
+        import dataclasses
+
+        from robinhood_tools.paper_flow import SignalOrder, place_signal_order
+
+        bare = dataclasses.replace(self.settings, index_etf_allowlist=())
+        with self.assertRaises(PolicyViolation):
+            place_signal_order(
+                settings=bare, snapshot=snapshot(),
+                order=SignalOrder(symbol="SPY", side="buy", quantity=Decimal("1"),
+                                  limit_price=Decimal("400.00"),
+                                  earnings_date=date(2026, 11, 20)),
+                database=self.db, service=self.service, today=date(2026, 10, 6))
+
     def test_non_member_and_earnings_block(self):
         other = Sp500Snapshot(frozenset({"AAPL"}), datetime.now(ET).isoformat(),
                               "https://example.com/sp500")

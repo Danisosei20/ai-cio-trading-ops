@@ -212,12 +212,12 @@ class RobinhoodTradingServiceTests(unittest.TestCase):
             account_id="agentic",
             legs=(
                 OptionLeg(
-                    symbol="VOO",
+                    symbol="AAPL261120C00250000",
                     side="buy",
                     effect="open",
                     option_type="call",
                     expiration_date="2026-12-18",
-                    strike_price=Decimal("500"),
+                    strike_price=Decimal("250"),
                     quantity=1,
                 ),
             ),
@@ -228,6 +228,27 @@ class RobinhoodTradingServiceTests(unittest.TestCase):
         )
         review = paper.review_option_order(request)
         self.assertEqual(review.review_id, "option-review-1")
+
+    def test_equity_review_etf_allowlist(self):
+        import dataclasses
+        from datetime import datetime, timezone
+
+        from robinhood_tools.universe import Sp500Snapshot
+
+        snap = Sp500Snapshot(frozenset({"VOO"}),
+                             datetime.now(timezone.utc).isoformat(),
+                             "https://example.com/sp500",
+                             index_etfs=frozenset({"SPY"}))
+        paper = RobinhoodTradingService(
+            self.backend, approval_store=self.approvals, sp500_snapshot=snap,
+            broker_environment="paper", require_human_confirmation=False,
+        )
+        spy = dataclasses.replace(equity_request(), symbol="SPY")
+        review = paper.review_equity_order(spy)
+        self.assertTrue(review.review_id)
+        dia = dataclasses.replace(equity_request(), symbol="DIA")
+        with self.assertRaises(PolicyViolation):
+            paper.review_equity_order(dia)
 
     def test_option_review_refused_in_live_environment(self):
         request = OptionOrderRequest(

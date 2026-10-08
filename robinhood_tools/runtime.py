@@ -75,6 +75,7 @@ class RuntimeSettings:
         default_factory=lambda: {"risk_on": 90, "neutral": 93, "risk_off": 97}
     )
     earnings_blackout_days: int = 5
+    index_etf_allowlist: tuple[str, ...] = ()
 
     def require_live_trading(self) -> None:
         if self.mode != "live_approval" or not self.trading_enabled:
@@ -204,6 +205,9 @@ def build_settings(config_path="config/approval_routes.json", env_path=".env") -
             "risk_off": int(config["entry_controls"]["risk_off_minimum_score"]),
         },
         earnings_blackout_days=int(config["entry_controls"]["earnings_blackout_trading_days"]),
+        index_etf_allowlist=tuple(
+            str(s).upper() for s in config.get("investment_policy", {}).get("index_etf_allowlist", [])
+        ),
         # The base/live risk profile remains independent from paper-only overrides.
         # Remaining fields follow below.
         health_channel_id=config.get("channels", {}).get("health_slack", {}).get("channel_id", ""),

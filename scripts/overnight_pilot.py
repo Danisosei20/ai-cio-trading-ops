@@ -119,7 +119,12 @@ def main(argv=None) -> int:
         for ticker in tickers:
             rec = {"ticker": ticker, "mode": "enter", "action": "skip", "reason": ""}
             try:
-                snapshot.require_current_member(ticker)
+                import dataclasses as _dc
+
+                _snap = snapshot
+                if settings.index_etf_allowlist:
+                    _snap = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
+                _snap.require_eligible_purchase(ticker)
                 hist = yf.Ticker(ticker).history(period="1y", interval="1d")
                 closes = [float(v) for v in hist["Close"].dropna()]
                 if not uptrend_ok(closes, args.trend):

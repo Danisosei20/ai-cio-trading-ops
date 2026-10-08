@@ -138,6 +138,27 @@ class CandidateLedgerTest(unittest.TestCase):
         self.assertEqual(len(export["trade_candidates"]), 1)
         self.assertEqual(len(export["agent_opinions"]), 1)
 
+    def test_eligible_purchase(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from robinhood_tools.universe import Sp500Snapshot
+
+        fresh = Sp500Snapshot(frozenset({"NVDA"}), datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                              "https://example.com/sp500", index_etfs=frozenset({"SPY"}))
+        fresh.require_eligible_purchase("nvda")  # case-insensitive member
+        fresh.require_eligible_purchase("SPY")  # allowlisted ETF
+        with self.assertRaises(PolicyViolation):
+            fresh.require_eligible_purchase("DIA")  # not listed anywhere
+        stale = Sp500Snapshot(frozenset({"NVDA"}), "2020-01-01T00:00:00+00:00",
+                              "https://example.com/sp500", index_etfs=frozenset({"SPY"}))
+        with self.assertRaises(PolicyViolation):
+            stale.require_eligible_purchase("SPY")  # stale evidence fails even ETFs
+        plain = Sp500Snapshot(frozenset({"NVDA"}), datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                              "https://example.com/sp500")
+        with self.assertRaises(PolicyViolation):
+            plain.require_eligible_purchase("SPY")  # no allowlist, no entry
+
     def test_list_trade_candidates_order(self):
         self.db.record_candidate("c1", "NVDA", "buy")
         self.db.record_candidate("c2", "AAPL", "sell")

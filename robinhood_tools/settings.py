@@ -20,6 +20,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
     },
     "investment_policy": {
         "strategy_version": None, "purchase_universe": None, "membership_max_age_hours": None,
+        "index_etf_allowlist": None,
         "require_live_quote": None, "require_current_news": None,
         "minimum_independent_research_sources": None, "require_volume_liquidity_analysis": None,
         "require_execution_quality_analysis": None, "require_trend_volatility_event_analysis": None,

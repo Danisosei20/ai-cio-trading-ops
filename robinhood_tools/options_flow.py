@@ -52,11 +52,16 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
 
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
+    if snapshot is not None and settings.index_etf_allowlist:
+        import dataclasses as _dc
+
+        snapshot = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
 
     contract = quote.contract
     symbol = contract.underlying
-    if snapshot is not None:
-        snapshot.require_current_member(symbol)
+    if snapshot is None:
+        raise PolicyViolation("No membership evidence; option openers blocked.")
+    snapshot.require_eligible_purchase(symbol)
     require_earnings_clear(today=today, earnings_date=earnings_date,
                            blackout_days=settings.earnings_blackout_days)
 

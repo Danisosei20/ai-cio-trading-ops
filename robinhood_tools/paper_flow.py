@@ -68,11 +68,15 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
     db.require_no_symbol_cooldown(order.symbol, today=today.isoformat())
+    if snapshot is not None and settings.index_etf_allowlist:
+        import dataclasses as _dc
+
+        snapshot = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
     symbol = order.symbol.upper()
     if order.side == "buy":
         if snapshot is None:
             raise PolicyViolation("No S&P 500 membership evidence; buys blocked.")
-        snapshot.require_current_member(symbol)
+        snapshot.require_eligible_purchase(symbol)
         require_earnings_clear(today=today, earnings_date=order.earnings_date,
                                blackout_days=settings.earnings_blackout_days)
 

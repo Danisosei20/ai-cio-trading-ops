@@ -125,7 +125,12 @@ def handle_alert(payload: dict, settings, env: dict) -> dict:
 
     symbols, as_of = fetch_sp500()
     snapshot = Sp500Snapshot(symbols=symbols, as_of=as_of, source_url=SP500_URL)
-    snapshot.require_current_member(symbol)
+    import dataclasses as _dc
+
+    if settings.index_etf_allowlist:
+        snapshot = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
+    if side == "buy":
+        snapshot.require_eligible_purchase(symbol)
 
     cost = limit * qty
     cap = min(Decimal("500"), settings.risk_limits.max_order_value)

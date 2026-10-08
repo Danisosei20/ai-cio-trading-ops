@@ -151,3 +151,16 @@ def intrinsic_value(contract: OptionContract, underlying: Decimal) -> Decimal:
     if contract.right == "call":
         return max(underlying - contract.strike, Decimal("0"))
     return max(contract.strike - underlying, Decimal("0"))
+
+
+def underlying_from_occ(option_symbol: str) -> str:
+    """Root symbol from a standard OCC symbol (trailing 6-digit date + CP + 8-digit strike)."""
+    text = option_symbol.strip().upper()
+    if len(text) <= 15 or not text[-15:-9].isdigit() or text[-9] not in {"C", "P"}:
+        raise PolicyViolation(f"Not a standard OCC option symbol: {option_symbol}.")
+    if not text[-8:].isdigit():
+        raise PolicyViolation(f"Not a standard OCC option symbol: {option_symbol}.")
+    root = text[:-15]
+    if not root:
+        raise PolicyViolation(f"Not a standard OCC option symbol: {option_symbol}.")
+    return root

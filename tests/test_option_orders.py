@@ -35,8 +35,15 @@ class OptionOrderPathTest(unittest.TestCase):
         self.db = CioDatabase(Path(self.temp.name) / "cio.db")
         quote = self._quote()
         self.sim = SimulationBroker(option_quotes={quote.contract.option_symbol: quote})
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        from robinhood_tools.universe import Sp500Snapshot as _Snap
+
+        snap = _Snap(frozenset({"NVDA"}), _dt.now(_tz.utc).isoformat(),
+                     "https://example.com/sp500", index_etfs=frozenset({"SPY"}))
         self.service = RobinhoodTradingService(
-            self.sim, approval_store=self.db, sp500_snapshot=None,
+            self.sim, approval_store=self.db, sp500_snapshot=snap,
             broker_environment="paper", require_human_confirmation=False)
 
     def tearDown(self):
@@ -78,6 +85,44 @@ class OptionOrderPathTest(unittest.TestCase):
             self.service.place_option_order(
                 request(limit_price=Decimal("9.99")), review_id=review.review_id,
                 approval_id=auth.approval_id, confirmed=False)
+
+    def test_service_option_universe_gate(self):
+        import dataclasses
+
+        from robinhood_tools.options import OptionContract, OptionQuote
+
+        contract = OptionContract("SPY", "2026-11-20", Decimal("680"), "call",
+                                  "SPY261120C00680000")
+        quote = OptionQuote(contract, Decimal("9.00"), Decimal("9.20"), Decimal("670.00"),
+                            "2026-10-07T12:00:00+00:00", delta=Decimal("0.45"),
+                            open_interest=5000, volume=900)
+        self.sim.update_option_quotes({contract.option_symbol: quote})
+        import datetime as _dt
+
+        snap = __import__("robinhood_tools.universe", fromlist=["Sp500Snapshot"]).Sp500Snapshot(
+            frozenset({"NVDA"}), _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "https://example.com/sp500", index_etfs=frozenset({"SPY"}))
+        self.service.sp500_snapshot = snap
+        leg = OptionLeg(symbol=contract.option_symbol, side="buy", effect="open",
+                        option_type="call", expiration_date="2026-11-20",
+                        strike_price=Decimal("680"), quantity=1)
+        req = OptionOrderRequest(account_id="sim-1", legs=(leg,), order_type="limit",
+                                 time_in_force="gfd", limit_price=Decimal("9.30"))
+        review = self.service.review_option_order(req)
+        self.assertIn("alpaca-paper-option-review" if False else "sim-review", review.review_id)
+        dia = dataclasses.replace(leg, symbol="DIA261120C00450000")
+        with self.assertRaises(PolicyViolation):
+            self.service.review_option_order(OptionOrderRequest(
+                account_id="sim-1", legs=(dia,), order_type="limit",
+                time_in_force="gfd", limit_price=Decimal("9.30")))
+
+    def test_underlying_from_occ(self):
+        from robinhood_tools.options import underlying_from_occ
+
+        self.assertEqual(underlying_from_occ("NVDA261120C00240000"), "NVDA")
+        self.assertEqual(underlying_from_occ("SPY261120P00685000"), "SPY")
+        with self.assertRaises(PolicyViolation):
+            underlying_from_occ("NVDA")
 
     def test_short_not_permitted(self):
         bad = OptionOrderRequest(account_id="sim-1",

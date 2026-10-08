@@ -33,9 +33,15 @@ class PaperFlowTest(unittest.TestCase):
         self.db = CioDatabase(Path(self.temp.name) / "cio.db")
         backend = PaperTradingBackend(
             [Account("sim-1", "Sim", True, account_type="paper")],
-            {"NVDA": Decimal("230.00")})
+            {"NVDA": Decimal("230.00"), "SPY": Decimal("600.00"),
+             "DIA": Decimal("400.00")})
+        import dataclasses as _dc
+
+        snap = snapshot()
+        if self.settings.index_etf_allowlist:
+            snap = _dc.replace(snap, index_etfs=frozenset(self.settings.index_etf_allowlist))
         self.service = RobinhoodTradingService(
-            backend, approval_store=self.db, sp500_snapshot=snapshot(),
+            backend, approval_store=self.db, sp500_snapshot=snap,
             broker_environment="paper", require_human_confirmation=False)
 
     def tearDown(self):
@@ -93,6 +99,15 @@ class PaperFlowTest(unittest.TestCase):
         with self.assertRaises(PolicyViolation):
             self.place()
         self.assertEqual(self.db.list_approvals(10), [])
+
+    def test_etf_allowlist(self):
+        self.assertEqual(tuple(self.settings.index_etf_allowlist), ("SPY", "QQQ"))
+        spy = self.place(symbol="SPY", side="buy", quantity=Decimal("1"),
+                         limit_price=Decimal("400.00"))
+        self.assertEqual(spy["action"], "buy_placed")
+        with self.assertRaises(PolicyViolation):
+            self.place(symbol="DIA", side="buy", quantity=Decimal("1"),
+                       limit_price=Decimal("400.00"))
 
     def test_bad_shape_blocked(self):
         with self.assertRaises(PolicyViolation):
