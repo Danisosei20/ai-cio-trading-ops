@@ -4,7 +4,7 @@ Paper-only. Never touches Robinhood live or Alpaca live.
 - Live kill switch stays off: refuses unless mode=paper_auto,
   PAPER_TRADING_ENABLED=true, TRADING_ENABLED=false, broker=alpaca paper.
 - Session gate enforced by the paper service execution guard
-  (10:15-15:30 ET weekdays + Alpaca market clock open). Outside the
+  (10:15-15:45 ET weekdays + Alpaca market clock open). Outside the
   window it researches and exits with a skip reason, no order.
 - Per ticker: TradingAgents (default nvidia/kimi-k3, proven working) ->
   Buy/Overweight => buy, Sell/Underweight => sell held position, else hold.

@@ -8,7 +8,7 @@ Any FAIL blocks the trade. No agent output can change a FAIL to PASS.
 1. **Mode/policy layer** — correct environment for the broker
    (`paper_auto`+Alpaca / `live_approval`+Robinhood), kill switches off,
    autonomy enabled for autonomous paths, execution policy permits the action.
-2. **Session layer** — weekday, 10:15–15:30 ET (configurable), market clock
+2. **Session layer** — weekday, 10:15–15:45 ET (configurable), market clock
    open when `regular_session_only`. Outside window: research allowed,
    placement refused.
 3. **Universe layer** — buys only in verified current S&P500 constituents
@@ -60,7 +60,7 @@ MAX_CONSECUTIVE_LOSSES     = 3
 MIN_CONFIDENCE             = 75
 MIN_DTE / MAX_DTE          = 7 / 60     (options; 0DTE disabled)
 EARNINGS_BLACKOUT          = 5 trading days
-SESSION                    = 10:15–15:30 ET, regular session only
+SESSION                    = 10:15–15:45 ET, regular session only
 ```
 
 ## Implementation note

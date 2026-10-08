@@ -19,7 +19,7 @@ Gates (paper-only, fail closed):
   stdlib-only by design and performs no earnings lookup itself)
 - $500 order/symbol cap, buying-power check, DAY limit only
 - Alpaca review fingerprint + CioDatabase approval ledger + atomic place
-- Session guard via the paper service (10:15-15:30 ET + clock open);
+- Session guard via the paper service (10:15-15:45 ET + clock open);
   outside the window the alert is recorded as rejected_window, never queued
 
 Run (TradingAgents venv not required, stdlib only):

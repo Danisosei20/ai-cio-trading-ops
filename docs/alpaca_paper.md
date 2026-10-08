@@ -56,7 +56,7 @@ then compare them with the decision snapshot at the 1-, 5-, and 20-day checkpoin
 
 Autonomous paper execution removes the human approval pause only for Alpaca paper. It retains a durable internal
 policy authorization, exact fingerprint, atomic execution reservation, idempotent client order ID, and broker
-reconciliation. Entries are regular-session DAY limit orders from 10:15 through 15:30 ET, at the unchanged
+reconciliation. Entries are regular-session DAY limit orders from 10:15 through 15:45 ET, at the unchanged
 reviewed price, with no more than $500 per order or $500 total exposure to one symbol. The one-position cap,
 $50 cash floor, daily/weekly realized-loss stops, earnings blackout, cooldown, current S&P 500 membership,
 freshness, score, liquidity, news, and source rules remain enforced.

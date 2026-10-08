@@ -46,7 +46,7 @@
     "max_symbol_exposure_usd": 500,
     "regular_session_only": true,
     "earliest_entry_time_et": "10:15",
-    "latest_entry_time_et": "15:30",
+    "latest_entry_time_et": "15:45",
     "require_limit_orders": true,
     "forbid_price_chasing": true,
     "notify_slack_after_execution": true,
