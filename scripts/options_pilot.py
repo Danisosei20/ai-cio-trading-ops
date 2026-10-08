@@ -31,6 +31,8 @@ def parse_args(argv=None):
     p.add_argument("--direction", default="call", choices=["call", "put"])
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
     p.add_argument("--max-contracts", type=int, default=3)
+    p.add_argument("--qty", type=int, default=0,
+                   help="exact contracts (owner-directed); capped by premium-cap")
     p.add_argument("--max-positions", type=int, default=5,
                    help="max open option positions (OCC symbols held)")
     p.add_argument("--max-age-minutes", type=int, default=5,
@@ -90,7 +92,13 @@ def main(argv=None) -> int:
     quote, rejected = pick_long_option(
         data=data, underlying=ticker, spot=spot,
         direction="bullish" if args.direction == "call" else "bearish", today=today)
-    contracts = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
+    auto_qty = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
+    contracts = args.qty if args.qty > 0 else auto_qty
+    if args.qty > 0 and quote.ask * contracts * 100 > args.premium_cap:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "reason": f"directed qty {contracts} costs "
+                          f"${quote.ask * contracts * 100:.2f} over ${args.premium_cap} cap"}))
+        return 0
     if contracts < 1:
         print(json.dumps({"ticker": ticker, "action": "skip",
                           "reason": f"ask {quote.ask} exceeds ${args.premium_cap} cap"}))
