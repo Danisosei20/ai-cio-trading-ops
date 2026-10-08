@@ -268,6 +268,23 @@ class OptionGuardTest(unittest.TestCase):
             decide(Decimal("0"), Decimal("100"), 30, 1,
                    Decimal("0.5"), Decimal("0.5"), 2, 5)
 
+    def test_watchlist_format(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "options_watchlist", Path("scripts/options_watchlist.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = [{"ticker": "NVDA", "spot": "237.08", "spot_source": "alpaca-iex",
+                 "call": {"contract": "NVDA261120C00240000", "strike": "240",
+                          "bid": "10.69", "ask": "10.79", "delta": "0.508",
+                          "iv": "0.3422", "premium": "1079.00", "over_cap": False},
+                 "put": None}]
+        text = mod.format_watchlist(rows, "2026-10-08")
+        self.assertIn("*Options watch", text)
+        self.assertIn("NVDA261120C00240000", text)
+        self.assertIn("no liquid candidate", text)
+
     def test_occ_details(self):
         from robinhood_tools.options import occ_details
 

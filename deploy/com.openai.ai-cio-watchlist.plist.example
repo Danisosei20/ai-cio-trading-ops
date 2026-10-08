@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Options watchlist: weekdays 15:10 ET posts the end-of-day call/put
+  shopping list to Slack. Research only, never orders.
+  Install: replace REPLACE_WITH_* placeholders, then
+    cp deploy/com.openai.ai-cio-watchlist.plist.example ~/Library/LaunchAgents/com.openai.ai-cio-watchlist.plist
+    launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-watchlist.plist
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.openai.ai-cio-watchlist</string>
+  <key>ProgramArguments</key><array>
+    <string>REPLACE_WITH_TRADINGAGENTS_VENV_BIN/python</string>
+    <string>scripts/options_watchlist.py</string><string>--send</string>
+  </array>
+  <key>WorkingDirectory</key><string>REPLACE_WITH_REPOSITORY_PATH</string>
+  <key>StartCalendarInterval</key><array><dict>
+    <key>Weekday</key><integer>2</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>10</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>3</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>10</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>4</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>10</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>10</integer>
+  </dict><dict>
+    <key>Weekday</key><integer>6</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>10</integer>
+  </dict></array>
+  <key>StandardOutPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/watchlist.log</string>
+  <key>StandardErrorPath</key><string>REPLACE_WITH_REPOSITORY_PATH/outputs/watchlist-error.log</string>
+</dict></plist>
