@@ -29,7 +29,7 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Paper long-options pilot.")
     p.add_argument("--ticker", default="NVDA")
     p.add_argument("--direction", default="call", choices=["call", "put"])
-    p.add_argument("--premium-cap", type=Decimal, default=Decimal("250"))
+    p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
     p.add_argument("--max-contracts", type=int, default=3)
     p.add_argument("--max-positions", type=int, default=5,
                    help="max open option positions (OCC symbols held)")
