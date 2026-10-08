@@ -226,10 +226,6 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
                     "premium": str(premium)})
         set_stage(ticker, "dry_run", f"{contracts}x{quote.contract.option_symbol}")
         return
-    if args.dry_run:
-        rec.update({"action": "dry_run_buy", "qty": contracts,
-                    "premium": str((quote.ask * contracts * 100).quantize(Decimal("0.01")))})
-        return
     db = CioDatabase(settings.database_path)
     candidate_id = f"{ticker}:{trade_date}:long-{direction}:{__import__('uuid').uuid4().hex[:8]}"
     db.record_candidate(candidate_id, ticker, "buy",
@@ -305,6 +301,19 @@ def main(argv=None) -> int:
 
     positions = {p.get("symbol", "").upper(): Decimal(str(p.get("qty", "0"))) for p in backend.list_positions()}
 
+    from robinhood_tools.market_prices import market_regime  # noqa: E402
+
+    try:
+        import yfinance as _yf  # noqa: E402,PLC0415
+
+        _spy = _yf.Ticker("SPY").history(period="1y", interval="1d")
+        regime = market_regime([float(v) for v in _spy["Close"].dropna()])
+    except Exception:
+        regime = "UNKNOWN"
+    log_line(f"market regime: {regime} (SPY 50d trend)")
+    if regime != "RISK_ON":
+        print(f"RISK {regime}: buys blocked desk-wide, sells only.")
+
     results = []
     for ticker in tickers:
         rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": ""}
@@ -359,13 +368,18 @@ def main(argv=None) -> int:
                                  f"{rec.get('desk_verdict')} ({rec.get('desk_outcome')})")
                 set_stage(ticker, "skip", rec["reason"])
             else:
-                set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
-                if args.options:
+                # Regime gates every premium buy (stock AND long puts/calls).
+                # Only equity sells (exits) pass in CHOP/UNKNOWN.
+                if regime != "RISK_ON" and not (sig in SELL_SIGNALS and not args.options):
+                    rec["reason"] = f"regime {regime}: new risk blocked desk-wide"
+                    set_stage(ticker, "skip", rec["reason"])
+                elif args.options:
                     trade_option_leg(ticker=ticker, sig=sig, decision=decision,
                                      trade_date=trade_date, settings=settings,
                                      snapshot=snapshot, env=env, args=args, rec=rec,
                                      data_client=data_client)
                 else:
+                    set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
                     price, price_source, price_as_of = current_quote(ticker, data_client)
                     rec["price"] = str(price)
                     rec["price_source"] = price_source

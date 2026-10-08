@@ -241,5 +241,42 @@ class OptionOrderPathTest(unittest.TestCase):
                 confirmed=False)
 
 
+class OptionGuardTest(unittest.TestCase):
+    def setUp(self):
+        import sys
+        sys.path.insert(0, ".")
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "options_guard", Path("scripts/options_guard.py"))
+        self.guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.guard)
+
+    def test_expire_target_stop_stale_hold(self):
+        decide = self.guard.decide
+        self.assertEqual(decide(Decimal("1000"), Decimal("900"), 2, 1,
+                                Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "EXPIRE")
+        self.assertEqual(decide(Decimal("1000"), Decimal("1600"), 30, 1,
+                                Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "TARGET")
+        self.assertEqual(decide(Decimal("1000"), Decimal("400"), 30, 1,
+                                Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "STOP")
+        self.assertEqual(decide(Decimal("1000"), Decimal("1100"), 30, 6,
+                                Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "STALE")
+        self.assertEqual(decide(Decimal("1000"), Decimal("1100"), 30, 1,
+                                Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "HOLD")
+        with self.assertRaises(PolicyViolation):
+            decide(Decimal("0"), Decimal("100"), 30, 1,
+                   Decimal("0.5"), Decimal("0.5"), 2, 5)
+
+    def test_occ_details(self):
+        from robinhood_tools.options import occ_details
+
+        c = occ_details("NVDA261120C00240000")
+        self.assertEqual((c.underlying, c.expiry, c.right, c.strike),
+                         ("NVDA", "2026-11-20", "call", Decimal("240")))
+        with self.assertRaises(PolicyViolation):
+            occ_details("NVDA")
+
+
 if __name__ == "__main__":
     unittest.main()

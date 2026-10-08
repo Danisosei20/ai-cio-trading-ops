@@ -164,3 +164,14 @@ def underlying_from_occ(option_symbol: str) -> str:
     if not root:
         raise PolicyViolation(f"Not a standard OCC option symbol: {option_symbol}.")
     return root
+
+
+def occ_details(option_symbol: str) -> OptionContract:
+    """Full contract from a standard OCC symbol."""
+    text = option_symbol.strip().upper()
+    root = underlying_from_occ(text)
+    exp_raw, flag, strike_raw = text[-15:-9], text[-9], text[-8:]
+    expiry = date(int("20" + exp_raw[:2]), int(exp_raw[2:4]), int(exp_raw[4:6]))
+    strike = Decimal(strike_raw[:5] + "." + strike_raw[5:])
+    return OptionContract(root, expiry.isoformat(),
+                          strike, "call" if flag == "C" else "put", text)

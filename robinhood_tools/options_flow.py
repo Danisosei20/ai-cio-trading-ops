@@ -68,7 +68,6 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     premium = Decimal(contracts) * quote.ask * 100
     if premium > premium_cap:
         raise PolicyViolation(f"Premium ~${premium} exceeds ${premium_cap} cap.")
-
     if service is None:
         service = _build(settings=settings, sp500_snapshot=snapshot
                          or Sp500Snapshot(symbols=frozenset(),
@@ -93,3 +92,46 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
             "qty": contracts, "limit": str(request.limit_price),
             "premium": str(premium), "order_id": placed.id,
             "status": placed.status, "approval_id": auth.approval_id}
+
+
+def close_long_option(*, settings, quote, contracts: int,
+                      database=None, service=None,
+                      today: date | None = None) -> dict:
+    """Sell-to-close a long position through review + ledger + guard."""
+    from .runtime import build_paper_options_service as _build
+
+    if contracts < 1:
+        raise PolicyViolation("At least one contract is required.")
+    today = today or date.today()
+
+    settings.require_paper_trading()
+    if settings.trading_enabled:
+        raise PolicyViolation("TRADING_ENABLED=true; paper flow refuses.")
+
+    db = database or CioDatabase(settings.database_path)
+    db.require_not_killed()
+
+    contract = quote.contract
+    if service is None:
+        service = _build(settings=settings, sp500_snapshot=None,
+                         env_path=".env")
+    service.approval_store = db
+    leg = OptionLeg(symbol=contract.option_symbol, side="sell", effect="close",
+                    option_type=contract.right, expiration_date=contract.expiry,
+                    strike_price=contract.strike, quantity=contracts)
+    if quote.bid is None or quote.bid <= 0:
+        raise PolicyViolation("No bid to sell into; close refused.")
+    request = OptionOrderRequest(account_id=service.backend.list_accounts()[0].id,
+                                 legs=(leg,), order_type="limit",
+                                 time_in_force="gfd",
+                                 limit_price=quote.bid.quantize(Decimal("0.01")))
+    review = service.review_option_order(request)
+    auth = db.create_option_approval(request, review,
+                                     window_minutes=settings.approval_window_minutes)
+    db.approve(auth.approval_id)
+    placed = service.place_option_order(request, review_id=review.review_id,
+                                        approval_id=auth.approval_id, confirmed=False)
+    return {"action": "sell_placed", "contract": contract.option_symbol,
+            "qty": contracts, "limit": str(request.limit_price),
+            "order_id": placed.id, "status": placed.status,
+            "approval_id": auth.approval_id}

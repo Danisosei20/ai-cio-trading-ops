@@ -124,5 +124,72 @@ class OptionsFlowTest(unittest.TestCase):
                 today=date(2026, 10, 7))
 
 
+class CloseOptionTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        from robinhood_tools.database import CioDatabase
+        from robinhood_tools.runtime import build_settings
+        from robinhood_tools.service import RobinhoodTradingService
+        from robinhood_tools.sim_broker import SimulationBroker
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.settings = build_settings()
+        self.db = CioDatabase(Path(self.temp.name) / "cio.db")
+        import datetime as _dt
+
+        from tests.test_options_flow import quote as _q
+
+        self.quote = _q()
+        self.sim = SimulationBroker(
+            option_quotes={self.quote.contract.option_symbol: self.quote})
+        from robinhood_tools.universe import Sp500Snapshot as _Snap
+
+        _snap = _Snap(frozenset({"NVDA"}), _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                      "https://example.com/sp500")
+        self.service = RobinhoodTradingService(
+            self.sim, approval_store=self.db, sp500_snapshot=_snap,
+            broker_environment="paper", require_human_confirmation=False)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_close_round_trip(self):
+        from robinhood_tools.options_flow import close_long_option, place_long_option
+
+        import datetime as _dt
+
+        from robinhood_tools.universe import Sp500Snapshot
+
+        snap = Sp500Snapshot(frozenset({"NVDA"}),
+                             _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                             "https://example.com/sp500")
+        buy = place_long_option(
+            settings=self.settings, snapshot=snap, quote=self.quote,
+            contracts=1, earnings_date=_dt.date(2026, 11, 20),
+            premium_cap=Decimal("500"), database=self.db, service=self.service,
+            today=_dt.date(2026, 10, 7))
+        self.assertEqual(buy["status"], "filled")
+        out = close_long_option(
+            settings=self.settings, quote=self.quote, contracts=1,
+            database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
+        self.assertEqual(out["action"], "sell_placed")
+        self.assertEqual(out["status"], "filled")
+
+    def test_zero_bid_refused(self):
+        import copy
+
+        from robinhood_tools.options_flow import close_long_option
+
+        import datetime as _dt
+
+        dead = copy.deepcopy(self.quote)
+        object.__setattr__(dead, "bid", Decimal("0"))
+        with self.assertRaises(PolicyViolation):
+            close_long_option(
+                settings=self.settings, quote=dead, contracts=1,
+                database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
+
+
 if __name__ == "__main__":
     unittest.main()

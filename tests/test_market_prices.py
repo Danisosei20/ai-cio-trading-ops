@@ -56,5 +56,21 @@ class QuoteTest(unittest.TestCase):
                 get_quote("NVDA", data_client=FakeDataClient(error=RuntimeError("down")))
 
 
+class RegimeTest(unittest.TestCase):
+    def setUp(self):
+        from robinhood_tools.market_prices import market_regime
+
+        self.regime = market_regime
+
+    def test_uptrend_risk_on(self):
+        self.assertEqual(self.regime([100.0 + i for i in range(60)]), "RISK_ON")
+
+    def test_downtrend_chop(self):
+        self.assertEqual(self.regime([200.0 - i for i in range(60)]), "CHOP")
+
+    def test_short_history_unknown(self):
+        self.assertEqual(self.regime([100.0] * 10), "UNKNOWN")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,6 +59,13 @@ def uptrend_ok(closes: list[float], trend: int) -> bool:
     return closes[-1] > sum(closes[-trend - 1:-1]) / trend
 
 
+def market_regime(spy_closes: list[float]) -> str:
+    """RISK_ON only when SPY holds its 50d trend; otherwise CHOP. Pure."""
+    if len(spy_closes) < 51:
+        return "UNKNOWN"
+    return "RISK_ON" if uptrend_ok(spy_closes, 50) else "CHOP"
+
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:

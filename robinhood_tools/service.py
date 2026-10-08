@@ -165,10 +165,11 @@ class RobinhoodTradingService:
         account = require_explicit_account(request.account_id, self.backend.list_accounts())
         require_agentic_account(account)
         validate_paper_option_request(request)
-        if not self.sp500_snapshot:
-            raise PolicyViolation("Membership evidence is required before reviewing an option order.")
-        from .options import underlying_from_occ
+        leg = request.legs[0]
+        if leg.side == "buy":
+            if not self.sp500_snapshot:
+                raise PolicyViolation("Membership evidence is required before reviewing an option order.")
+            from .options import underlying_from_occ
 
-        self.sp500_snapshot.require_eligible_purchase(
-            underlying_from_occ(request.legs[0].symbol))
+            self.sp500_snapshot.require_eligible_purchase(underlying_from_occ(leg.symbol))
         return self.backend.review_option_order(request)

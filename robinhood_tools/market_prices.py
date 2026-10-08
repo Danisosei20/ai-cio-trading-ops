@@ -27,6 +27,18 @@ class Quote:
     source: str  # "alpaca-iex" | "yfinance-1m"
 
 
+
+
+def market_regime(spy_closes: list[float]) -> str:
+    """RISK_ON only when SPY holds its 50-day trend; CHOP otherwise.
+
+    Pure function (tested). UNKNOWN on short history — callers fail closed.
+    """
+    if len(spy_closes) < 51:
+        return "UNKNOWN"
+    window = spy_closes[-51:-1]
+    return "RISK_ON" if spy_closes[-1] > sum(window) / len(window) else "CHOP"
+
 def _age_minutes(as_of: str, now: datetime) -> float:
     text = as_of.replace("Z", "+00:00")
     # Python <3.11 fromisoformat handles at most 6 fractional digits.
