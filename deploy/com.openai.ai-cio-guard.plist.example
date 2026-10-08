@@ -4,6 +4,8 @@
   Position guard: every 15 minutes on weekdays. Read-only --check by nature
   except --execute sells, which still pass the session window + market-clock
   guard inside place_signal_order (outside hours: evaluated, never placed).
+  NOTE: on sandboxed macOS, launchd may refuse the repo .venv; use system
+  python3 (/opt/homebrew/bin/python3) — this script is stdlib-only.
   Install: replace REPLACE_WITH_* placeholders, then
     cp deploy/com.openai.ai-cio-guard.plist.example ~/Library/LaunchAgents/com.openai.ai-cio-guard.plist
     launchctl load ~/Library/LaunchAgents/com.openai.ai-cio-guard.plist
