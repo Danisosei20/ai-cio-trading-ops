@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 UI_DIR = Path(__file__).resolve().parent / "desk_ui"
-PAGES = {"", "index", "desk", "backtests", "positions", "logs", "health"}
+PAGES = {"", "index", "desk", "backtests", "positions", "logs", "health", "triggers"}
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; "
        "img-src 'self' data:; frame-src https://www.tradingview.com; connect-src 'self'; "
        "frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
@@ -86,6 +86,48 @@ def load_lessons() -> dict:
         return json.loads(f.read_text())
     except Exception:
         return {}
+
+
+TRIGGER_TICKERS = ("NVDA", "MRNA", "VRSN", "TSLA", "QQQ", "SPY")
+
+
+def load_triggers() -> list[dict]:
+    from robinhood_tools.alpaca_market_data import AlpacaMarketDataHttpClient
+    from robinhood_tools.pullback_push import evaluate, levels_from_bars
+    from robinhood_tools.settings import load_env
+    import os
+    from decimal import Decimal
+
+    rows = []
+    from zoneinfo import ZoneInfo
+
+    ET = ZoneInfo("America/New_York")
+    try:
+        env = {**load_env(".env"), **os.environ}
+        client = AlpacaMarketDataHttpClient.from_values(env)
+    except Exception:
+        return [{"ticker": t, "signal": "UNKNOWN", "detail": "no market-data credentials"}
+                for t in TRIGGER_TICKERS]
+    for ticker in TRIGGER_TICKERS:
+        try:
+            today = datetime.now(ET).date().isoformat()
+            bars = client.stock_bars(ticker, timeframe="1D", start="2026-01-01",
+                                     end=today, limit=100, sort="desc")
+            bars = list(reversed(bars))
+            closes = [float(b["c"]) for b in bars]
+            highs = [float(b["h"]) for b in bars]
+            lows = [float(b["l"]) for b in bars]
+            levels = levels_from_bars(closes, highs, lows)
+            state = evaluate(Decimal(str(closes[-1])), levels)
+            rows.append({"ticker": ticker, "price": round(closes[-1], 2),
+                         "support": str(levels.support.quantize(Decimal("0.01"))),
+                         "resistance": str(levels.resistance.quantize(Decimal("0.01"))),
+                         "atr": str(levels.atr.quantize(Decimal("0.01"))),
+                         "signal": state.signal, "detail": state.detail})
+        except Exception as exc:  # noqa: BLE001 - one bad ticker never blocks the page
+            rows.append({"ticker": ticker, "signal": "UNKNOWN",
+                         "detail": f"{type(exc).__name__}"})
+    return rows
 
 
 def load_backtest() -> dict:
@@ -249,6 +291,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"tail": load_log()})
             elif parsed.path == "/api/guard":
                 self._send(200, load_guard())
+            elif parsed.path == "/api/triggers":
+                self._send(200, load_triggers())
             elif parsed.path == "/api/lessons":
                 self._send(200, load_lessons())
             else:

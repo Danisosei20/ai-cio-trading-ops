@@ -55,7 +55,7 @@ class DeskServerTest(unittest.TestCase):
             self.assertIn("AI Trading Desk", resp.read().decode())
 
     def test_pages_and_static(self):
-        for path in ("/desk", "/backtests", "/positions", "/logs", "/health",
+        for path in ("/desk", "/triggers", "/backtests", "/positions", "/logs", "/health",
                      "/static/app.js", "/static/styles.css"):
             with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}",
                                         timeout=10) as resp:
@@ -90,7 +90,7 @@ class DeskServerTest(unittest.TestCase):
         self.assertFalse(body["killed"])
 
     def test_read_endpoints_shape(self):
-        for path in ("/api/desk", "/api/backtests", "/api/research",
+        for path in ("/api/desk", "/api/triggers", "/api/backtests", "/api/research",
                      "/api/log", "/api/account"):
             code, body = call(self.port, "GET", path)
             self.assertEqual(code, 200, path)

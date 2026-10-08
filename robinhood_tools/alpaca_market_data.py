@@ -40,13 +40,15 @@ class AlpacaMarketDataHttpClient:
 
     def stock_bars(
         self, symbol: str, *, timeframe: str, start: str, end: str | None = None,
-        limit: int = 1000, feed: str = "iex",
+        limit: int = 1000, feed: str = "iex", sort: str = "asc",
     ) -> list[dict[str, Any]]:
         if not timeframe.strip() or not start.strip() or not 1 <= limit <= 10_000:
             raise PolicyViolation("Stock bars require timeframe, start, and a limit from 1 to 10000.")
+        if sort not in {"asc", "desc"}:
+            raise PolicyViolation("Sort must be asc or desc.")
         params: dict[str, str | int] = {
             "timeframe": timeframe, "start": start, "limit": limit,
-            "feed": _feed(feed), "adjustment": "all", "sort": "asc",
+            "feed": _feed(feed), "adjustment": "all", "sort": sort,
         }
         if end:
             params["end"] = end
