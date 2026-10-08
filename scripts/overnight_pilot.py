@@ -116,7 +116,8 @@ def main(argv=None) -> int:
         from datetime import datetime, timezone
         snapshot = Sp500Snapshot(symbols=frozenset(members),
                                  as_of=datetime.now(timezone.utc).isoformat(),
-                                 source_url=SP500_URL)
+                                 source_url=SP500_URL,
+                                 index_etfs=frozenset(settings.index_etf_allowlist))
         service = build_paper_service_with_session(
             settings=settings, sp500_snapshot=snapshot, env_path=args.env_file,
             earliest_entry_et=ENTER_WINDOW[0], latest_entry_et=ENTER_WINDOW[1])
@@ -144,9 +145,10 @@ def main(argv=None) -> int:
                                           fromlist=["lookup_earnings_date"]).lookup_earnings_date(ticker)
                 except Exception:
                     earnings = None
-                qty = int(args.notional // price) if price > 0 else 0
-                if qty < 1:
-                    rec["reason"] = f"price {price} exceeds ${args.notional} pilot notional"
+                qty = (args.notional / price).quantize(Decimal("0.000001")) \
+                    if price > 0 else Decimal("0")
+                if qty * price < 25:
+                    rec["reason"] = f"${qty * price:.2f} below $25 minimum ticket"
                     print(json.dumps(rec))
                     continue
                 candidate_id = f"{ticker}:{date.today().isoformat()}:overnight:{uuid.uuid4().hex[:8]}"
@@ -156,7 +158,7 @@ def main(argv=None) -> int:
                 db.record_opinion(candidate_id, "market", "bullish", 60,
                                   {"evidence": [f"close>50d SMA @ {price}"]})
                 if args.dry_run:
-                    rec.update({"action": "dry_run_buy", "qty": qty,
+                    rec.update({"action": "dry_run_buy", "qty": str(qty),
                                 "limit": str(price.quantize(Decimal("0.01")))})
                     print(json.dumps(rec))
                     continue
@@ -169,12 +171,12 @@ def main(argv=None) -> int:
                                       max_order_value=args.notional),
                     database=db, service=service)
                 db.update_candidate_status(candidate_id, "approved")
-                state["entries"].append({"symbol": ticker, "qty": qty,
+                state["entries"].append({"symbol": ticker, "qty": str(qty),
                                         "date": date.today().isoformat(),
                                         "entry_price": str(price.quantize(Decimal("0.01"))),
                                         "order_id": result["order_id"]})
                 save_state(state)
-                rec.update({"action": "buy_placed", "qty": qty,
+                rec.update({"action": "buy_placed", "qty": str(qty),
                             "order_id": result["order_id"], "status": result["status"]})
                 print(json.dumps(rec))
             except (PolicyViolation, InvalidOperation, KeyError) as exc:

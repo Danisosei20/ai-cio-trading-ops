@@ -77,8 +77,10 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
         if snapshot is None:
             raise PolicyViolation("No S&P 500 membership evidence; buys blocked.")
         snapshot.require_eligible_purchase(symbol)
-        require_earnings_clear(today=today, earnings_date=order.earnings_date,
-                               blackout_days=settings.earnings_blackout_days)
+        # Index ETFs have no single earnings event; the blackout cannot apply.
+        if symbol not in {item.upper() for item in snapshot.index_etfs}:
+            require_earnings_clear(today=today, earnings_date=order.earnings_date,
+                                   blackout_days=settings.earnings_blackout_days)
 
     cap = (order.max_order_value if order.max_order_value is not None
            else settings.risk_limits.max_order_value)
