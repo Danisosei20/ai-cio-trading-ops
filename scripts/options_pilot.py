@@ -30,6 +30,7 @@ def parse_args(argv=None):
     p.add_argument("--ticker", default="NVDA")
     p.add_argument("--direction", default="call", choices=["call", "put"])
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("250"))
+    p.add_argument("--max-contracts", type=int, default=3)
     p.add_argument("--max-positions", type=int, default=1,
                    help="max open option positions (OCC symbols held)")
     p.add_argument("--max-age-minutes", type=int, default=5,
@@ -89,7 +90,7 @@ def main(argv=None) -> int:
     quote, rejected = pick_long_option(
         data=data, underlying=ticker, spot=spot,
         direction="bullish" if args.direction == "call" else "bearish", today=today)
-    contracts = int(args.premium_cap // (quote.ask * 100))
+    contracts = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
     if contracts < 1:
         print(json.dumps({"ticker": ticker, "action": "skip",
                           "reason": f"ask {quote.ask} exceeds ${args.premium_cap} cap"}))
