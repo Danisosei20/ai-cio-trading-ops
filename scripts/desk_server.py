@@ -165,6 +165,26 @@ def load_guard() -> dict:
         return {}
 
 
+def load_target(settings) -> dict:
+    from decimal import Decimal
+
+    from robinhood_tools.daily_target import day_pnl, evaluate
+
+    acct = account_snapshot(settings)
+    curve = acct.get("equity_curve") or []
+    if len(curve) < 2:
+        return {"target": "100.00", "pnl": None, "halted": False,
+                "reason": "no intraday curve yet"}
+    first = Decimal(str(curve[0]["v"]))
+    last = Decimal(str(curve[-1]["v"]))
+    base = Decimal(str(acct.get("portfolio") or "100000"))
+    scale = base / (last or Decimal("1"))
+    pnl = (day_pnl(first, last) * scale).quantize(Decimal("0.01"))
+    status = evaluate(pnl)
+    return {"target": str(status.target), "pnl": str(pnl),
+            "halted": status.halted, "reason": status.reason}
+
+
 _ACCOUNT_CACHE: dict = {"at": 0.0, "payload": None}
 
 
@@ -295,6 +315,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, load_triggers())
             elif parsed.path == "/api/lessons":
                 self._send(200, load_lessons())
+            elif parsed.path == "/api/target":
+                self._send(200, load_target(settings))
             else:
                 self._send(404, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # noqa: BLE001

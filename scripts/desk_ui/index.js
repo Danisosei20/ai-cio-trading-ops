@@ -1,6 +1,12 @@
 async function tick(){
  try{
   const [h,a,r,g,l]=await Promise.all([api('/api/health'),api('/api/account'),api('/api/research'),api('/api/guard'),api('/api/lessons')]);
+  const tg=await api('/api/target').catch(()=>({}));
+  if(tg.pnl!==null&&tg.pnl!==undefined){const pv=parseFloat(tg.pnl),tv=parseFloat(tg.target)||100;
+   const pct=Math.max(0,Math.min(100,(pv/tv)*100));
+   $('target').innerHTML=`Daily goal: <b class='${pv>=0?'pos':'neg'}'>$${esc(tg.pnl)}</b> / $${esc(tg.target)} `+
+    `<span class='bar bar-inline'><i data-w='${pct}'></i></span>${tg.halted?' · <b>HALTED</b> '+esc(tg.reason||''):''}`;
+   paintBars($('target'));}else{$('target').innerHTML='<span class=\'empty\'>No P&L yet today.</span>';}
   $('pills').innerHTML=
    pill('LIVE '+(h.live_enabled?'ON':'OFF'),h.live_enabled?'bad':'ok')+' '+
    pill('PAPER '+(h.paper_auto?'AUTO':'OFF'),h.paper_auto?'info':'warn')+' '+

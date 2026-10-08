@@ -40,5 +40,35 @@ class GuardLogicTest(unittest.TestCase):
             evaluate(Decimal("0"), Decimal("100"), GuardPolicy())
 
 
+class DailyTargetTest(unittest.TestCase):
+    def test_bank_at_target(self):
+        from decimal import Decimal
+
+        from robinhood_tools.daily_target import day_pnl, evaluate
+
+        self.assertEqual(day_pnl(Decimal("1.0"), Decimal("1.001")), Decimal("0.001"))
+        status = evaluate(Decimal("100"))
+        self.assertTrue(status.halted)
+        status = evaluate(Decimal("150"))
+        self.assertTrue(status.halted)
+
+    def test_stop_the_bleed(self):
+        from decimal import Decimal
+
+        from robinhood_tools.daily_target import evaluate
+
+        status = evaluate(Decimal("-50"))
+        self.assertTrue(status.halted)
+        self.assertIn("loss", status.reason)
+
+    def test_open_day(self):
+        from decimal import Decimal
+
+        from robinhood_tools.daily_target import evaluate
+
+        status = evaluate(Decimal("25"))
+        self.assertFalse(status.halted)
+
+
 if __name__ == "__main__":
     unittest.main()
