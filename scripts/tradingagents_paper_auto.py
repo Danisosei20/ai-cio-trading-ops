@@ -82,6 +82,7 @@ def parse_args(argv=None):
     p.add_argument("--options", action="store_true",
                    help="trade long calls/puts instead of stock (paper-authorized)")
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("250"))
+    p.add_argument("--max-option-positions", type=int, default=1)
     p.add_argument("--screen", default="",
                    help="screen JSON (outputs/screener/latest.json); overrides --tickers with top-N")
     p.add_argument("--screen-top", type=int, default=2,
@@ -167,6 +168,89 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
         "analysts": selected,
         "analyst_reports": reports,
     }
+
+
+def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
+                     settings, snapshot, env, args, rec: dict,
+                     data_client) -> None:
+    """Debate direction -> long call/put via the gated options flow.
+
+    Mutates rec in place. Raises PolicyViolation on any gate failure.
+    Execution authority stays with place_long_option (review + ledger +
+    session guard); this function only scouts, sizes, and records.
+    """
+    from datetime import date as _date
+
+    from robinhood_tools.alpaca_options import AlpacaOptionsData
+    from robinhood_tools.database import CioDatabase
+    from robinhood_tools.market_prices import get_quote
+    from robinhood_tools.options_flow import pick_long_option, place_long_option
+    from robinhood_tools.paper_flow import lookup_earnings_date
+
+    direction = "bullish" if sig in BUY_SIGNALS else "bearish"
+    set_stage(ticker, "scouting", f"{direction} chain for {ticker}")
+    data = AlpacaOptionsData.from_values(env)
+    spot_q = get_quote(ticker, data_client=data_client)
+    quote, rejected = pick_long_option(
+        data=data, underlying=ticker, spot=spot_q.price,
+        direction=direction, today=_date.today())
+    rec.update({"spot": str(spot_q.price), "spot_source": spot_q.source,
+                "contract": quote.contract.option_symbol,
+                "expiry": quote.contract.expiry, "strike": str(quote.contract.strike),
+                "bid": str(quote.bid), "ask": str(quote.ask),
+                "delta": str(quote.delta), "iv": str(quote.iv),
+                "rejected_elsewhere": len(rejected)})
+    contracts = int(args.premium_cap // (quote.ask * 100))
+    if contracts < 1:
+        rec["reason"] = f"ask {quote.ask} exceeds ${args.premium_cap} cap"
+        set_stage(ticker, "skip", rec["reason"])
+        return
+    open_opts = 0
+    try:
+        from robinhood_tools.alpaca_paper import (  # noqa: E402
+            AlpacaPaperBackend, AlpacaPaperHttpTransport)
+
+        _backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        open_opts = sum(1 for p in _backend.list_positions()
+                        if len(str(p.get("symbol", ""))) > 10)
+    except Exception:
+        open_opts = 0
+    if open_opts >= args.max_option_positions:
+        rec["reason"] = (f"{open_opts} open option positions "
+                         f"(max {args.max_option_positions})")
+        set_stage(ticker, "skip", rec["reason"])
+        return
+    premium = (quote.ask * contracts * 100).quantize(Decimal("0.01"))
+    if args.dry_run:
+        rec.update({"action": "dry_run_buy", "qty": contracts,
+                    "premium": str(premium)})
+        set_stage(ticker, "dry_run", f"{contracts}x{quote.contract.option_symbol}")
+        return
+    if args.dry_run:
+        rec.update({"action": "dry_run_buy", "qty": contracts,
+                    "premium": str((quote.ask * contracts * 100).quantize(Decimal("0.01")))})
+        return
+    db = CioDatabase(settings.database_path)
+    candidate_id = f"{ticker}:{trade_date}:long-{direction}:{__import__('uuid').uuid4().hex[:8]}"
+    db.record_candidate(candidate_id, ticker, "buy",
+                        {"source": "options-auto", "contract": quote.contract.option_symbol,
+                         "signal": decision})
+    db.record_opinion(candidate_id, "scout", direction, 65,
+                      {"contract": quote.contract.option_symbol,
+                       "bid": str(quote.bid), "ask": str(quote.ask)})
+    db.update_candidate_status(candidate_id, "risk_review")
+    result = place_long_option(
+        settings=settings, snapshot=snapshot, quote=quote, contracts=contracts,
+        earnings_date=lookup_earnings_date(ticker), premium_cap=args.premium_cap,
+        database=db)
+    db.update_candidate_status(candidate_id, "approved")
+    rec.update({"action": "buy_placed", "qty": contracts,
+                "premium": result["premium"], "order_id": result["order_id"],
+                "status": result["status"], "approval_id": result["approval_id"],
+                "candidate_id": candidate_id})
+    set_stage(ticker, "placing", f"approval {result['approval_id']}")
+    log_line(f"[{ticker}] PLACED long {direction} {contracts}x{quote.contract.option_symbol} "
+             f"status={result['status']} order={result['order_id']}")
 
 
 def main(argv=None) -> int:
@@ -271,61 +355,67 @@ def main(argv=None) -> int:
                 set_stage(ticker, "skip", rec["reason"])
             else:
                 set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
-                price, price_source, price_as_of = current_quote(ticker, data_client)
-                rec["price"] = str(price)
-                rec["price_source"] = price_source
-                rec["price_as_of"] = price_as_of
-                cap = min(args.max_notional, settings.risk_limits.max_order_value)
-                if sig in BUY_SIGNALS:
-                    earnings = lookup_earnings_date(ticker)
-                    qty = int((cap // price)) if price > 0 else 0
-                    limit = price.quantize(Decimal("0.01"))
-                    stop_px, target_px = None, None
-                    if args.stop_pct and args.stop_pct > 0 and args.target_pct and args.target_pct > 0:
-                        stop_px = (limit * (1 - args.stop_pct)).quantize(Decimal("0.01"))
-                        target_px = (limit * (1 + args.target_pct)).quantize(Decimal("0.01"))
-                    if qty < 1:
-                        rec["reason"] = f"price {price} exceeds ${cap} cap"
-                    elif buying_power < qty * price:
-                        rec["reason"] = f"insufficient buying power {buying_power} for ~${qty * price}"
-                    elif args.dry_run:
-                        rec.update({"action": "dry_run_buy", "qty": qty, "limit": str(limit),
-                                    "stop": str(stop_px), "target": str(target_px)})
-                    else:
-                        set_stage(ticker, "reviewing", f"buy {qty} @ {limit}")
-                        log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
-                        if stop_px is not None:
-                            log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
-                        result = place_signal_order(
-                            settings=settings, snapshot=snapshot,
-                            order=SignalOrder(symbol=ticker, side="buy",
-                                              quantity=Decimal(qty), limit_price=limit,
-                                              earnings_date=earnings,
-                                              max_order_value=cap,
-                                              take_profit_price=target_px,
-                                              bracket_stop_price=stop_px),
-                            env_path=args.env_file)
-                        set_stage(ticker, "placing", f"approval {result['approval_id']}")
-                        rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
-                                    "stop": str(stop_px), "target": str(target_px),
-                                    "order_id": result["order_id"], "status": result["status"],
-                                    "approval_id": result["approval_id"]})
-                        log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
-                elif sig in SELL_SIGNALS:
-                    held = positions.get(ticker, Decimal("0"))
-                    if held <= 0:
-                        rec["reason"] = f"bearish ({decision}) but no position held"
-                    elif args.dry_run:
-                        rec.update({"action": "dry_run_sell", "qty": str(held)})
-                    else:
-                        result = place_signal_order(
-                            settings=settings, snapshot=snapshot,
-                            order=SignalOrder(symbol=ticker, side="sell",
-                                              quantity=held,
-                                              limit_price=price.quantize(Decimal("0.01"))),
-                            env_path=args.env_file)
-                        rec.update({"action": "sell_placed", "qty": str(held),
-                                "order_id": result["order_id"], "status": result["status"]})
+                if args.options:
+                    trade_option_leg(ticker=ticker, sig=sig, decision=decision,
+                                     trade_date=trade_date, settings=settings,
+                                     snapshot=snapshot, env=env, args=args, rec=rec,
+                                     data_client=data_client)
+                else:
+                    price, price_source, price_as_of = current_quote(ticker, data_client)
+                    rec["price"] = str(price)
+                    rec["price_source"] = price_source
+                    rec["price_as_of"] = price_as_of
+                    cap = min(args.max_notional, settings.risk_limits.max_order_value)
+                    if sig in BUY_SIGNALS:
+                        earnings = lookup_earnings_date(ticker)
+                        qty = int((cap // price)) if price > 0 else 0
+                        limit = price.quantize(Decimal("0.01"))
+                        stop_px, target_px = None, None
+                        if args.stop_pct and args.stop_pct > 0 and args.target_pct and args.target_pct > 0:
+                            stop_px = (limit * (1 - args.stop_pct)).quantize(Decimal("0.01"))
+                            target_px = (limit * (1 + args.target_pct)).quantize(Decimal("0.01"))
+                        if qty < 1:
+                            rec["reason"] = f"price {price} exceeds ${cap} cap"
+                        elif buying_power < qty * price:
+                            rec["reason"] = f"insufficient buying power {buying_power} for ~${qty * price}"
+                        elif args.dry_run:
+                            rec.update({"action": "dry_run_buy", "qty": qty, "limit": str(limit),
+                                        "stop": str(stop_px), "target": str(target_px)})
+                        else:
+                            set_stage(ticker, "reviewing", f"buy {qty} @ {limit}")
+                            log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
+                            if stop_px is not None:
+                                log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
+                            result = place_signal_order(
+                                settings=settings, snapshot=snapshot,
+                                order=SignalOrder(symbol=ticker, side="buy",
+                                                  quantity=Decimal(qty), limit_price=limit,
+                                                  earnings_date=earnings,
+                                                  max_order_value=cap,
+                                                  take_profit_price=target_px,
+                                                  bracket_stop_price=stop_px),
+                                env_path=args.env_file)
+                            set_stage(ticker, "placing", f"approval {result['approval_id']}")
+                            rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
+                                        "stop": str(stop_px), "target": str(target_px),
+                                        "order_id": result["order_id"], "status": result["status"],
+                                        "approval_id": result["approval_id"]})
+                            log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
+                    elif sig in SELL_SIGNALS:
+                        held = positions.get(ticker, Decimal("0"))
+                        if held <= 0:
+                            rec["reason"] = f"bearish ({decision}) but no position held"
+                        elif args.dry_run:
+                            rec.update({"action": "dry_run_sell", "qty": str(held)})
+                        else:
+                            result = place_signal_order(
+                                settings=settings, snapshot=snapshot,
+                                order=SignalOrder(symbol=ticker, side="sell",
+                                                  quantity=held,
+                                                  limit_price=price.quantize(Decimal("0.01"))),
+                                env_path=args.env_file)
+                            rec.update({"action": "sell_placed", "qty": str(held),
+                                    "order_id": result["order_id"], "status": result["status"]})
         except PolicyViolation as exc:
             rec["reason"] = f"gate blocked: {exc}"
         except InvalidOperation as exc:
