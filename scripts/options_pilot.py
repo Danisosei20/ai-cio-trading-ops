@@ -31,7 +31,7 @@ def parse_args(argv=None):
     p.add_argument("--direction", default="call", choices=["call", "put"])
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("250"))
     p.add_argument("--max-contracts", type=int, default=3)
-    p.add_argument("--max-positions", type=int, default=1,
+    p.add_argument("--max-positions", type=int, default=5,
                    help="max open option positions (OCC symbols held)")
     p.add_argument("--max-age-minutes", type=int, default=5,
                    help="quote freshness; raise explicitly for after-hours scouting")
