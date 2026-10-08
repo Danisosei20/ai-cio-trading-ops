@@ -36,7 +36,9 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                       quote, contracts: int,
                       earnings_date: date | None, premium_cap: Decimal,
                       database: CioDatabase | None = None,
-                      service=None, today: date | None = None) -> dict:
+                      service=None, today: date | None = None,
+                      session_override: tuple[str, str] | None = None,
+                      override_reason: str = "") -> dict:
     """Review → ledger → guarded placement of one long option opener."""
     from .runtime import build_paper_options_service as _build
 
@@ -62,18 +64,26 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     if snapshot is None:
         raise PolicyViolation("No membership evidence; option openers blocked.")
     snapshot.require_eligible_purchase(symbol)
-    require_earnings_clear(today=today, earnings_date=earnings_date,
-                           blackout_days=settings.earnings_blackout_days)
+    # Index ETFs have no single earnings event; the blackout cannot apply.
+    if symbol not in {item.upper() for item in snapshot.index_etfs}:
+        require_earnings_clear(today=today, earnings_date=earnings_date,
+                               blackout_days=settings.earnings_blackout_days)
 
     premium = Decimal(contracts) * quote.ask * 100
     if premium > premium_cap:
         raise PolicyViolation(f"Premium ~${premium} exceeds ${premium_cap} cap.")
+    extra: dict = {}
+    if session_override is not None:
+        if not override_reason:
+            raise PolicyViolation("Session overrides require a recorded reason.")
+        extra = {"earliest_entry_et": session_override[0],
+                 "latest_entry_et": session_override[1]}
     if service is None:
         service = _build(settings=settings, sp500_snapshot=snapshot
                          or Sp500Snapshot(symbols=frozenset(),
                                           as_of="2000-01-01T00:00:00+00:00",
                                           source_url="https://example.com/unused"),
-                         env_path=".env")
+                         env_path=".env", **extra)
     service.approval_store = db
     leg = OptionLeg(symbol=contract.option_symbol, side="buy", effect="open",
                     option_type=contract.right, expiration_date=contract.expiry,
@@ -86,6 +96,11 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     auth = db.create_option_approval(request, review,
                                      window_minutes=settings.approval_window_minutes)
     db.approve(auth.approval_id)
+    if session_override is not None:
+        db.audit("session_override",
+                 {"window": list(session_override), "reason": override_reason,
+                  "contract": contract.option_symbol},
+                 correlation_id=auth.approval_id, approval_id=auth.approval_id)
     placed = service.place_option_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
     return {"action": "buy_placed", "contract": contract.option_symbol,

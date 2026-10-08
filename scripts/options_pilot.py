@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -39,6 +40,9 @@ def parse_args(argv=None):
                    help="quote freshness; raise explicitly for after-hours scouting")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--execute", action="store_true")
+    p.add_argument("--override-window", default="",
+                   help="extend session as HH:MM-HH:MM for an owner-directed order "
+                        "(reason = explicit CLI invocation; logged in audit)")
     p.add_argument("--close", default="", help="OCC symbol to sell-to-close")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
@@ -130,7 +134,9 @@ def main(argv=None) -> int:
         return 0
     from robinhood_tools.database import CioDatabase  # noqa: E402
 
-    candidate_id = f"{ticker}:{today.isoformat()}:long-{args.direction}"
+    import uuid as _uuid
+
+    candidate_id = f"{ticker}:{today.isoformat()}:long-{args.direction}:{_uuid.uuid4().hex[:8]}"
     db = CioDatabase(build_settings(args.config, args.env_file).database_path)
     db.record_candidate(candidate_id, ticker, "buy",
                         {"source": "options-scout", "contract": quote.contract.option_symbol,
@@ -139,10 +145,22 @@ def main(argv=None) -> int:
                       {"contract": quote.contract.option_symbol,
                        "bid": str(quote.bid), "ask": str(quote.ask)})
     db.update_candidate_status(candidate_id, "risk_review")
+    override = None
+    if args.override_window:
+        from datetime import datetime as _dt
+
+        try:
+            start, end = args.override_window.split("-")
+            _dt.strptime(start, "%H:%M")
+            _dt.strptime(end, "%H:%M")
+            override = (start, end)
+        except ValueError as exc:
+            raise PolicyViolation(f"Bad --override-window: {exc}") from exc
     result = place_long_option(
         settings=settings, snapshot=snapshot, quote=quote, contracts=contracts,
         earnings_date=lookup_earnings_date(ticker), premium_cap=args.premium_cap,
-        database=db)
+        database=db, session_override=override,
+        override_reason="owner-directed CLI execution" if override else "")
     db.update_candidate_status(candidate_id, "approved")
     rec.update({"action": "buy_placed", "order_id": result["order_id"],
                 "status": result["status"], "approval_id": result["approval_id"],

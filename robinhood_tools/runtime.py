@@ -320,6 +320,8 @@ def _build_paper_service(
 def build_paper_options_service(
     *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
     transport=None,
+    earliest_entry_et: str | None = None,
+    latest_entry_et: str | None = None,
 ):
     """Paper service wired to the options backend (long-only enforced there)."""
     from .alpaca_options import AlpacaOptionsBackend
@@ -328,7 +330,7 @@ def build_paper_options_service(
     _base = _build_paper_service(
         settings=settings, sp500_snapshot=sp500_snapshot, env_path=env_path,
         authorizer=authorizer, transport=transport,
-        earliest=None, latest=None)
+        earliest=earliest_entry_et, latest=latest_entry_et)
     options_backend = AlpacaOptionsBackend(_base.backend.transport)
     return RobinhoodTradingService(
         options_backend, authorizer=authorizer,
