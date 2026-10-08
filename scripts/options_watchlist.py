@@ -84,7 +84,7 @@ def main(argv=None) -> int:
         row = {"ticker": ticker}
         try:
             spot_q = get_quote(ticker, data_client=md, max_age_minutes=60)
-            row.update({"spot": str(spot_q.price), "spot_source": spot_q.source})
+            row.update({"spot": str(round(spot_q.price, 2)), "spot_source": spot_q.source})
             for direction, side in (("bullish", "call"), ("bearish", "put")):
                 try:
                     quote, _ = pick_long_option(
