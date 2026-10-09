@@ -196,6 +196,17 @@ class AlpacaOptionsBackend:
         return [Account(account_id, "Alpaca Paper", True, account_type="paper",
                          masked_account_number=f"----{number[-4:]}")]
 
+    def list_positions(self) -> list:
+        positions = self.transport.request("GET", "/v2/positions")
+        if not isinstance(positions, list):
+            from .errors import ConnectorUnavailable
+
+            raise ConnectorUnavailable("Alpaca paper positions response was invalid.")
+        return positions
+
+    def get_positions(self) -> list:
+        return self.list_positions()
+
     def review_option_order(self, request) -> OrderReview:
         import uuid as _uuid
 

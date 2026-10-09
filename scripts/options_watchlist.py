@@ -38,6 +38,9 @@ def format_watchlist(rows: list[dict], today: str) -> str:
     lines = [f"*Options watch — {today} close*",
              "_Calls above, puts below. Premium per 1 contract. Desk decides at 15:45._"]
     for r in rows:
+        if "spot" not in r:
+            lines.append(f"\n*{r['ticker']}* — skipped ({r.get('error', 'no data')})")
+            continue
         lines.append(
             f"\n*{r['ticker']}* @ ${r['spot']} ({r['spot_source']})")
         for side in ("call", "put"):
