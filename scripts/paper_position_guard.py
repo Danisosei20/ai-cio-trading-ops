@@ -63,6 +63,11 @@ def main(argv=None) -> int:
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
     only = {t.strip().upper() for t in args.tickers.split(",") if t.strip()}
 
+    trail_file = Path("outputs/paper/trail.json")
+    try:
+        peaks = json.loads(trail_file.read_text())
+    except Exception:
+        peaks = {}
     results = []
     for p in backend.list_positions():
         symbol = str(p.get("symbol", "")).upper()
@@ -76,7 +81,11 @@ def main(argv=None) -> int:
             mark = Decimal(str(p.get("current_price", "0")))
             if qty <= 0:
                 continue
-            ev = evaluate(mark, entry, policy)
+            peak = Decimal(str(peaks.get(symbol, mark)))
+            if mark > peak:
+                peak = mark
+                peaks[symbol] = str(peak)
+            ev = evaluate(mark, entry, policy, peak=peak)
             rec = {"symbol": symbol, "qty": str(qty), "entry": str(entry),
                    "mark": str(mark), "return_pct": f"{ev.return_pct:.2%}",
                    "stop": str(ev.stop_price.quantize(Decimal("0.01"))),
@@ -97,6 +106,8 @@ def main(argv=None) -> int:
             results.append(rec)
             print(json.dumps(rec))
 
+    trail_file.parent.mkdir(parents=True, exist_ok=True)
+    trail_file.write_text(json.dumps(peaks))
     out = Path("outputs/paper/guard.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"policy": {"stop_pct": str(policy.stop_pct),

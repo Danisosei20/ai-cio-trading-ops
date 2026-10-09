@@ -30,6 +30,24 @@ class GuardLogicTest(unittest.TestCase):
         self.assertEqual(evaluate(Decimal("90"), Decimal("100"), policy).signal, "STOP")
         self.assertEqual(evaluate(Decimal("110"), Decimal("100"), policy).signal, "TARGET")
 
+    def test_trail_ratchets_up_never_down(self):
+        from robinhood_tools.position_guard import GuardPolicy, evaluate, trail_stop
+
+        policy = GuardPolicy(stop_pct=Decimal("0.10"), target_pct=Decimal("0.50"))
+        self.assertEqual(trail_stop(Decimal("100"), Decimal("100"), policy), Decimal("90"))
+        self.assertEqual(trail_stop(Decimal("100"), Decimal("120"), policy), Decimal("108"))
+        ev = evaluate(Decimal("112"), Decimal("100"), policy, peak=Decimal("120"))
+        self.assertEqual(ev.signal, "HOLD")
+        ev = evaluate(Decimal("107"), Decimal("100"), policy, peak=Decimal("120"))
+        self.assertEqual(ev.signal, "STOP")
+
+    def test_trailing_off(self):
+        from robinhood_tools.position_guard import GuardPolicy, trail_stop
+
+        policy = GuardPolicy(stop_pct=Decimal("0.10"), target_pct=Decimal("0.50"),
+                             trailing=False)
+        self.assertEqual(trail_stop(Decimal("100"), Decimal("120"), policy), Decimal("90"))
+
     def test_bad_policy_rejected(self):
         with self.assertRaises(PolicyViolation):
             GuardPolicy(stop_pct=Decimal("0"))
