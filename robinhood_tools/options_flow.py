@@ -136,6 +136,18 @@ def close_long_option(*, settings, quote, contracts: int,
                     strike_price=contract.strike, quantity=contracts)
     if quote.bid is None or quote.bid <= 0:
         raise PolicyViolation("No bid to sell into; close refused.")
+    held = Decimal("0")
+    lister = getattr(service.backend, "list_positions", None) or getattr(
+        service.backend, "get_positions", None)
+    if lister is None:
+        raise PolicyViolation("Backend cannot list positions; close refused.")
+    for position in lister():
+        if str(position.get("symbol", "")).upper() == contract.option_symbol:
+            held += abs(Decimal(str(position.get("qty", "0"))))
+    if held < contracts:
+        raise PolicyViolation(
+            f"Holdings check failed: {held} held vs {contracts} to close; "
+            f"naked short refused.")
     request = OptionOrderRequest(account_id=service.backend.list_accounts()[0].id,
                                  legs=(leg,), order_type="limit",
                                  time_in_force="gfd",
