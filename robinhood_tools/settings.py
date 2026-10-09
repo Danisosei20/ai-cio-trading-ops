@@ -93,13 +93,6 @@ CONFIG_SCHEMA: dict[str, Any] = {
         "action_first": None, "show_what_to_do": None, "show_changed_since_yesterday": None,
         "show_data_as_of": None, "label_watchlist_monitoring_only": None,
     },
-    "slack_reply_monitor": {
-        "enabled": None, "mode": None, "window_minutes_after_message": None,
-        "reject_when_window_expires_without_response": None, "cleanup_after_terminal_state": None,
-        "read_channel_and_threads": None, "deduplicate_by_channel_and_message_ts": None,
-        "safe_test_commands": None, "no_may_reject_linked_pending_approval": None,
-        "yes_requests_sizing_but_never_approves": None, "execution_commands_from_slack": None,
-    },
     "channels": {
         "slack": {"enabled": None, "channel_id": None, "required_tools": None},
         "health_slack": {"enabled": None, "channel_id": None},

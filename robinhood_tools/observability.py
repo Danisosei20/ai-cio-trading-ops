@@ -55,10 +55,6 @@ def evaluate_operational_status(
         failed_health = int(db.execute(
             "SELECT count(*) FROM health_alerts WHERE status='failed'"
         ).fetchone()[0])
-        expired_windows = int(db.execute(
-            "SELECT count(*) FROM slack_reply_windows WHERE status='open' AND expires_at<=?",
-            (current.isoformat(),),
-        ).fetchone()[0])
         latest_drift_row = db.execute(
             "SELECT drift_count FROM broker_state_snapshots ORDER BY observed_at DESC, id DESC LIMIT 1"
         ).fetchone()
@@ -77,7 +73,6 @@ def evaluate_operational_status(
         ("overdue_learning", overdue, "learning checkpoints are overdue"),
         ("failed_slack_deliveries", failed_deliveries, "Slack deliveries failed"),
         ("failed_health_alerts", failed_health, "health alerts failed"),
-        ("expired_reply_windows", expired_windows, "Slack reply windows need cleanup"),
     ):
         checks.append(OperationalCheck(name, "degraded" if count else "ok", detail, count))
     checks.append(OperationalCheck(

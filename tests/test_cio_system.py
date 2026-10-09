@@ -5,7 +5,7 @@ import threading
 import unittest
 import subprocess
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -160,19 +160,6 @@ class CioSystemTests(unittest.TestCase):
         rejected = self.db.reject(approval.approval_id)
         self.assertEqual(rejected.status, "rejected")
         self.assertEqual(self.backend.placed, 0)
-
-    def test_no_reply_for_ten_minutes_rejects_and_cleans_window(self):
-        approval, _ = self.workflow.prepare_purchase(
-            request=self.request, candidate=candidate(), portfolio=self.portfolio,
-            sector="Technology", exit_plan=self.exit_plan,
-        )
-        rejected = self.db.reject_expired_reply_windows(datetime.now(timezone.utc) + timedelta(minutes=11))
-        self.assertEqual(rejected, [approval.approval_id])
-        self.assertEqual(self.db.get(approval.approval_id).status, "rejected")
-        self.assertEqual(self.backend.placed, 0)
-        self.assertEqual(self.db.cleanup_terminal_reply_windows(), 1)
-        with self.db.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM slack_reply_windows").fetchone()[0], 0)
 
     def test_slack_failure_stops_before_execution(self):
         self.workflow.notifier = Notifier(fail=True)

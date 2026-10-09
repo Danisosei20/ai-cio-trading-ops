@@ -100,17 +100,6 @@ class CioDatabase:
                     updated_at TEXT NOT NULL, payload TEXT NOT NULL,
                     PRIMARY KEY(run_key, step)
                 );
-                CREATE TABLE IF NOT EXISTS processed_slack_messages (
-                    channel_id TEXT NOT NULL, message_ts TEXT NOT NULL,
-                    processed_at TEXT NOT NULL, command_kind TEXT NOT NULL,
-                    PRIMARY KEY(channel_id, message_ts)
-                );
-                CREATE TABLE IF NOT EXISTS slack_reply_windows (
-                    approval_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL,
-                    parent_message_ts TEXT, opened_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-                    status TEXT NOT NULL, resolved_at TEXT,
-                    CHECK(status IN ('open','responded','rejected','executed','cancelled'))
-                );
                 CREATE TABLE IF NOT EXISTS trade_lifecycles (
                     symbol TEXT PRIMARY KEY, task_name TEXT NOT NULL,
                     buy_approval_id TEXT, buy_order_id TEXT,
@@ -245,9 +234,6 @@ class CioDatabase:
                 "INSERT OR IGNORE INTO system_controls VALUES('emergency_kill','off',?)",
                 (datetime.now(timezone.utc).isoformat(),),
             )
-            columns = {row[1] for row in db.execute("PRAGMA table_info(processed_slack_messages)")}
-            if "acknowledged_at" not in columns:
-                db.execute("ALTER TABLE processed_slack_messages ADD COLUMN acknowledged_at TEXT")
 
     def integrity_check(self) -> str:
         with self.connect() as db:
@@ -320,98 +306,6 @@ class CioDatabase:
         result = dict(row)
         result["payload"] = json.loads(result["payload"])
         return result
-
-    def claim_slack_message(self, channel_id: str, message_ts: str, command_kind: str) -> bool:
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                db.execute(
-                    "INSERT INTO processed_slack_messages(channel_id,message_ts,processed_at,command_kind) VALUES(?,?,?,?)",
-                    (channel_id, message_ts, datetime.now(timezone.utc).isoformat(), command_kind),
-                )
-                db.execute("COMMIT")
-                return True
-            except sqlite3.IntegrityError:
-                row = db.execute(
-                    "SELECT acknowledged_at,processed_at FROM processed_slack_messages WHERE channel_id=? AND message_ts=?",
-                    (channel_id, message_ts),
-                ).fetchone()
-                if row["acknowledged_at"] is not None:
-                    db.execute("ROLLBACK")
-                    return False
-                last = datetime.fromisoformat(row["processed_at"])
-                if datetime.now(timezone.utc) - last < timedelta(seconds=30):
-                    db.execute("ROLLBACK")
-                    return False
-                db.execute(
-                    "UPDATE processed_slack_messages SET processed_at=?,command_kind=? WHERE channel_id=? AND message_ts=?",
-                    (datetime.now(timezone.utc).isoformat(), command_kind, channel_id, message_ts),
-                )
-                db.execute("COMMIT")
-                return True
-
-    def mark_slack_message_acknowledged(self, channel_id: str, message_ts: str) -> None:
-        with self.connect() as db:
-            changed = db.execute(
-                "UPDATE processed_slack_messages SET acknowledged_at=? WHERE channel_id=? AND message_ts=?",
-                (datetime.now(timezone.utc).isoformat(), channel_id, message_ts),
-            ).rowcount
-            if changed != 1:
-                raise PolicyViolation("Slack message claim was not found.")
-
-    def open_reply_window(
-        self, approval_id: str, channel_id: str, parent_message_ts: str | None, *, minutes: int = 10
-    ) -> None:
-        now = datetime.now(timezone.utc)
-        with self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO slack_reply_windows VALUES(?,?,?,?,?,'open',NULL)",
-                (approval_id, channel_id, parent_message_ts, now.isoformat(), (now + timedelta(minutes=minutes)).isoformat()),
-            )
-
-    def resolve_reply_window(self, approval_id: str, status: str) -> None:
-        if status not in {"responded", "rejected", "executed", "cancelled"}:
-            raise PolicyViolation("Invalid reply-window terminal status.")
-        with self.connect() as db:
-            db.execute(
-                "UPDATE slack_reply_windows SET status=?,resolved_at=? WHERE approval_id=? AND status='open'",
-                (status, datetime.now(timezone.utc).isoformat(), approval_id),
-            )
-
-    def open_reply_windows(self, now: datetime | None = None) -> list[dict]:
-        current = (now or datetime.now(timezone.utc)).isoformat()
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT * FROM slack_reply_windows WHERE status='open' AND expires_at>? ORDER BY opened_at",
-                (current,),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def reject_expired_reply_windows(self, now: datetime | None = None) -> list[str]:
-        current = (now or datetime.now(timezone.utc)).isoformat()
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT approval_id FROM slack_reply_windows WHERE status='open' AND expires_at<=?", (current,)
-            ).fetchall()
-            approval_ids = [row["approval_id"] for row in rows]
-            for approval_id in approval_ids:
-                db.execute(
-                    "UPDATE approvals SET status='rejected' WHERE approval_id=? AND status IN ('pending','approved')",
-                    (approval_id,),
-                )
-                db.execute(
-                    "UPDATE slack_reply_windows SET status='rejected',resolved_at=? WHERE approval_id=?",
-                    (current, approval_id),
-                )
-            db.execute("COMMIT")
-        return approval_ids
-
-    def cleanup_terminal_reply_windows(self) -> int:
-        with self.connect() as db:
-            return db.execute(
-                "DELETE FROM slack_reply_windows WHERE status IN ('rejected','executed','cancelled')"
-            ).rowcount
 
     def list_approvals(self, limit: int = 100) -> list[dict]:
         with self.connect() as db:
@@ -1348,7 +1242,7 @@ class CioDatabase:
 
     def audit_export(self) -> dict:
         tables = ("approvals", "audit_events", "exit_plans", "learning_checkpoints", "deliveries",
-                  "daily_runs", "processed_slack_messages", "slack_reply_windows", "trade_lifecycles",
+                  "daily_runs", "trade_lifecycles",
                   "order_fills", "strategy_observations", "tradingview_learning_events",
                   "dashboard_snapshots", "symbol_cooldowns",
                   "daily_run_checkpoints", "shadow_equity_recommendations", "daily_review_states",

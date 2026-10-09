@@ -147,19 +147,6 @@
     "show_data_as_of": true,
     "label_watchlist_monitoring_only": true
   },
-  "slack_reply_monitor": {
-    "enabled": true,
-    "mode": "same_active_task_event_scoped",
-    "window_minutes_after_message": 10,
-    "reject_when_window_expires_without_response": true,
-    "cleanup_after_terminal_state": true,
-    "read_channel_and_threads": true,
-    "deduplicate_by_channel_and_message_ts": true,
-    "safe_test_commands": ["YES", "NO", "$amount", "quantity shares", "TEST SIZE $amount", "TEST SHARES quantity", "TEST REJECT"],
-    "no_may_reject_linked_pending_approval": true,
-    "yes_requests_sizing_but_never_approves": true,
-    "execution_commands_from_slack": "always_block"
-  },
   "channels": {
     "slack": {
       "enabled": true,

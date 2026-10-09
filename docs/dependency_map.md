@@ -31,7 +31,7 @@ Parent: `docs/system_summary.md`. This file is evidence; interpretation lives in
 | `workflow.py` | Human-in-the-loop CIO orchestration | `analysis`, `database`, `errors`, `logging`, `lifecycle`, `models`, `risk`, `service` |
 | `orchestrator.py` | Daily run claim, preflights, shadow recs, position monitoring | `daily_controls`, `database`, `errors`, `lifecycle`, `runtime` |
 | `daily_controls.py` | Freshness manifests, broker drift, watchdog, daily notice | `database`, `errors` |
-| `operations.py` | Recovery plan, order polling, reply-window monitor, cooldowns | `database`, `errors`, `models`, `reconciliation`, `slack_replies` |
+| `operations.py` | Recovery plan, order polling, cooldowns | `database`, `errors`, `models`, `reconciliation` |
 | `reconciliation.py` | Broker fills vs ledger reconciliation | `database`, `models` |
 | `governance.py` | Immutable `DecisionRecord` provenance | `errors` |
 | `research.py` | `ResearchExperiment` paper-only promotion (≥10 obs) | via `database` |
@@ -39,10 +39,10 @@ Parent: `docs/system_summary.md`. This file is evidence; interpretation lives in
 | `learning.py` | Learning-checkpoint completion | `errors` |
 | `accounting.py` / `portfolio.py` | Settled-cash + tax-lot helpers | `errors`, `portfolio` |
 | `observability.py` / `health.py` | Operational status + health evaluation | `database`, `errors` |
-| `notifications.py` / `slack_web_api.py` / `slack_replies.py` | Delivery records, sender, safe reply parsing (Slack never approves) | `errors` |
+| `notifications.py` / `slack_web_api.py` | Delivery records, notification sender (Slack never approves) | `errors` |
 | `adapters.py` | Host-adapter Protocols (connectors stay outside repo) | `analysis`, `risk`, `universe` |
 | `mcp_backend.py` / `mcp_config.py` / `tools.py` | MCP Robinhood backend + tool table | `errors`, `models`, `mcp_config` |
-| `cli.py` | `cio` CLI (daily-review, approvals, kill, bundles) | `database`, `privacy`, `runtime`, `settings`, `slack_replies` |
+| `cli.py` | `cio` CLI (daily-review, approvals, kill, bundles) | `database`, `privacy`, `runtime`, `settings` |
 | `logging.py` / `privacy.py` / `migrations.py` | Structured logs, redacted bundles, schema migrations | `database` |
 
 ## Data flows

@@ -181,7 +181,7 @@ class DailyImprovementTests(unittest.TestCase):
                 avg_daily_dollar_volume=Decimal("1000000"),
             )
 
-    def test_recovery_plan_lists_stale_runs_slack_and_reconciliation(self):
+    def test_recovery_plan_lists_stale_runs_and_reconciliation(self):
         with tempfile.TemporaryDirectory() as directory:
             db = CioDatabase(Path(directory) / "cio.db")
             run_key = "2026-07-13:Agentic:daily-review"
@@ -193,13 +193,11 @@ class DailyImprovementTests(unittest.TestCase):
                 )
             request = EquityOrderRequest("a", "AAPL", "buy", "market", "gfd", notional=Decimal("10"))
             approval = db.create(request, OrderReview("r", "a", Decimal("10")), window_minutes=10)
-            db.open_reply_window(approval.approval_id, "C1", "1.1")
             db.approve(approval.approval_id)
             db.reserve_execution(approval.approval_id, request, "r")
             db.mark_reconciliation_required(approval.approval_id, "timeout")
             plan = build_recovery_plan(db)
             self.assertEqual(plan.stale_daily_run_keys, (run_key,))
-            self.assertEqual(plan.open_slack_approval_ids, (approval.approval_id,))
             self.assertEqual(plan.reconciliation_approval_ids, (approval.approval_id,))
 
     def test_action_first_notice_is_unambiguous(self):

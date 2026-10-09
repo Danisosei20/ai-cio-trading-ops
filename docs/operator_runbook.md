@@ -1,7 +1,7 @@
 # AI CIO Operator Runbook
 
 This runbook is for the equity-only AI CIO service. Options remain prohibited. All times are Eastern Time
-(`America/New_York`). Slack can request rejection or fresh sizing but never authorizes execution.
+(`America/New_York`). Slack is notification-only and never authorizes execution.
 
 ## Start-of-day sequence
 
@@ -12,8 +12,8 @@ This runbook is for the equity-only AI CIO service. Options remain prohibited. A
 3. For autonomous paper execution, require `PAPER_TRADING_ENABLED=true`, regular-session time from 10:15 through
    15:45 ET, and the checked-in paper policy. Keep `TRADING_ENABLED=false`; that is the Robinhood live switch.
 4. Run `python3 -m robinhood_tools.cli operations-status`. Do not continue from `critical`.
-5. Run `python3 -m robinhood_tools.cli recovery-plan`. Resume unexpired exact-thread Slack monitors first,
-   reconcile every uncertain broker approval second, and recover stale daily runs third.
+5. Run `python3 -m robinhood_tools.cli recovery-plan`. Reconcile every uncertain broker approval first and
+   recover stale daily runs second.
 6. Confirm the separate watchdog is loaded and its error log is empty.
 7. Verify the selected mode's broker read access, the fixed trading Slack route, and the separate health route.
 8. Reconcile positions, open orders, fills, dividends, and corporate actions before new research.
@@ -27,7 +27,7 @@ matching order fingerprint, unexpired approval, and explicit matching approval i
 1. Stop starting new reviews.
 2. Let an active broker call finish; never retry an uncertain placement blindly.
 3. Record any uncertain result as `reconciliation_required`.
-4. Preserve open Slack-window and ticker-lifecycle state for restart recovery.
+4. Preserve ticker-lifecycle state for restart recovery.
 5. Run `operations-status`, export the audit bundle, create a SQLite backup, and encrypt the backup.
 6. Leave the emergency kill on if shutdown followed an incident.
 
@@ -58,8 +58,7 @@ python3 -m robinhood_tools.cli emergency-resume
 | Stale or missing source | Produce `No Action Recommended`; refresh the named source and rebuild the freshness manifest. |
 | Broker timeout/unknown result | Mark reconciliation required, query broker order/fills, and never submit a replacement until resolved. |
 | Broker-state drift | Stop recommendations; map every position, order, fill, dividend, and corporate action to lifecycle state. |
-| Slack send/read failure | Do not create execution authority; use the health route, preserve the approval, and reject it at expiry. |
-| Expired Slack window | Reject the linked pending approval and clean the terminal window. Any renewed interest starts a fresh review. |
+| Slack send failure | Do not create execution authority; use the health route and preserve the approval for a fresh review. |
 | Database integrity failure | Emergency stop, preserve the files, restore the latest verified backup to a new path, and do not overwrite the source. |
 | Overdue learning checkpoint | Degrade health, process the checkpoint with point-in-time benchmark data, and keep policy unchanged until evidence is complete. |
 | Credential exposure | Emergency stop, revoke/rotate at the provider, remove local material, scan history, and verify fixed routes before restart. |

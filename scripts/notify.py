@@ -1,112 +1,70 @@
 #!/usr/bin/env python3
-"""Send a Slack notification to the fixed channel. Notify, never authorize.
+"""Slack notification sender: post a paper-desk update to the configured channel.
 
-  python3 scripts/notify.py "NVDA stopped at 230.31 (-2.86%)"
-  python3 scripts/notify.py --watch   # diff state, notify on changes only
+  python3 scripts/notify.py --send "Bought 2 NVDA @ 237. Reason: ..."
+
+Sends are plain notifications and create no trading authority. There is no
+reply monitor: the desk does not read, parse, or act on Slack replies.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-STATE_FILE = Path("outputs/paper/notify_state.json")
+THREAD_FILE = Path("outputs/paper/slack_thread.json")
 
 
-def send(text: str) -> dict:
-    import os
-
+def send(text: str, channel_id: str = "") -> dict:
+    """Post a message to Slack and record the last message sent."""
     from robinhood_tools.settings import load_env
-    from robinhood_tools.slack_web_api import SlackWebApiNotifier
 
     env = {**load_env(".env"), **os.environ}
-    notifier = SlackWebApiNotifier.from_values(env)
-    return notifier.send_approval(channel_id=env.get("SLACK_CHANNEL_ID", ""),
-                                  message=text)
+    channel_id = channel_id or env.get("SLACK_CHANNEL_ID", "")
+    if not channel_id:
+        raise RuntimeError("SLACK_CHANNEL_ID is required")
 
-
-def snapshot() -> dict:
-    from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
-    from robinhood_tools.settings import load_env
-    import os
-
-    env = {**load_env(".env"), **os.environ}
-    backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
-    positions = {str(p.get("symbol")): {"qty": str(p.get("qty")),
-                                        "mark": str(p.get("current_price"))}
-                 for p in backend.list_positions()}
-    orders = {o.get("id"): {"symbol": o.get("symbol"), "side": o.get("side"),
-                            "status": o.get("status")}
-              for o in backend.list_open_orders()}
-    guard = {}
-    gf = Path("outputs/paper/guard.json")
-    if gf.exists():
-        try:
-            guard = {p["symbol"]: p["signal"] for p in
-                     json.loads(gf.read_text()).get("positions", [])}
-        except Exception:
-            pass
-    return {"positions": positions, "orders": orders, "guard": guard}
-
-
-def watch() -> int:
-    previous = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
-    current = snapshot()
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(current, indent=2))
-    if not previous:
-        print("baseline recorded; no alert on first run.")
-        return 0
-    notes = []
-    for sym, pos in current["positions"].items():
-        old = previous.get("positions", {}).get(sym)
-        if old is None:
-            notes.append(f"Opened {sym} x{pos['qty']} @ ~{pos['mark']}")
-        elif old["qty"] != pos["qty"]:
-            notes.append(f"{sym} qty {old['qty']} -> {pos['qty']}")
-    for sym in previous.get("positions", {}):
-        if sym not in current["positions"]:
-            notes.append(f"Flat {sym} (position closed)")
-    for oid, o in current["orders"].items():
-        if oid not in previous.get("orders", {}):
-            notes.append(f"Order {o['side']} {o['symbol']} {o['status']}")
-    for sym, sig in current["guard"].items():
-        if sig in {"STOP", "TARGET"} and previous.get("guard", {}).get(sym) != sig:
-            notes.append(f"Guard {sig}: {sym}")
-    fills = [n for n in notes if n.startswith("Order ")]
-    guard = [n for n in notes if n.startswith("Guard ")]
-    positions = [n for n in notes if n not in fills and n not in guard]
-    blocks = ["*Desk alert*"]
-    if fills:
-        blocks.append("*Orders*\n• " + "\n• ".join(fills))
-    if guard:
-        blocks.append("*Guard*\n• " + "\n• ".join(guard))
-    if positions:
-        blocks.append("*Positions*\n• " + "\n• ".join(positions))
-    if notes:
-        send("\n\n".join(blocks))
-        print("notified:", len(notes))
-    else:
-        print("no changes.")
-    return 0
+    import json as _json
+    import urllib.request
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage",
+        data=_json.dumps({"channel": channel_id, "text": text}).encode(),
+        headers={
+            "Authorization": f"Bearer {env['SLACK_BOT_TOKEN']}",
+            "Content-Type": "application/json",
+        },
+        method="POST")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        result = _json.loads(resp.read() or b"{}")
+    record = {
+        "channel_id": channel_id,
+        "message_ts": result.get("ts", ""),
+        "text": text,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }
+    THREAD_FILE.parent.mkdir(parents=True, exist_ok=True)
+    THREAD_FILE.write_text(json.dumps(record, indent=2))
+    print(f"sent to {channel_id} ts={result.get('ts', '')}")
+    return record
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Desk Slack notifications.")
-    ap.add_argument("message", nargs="?", default="")
-    ap.add_argument("--watch", action="store_true")
+    ap = argparse.ArgumentParser(description="Slack notification sender.")
+    ap.add_argument("--send", default="", help="message text to post")
+    ap.add_argument("--channel", default="", help="override SLACK_CHANNEL_ID")
     a = ap.parse_args(argv)
-    if a.watch:
-        return watch()
-    if not a.message:
-        print("usage: notify.py \"message\" | notify.py --watch", file=sys.stderr)
-        return 2
-    result = send(a.message)
-    print("sent", result.get("message_ts", ""))
-    return 0
+
+    if a.send:
+        send(a.send, channel_id=a.channel)
+        return 0
+
+    print("usage: notify.py --send 'text'")
+    return 2
 
 
 if __name__ == "__main__":

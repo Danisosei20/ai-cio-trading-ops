@@ -137,15 +137,10 @@ has not completed after its grace period. A watchdog alert never creates trading
 
 ## Production Connector Contract
 
-The connected host must implement `OrderStatusHost` and `SlackReplyHost` from `robinhood_tools.operations`.
-The order host returns broker order state plus stable fill IDs; the Slack host reads only the configured approval
-thread and acknowledges parsed replies. `NO` may reject. `YES` and sizing never approve or execute.
-
-After sending an approval message, the same ticker task calls `monitor_slack_reply_window` for up to ten
-minutes. The user does not need to return to Codex or say “check my reply.” `YES` moves the conversation to
-sizing, `NO` rejects, and an exact size ends the monitor with `fresh_review_required` so the same task can run
-affordability checks and a new broker review. Live placement remains blocked until explicit matching approval
-is given in Codex; the monitor cannot create execution authority.
+The connected host must implement `OrderStatusHost` from `robinhood_tools.operations`. The order host returns
+broker order state plus stable fill IDs. Slack is notification-only: the desk posts updates, never reads or
+parses replies, and a Slack message cannot approve, reject, size, or execute anything. Live placement remains
+blocked until explicit matching approval is given in Codex.
 
 Run `cio migrate --backup outputs/backups/pre-v5.db` before the first production start. Install the example
 launchd service from `deploy/com.openai.ai-cio.plist.example` only after replacing its paths and validating the

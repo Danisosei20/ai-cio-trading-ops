@@ -56,12 +56,9 @@ See [ROADMAP.md](ROADMAP.md) for completed capabilities, remaining operational p
 See [docs/upstream_review.md](docs/upstream_review.md) for the Qlib, NautilusTrader, LEAN, and OpenBB comparison
 and the patterns deliberately adopted or rejected.
 
-For unattended Slack reply monitoring, create a dedicated Slack app and keep both OAuth tokens only in
-the local environment: a user token in `SLACK_USER_TOKEN` for `conversations.replies`, and a bot token
-in `SLACK_BOT_TOKEN` for acknowledgements. Grant the user token `channels:history` (or `groups:history`
-for a private channel) and grant the bot token only `chat:write`. Invite the app only to the configured
-`SLACK_CHANNEL_ID`. `SlackWebApiReplyHost` rejects every other channel and exposes no broker or execution
-operations.
+Slack is notification-only. The desk posts to the fixed `SLACK_CHANNEL_ID` using a bot token in
+`SLACK_BOT_TOKEN` granted only `chat:write`; it does not read, parse, or act on replies, and Slack
+creates no execution authority.
 
 ## What This Project Does
 
@@ -546,20 +543,11 @@ action; Slack remains notification-only and creates no execution authority.
 
 Trade approval messages also show current buying power, proposed cost, estimated buying power remaining, and the exact reviewed dollar/share sizing. If funds are insufficient, Slack receives a `No Approval Created` notice showing the shortfall. The user must return to Codex and specify a smaller exact dollar amount or share quantity for a fresh broker review; changing size in Slack is not accepted as execution approval.
 
-## Slack Reply Window
+## Slack Notifications
 
-There is no continuous Slack-monitor automation. When an AI CIO approval message is sent, the same active Codex task opens a 10-minute reply window and checks only that message/thread during the window. It recognizes:
-
-- `TEST SIZE $50`
-- `TEST SHARES 0.25`
-- `TEST REJECT`
-- `YES` — asks for exact dollar/share sizing but does not approve
-- `NO` — rejects the linked pending, unexecuted approval
-- `$50` or `0.25 shares` — parses sizing and redirects to Codex for affordability checks and broker review
-
-Processed messages are deduplicated in SQLite by channel and Slack timestamp. If no response arrives in 10 minutes, the linked pending approval is rejected. Temporary reply-window state is deleted after rejection, cancellation, or execution. Approval, buy, sell, and other execution-like Slack commands are explicitly blocked and acknowledged as non-executable. Real sizing, broker review, and approval remain Codex-only.
-
-The event-scoped monitor remains in the same active Codex task for the 10-minute window. It does not create additional scheduled Codex tasks.
+Slack is notification-only. The desk posts plain updates to the fixed `SLACK_CHANNEL_ID`; there is no reply
+monitor and no continuous Slack automation. It never reads, parses, or acts on replies, and Slack creates no
+execution authority. Approval, buy, sell, and other execution-like Slack messages are ignored, not executed.
 
 After a matching Codex-authorized placement, Slack may report `Trade successful` only when the selected broker
 returns a filled result. A queued or confirmed order must be described as submitted, not successful or filled.
