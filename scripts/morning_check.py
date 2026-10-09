@@ -76,13 +76,33 @@ def main() -> int:
 
     failed = [name for name, ok, _ in results if not ok]
     lines = [f"{'PASS' if ok else 'FAIL'} {name} — {detail}" for name, ok, detail in results]
-    summary = "*Morning robustness*\n" + "\n".join(lines)
-    print(summary)
+    print("*Morning robustness*\n" + "\n".join(lines))
     try:
+        from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
+        from robinhood_tools.settings import load_env
+        import os
+
+        env = {**load_env(".env"), **os.environ}
+        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        positions = backend.list_positions()
+        orders = backend.list_open_orders()
+        book = ["*Morning book*"]
+        if positions:
+            for x in positions:
+                book.append(f"• {x.get('symbol')} x{x.get('qty')} @ {x.get('current_price')} "
+                            f"(P&L {x.get('unrealized_pl')})")
+        else:
+            book.append("Flat — no positions.")
+        if orders:
+            for o in orders:
+                book.append(f"• {o.get('side')} {o.get('symbol')} x{o.get('qty')} "
+                            f"@ {o.get('limit_price')} ({o.get('status')})")
+        else:
+            book.append("No working orders.")
         sys.path.insert(0, ".")
         from scripts.notify import send
 
-        send(summary)
+        send("\n".join(book))
     except Exception as exc:
         print(f"slack failed: {exc}")
     return 0 if not failed else 1
