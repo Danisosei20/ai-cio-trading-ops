@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import unittest
 from decimal import Decimal
-from pathlib import Path
 
 from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.position_guard import GuardPolicy, evaluate
