@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openai.ai-cio-crwd-restage</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python</string>
+        <string>/Users/daniz/Desktop/2026work/robinhood-trading-tools/tmp/restage_owner_contract.py</string>
+        <string>--ticker</string><string>CRWD</string>
+        <string>--strike</string><string>275</string>
+        <string>--right</string><string>call</string>
+        <string>--qty</string><string>2</string>
+        <string>--premium-cap</string><string>1600</string>
+        <string>--stamp</string><string>outputs/.crwd-restage-done</string>
+        <string>--reason</string><string>Owner-confirmed Monday restage of CRWD Oct16 275C after Friday order expired unfilled</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/daniz/Desktop/2026work/robinhood-trading-tools</string>
+    <key>StandardOutPath</key>
+    <string>/Users/daniz/Desktop/2026work/robinhood-trading-tools/outputs/crwd-restage.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/daniz/Desktop/2026work/robinhood-trading-tools/outputs/crwd-restage-error.log</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Month</key><integer>10</integer>
+        <key>Day</key><integer>12</integer>
+        <key>Weekday</key><integer>1</integer>
+        <key>Hour</key><integer>10</integer>
+        <key>Minute</key><integer>20</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
