@@ -294,6 +294,50 @@ class OptionGuardTest(unittest.TestCase):
         with self.assertRaises(PolicyViolation):
             occ_details("NVDA")
 
+    def test_load_tracked_unwraps_legacy_nesting(self):
+        import json
+        import tempfile
+
+        # Reproduce the legacy schema that nested the whole prior document
+        # under "tracked", which silently reset hold_days to 0 (STALE dead).
+        legacy = {
+            "updated": "2026-10-13",
+            "tracked": {
+                "updated": "2026-10-13",
+                "tracked": {
+                    "MRNA261016C00200000": {"first_seen": "2026-10-08",
+                                            "cost": "770"},
+                    "NVDA261120C00240000": {"first_seen": "2026-10-08",
+                                            "cost": "810"},
+                },
+                "evaluated": [],
+                "AAPL261120C00340000": {"first_seen": "2026-10-09",
+                                        "cost": "915"},
+                "NVDA261120C00240000": {"first_seen": "2026-10-05",
+                                        "cost": "700"},
+            },
+            "evaluated": [],
+        }
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "state.json"
+            p.write_text(json.dumps(legacy))
+            got = self.guard._load_tracked(p)
+        # every symbol found at any depth is recovered, flat
+        self.assertEqual(got["MRNA261016C00200000"]["first_seen"], "2026-10-08")
+        self.assertEqual(got["AAPL261120C00340000"]["first_seen"], "2026-10-09")
+        # duplicates keep the earliest first_seen so hold_days never rewinds
+        self.assertEqual(got["NVDA261120C00240000"]["first_seen"], "2026-10-05")
+
+    def test_load_tracked_missing_or_broken_file(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "nope.json"
+            self.assertEqual(self.guard._load_tracked(missing), {})
+            broken = Path(d) / "broken.json"
+            broken.write_text("{not json")
+            self.assertEqual(self.guard._load_tracked(broken), {})
+
 
 if __name__ == "__main__":
     unittest.main()

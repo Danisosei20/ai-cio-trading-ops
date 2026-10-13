@@ -3,10 +3,12 @@
 
 Evaluates every open OCC position each run:
   EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
-  TARGET  premium up >= --target-pct (default 0.50)
-  STOP    premium down <= ---stop-pct (default 0.50)
+  TARGET  premium up >= --target-pct (default 0.02, owner day-trade plan)
+  STOP    premium down <= --stop-pct (default 0.25, owner day-trade plan)
   STALE   held >= --max-hold-days (default 5) without hitting target
 Exits sell-to-close through review + ledger + session guard. Paper only.
+Defaults mirror the desk owner plan (+2% take / -25% stop) and the stock
+guard (paper_position_guard.py, +2%/-1%).
 
   python3 scripts/options_guard.py --check
   python3 scripts/options_guard.py --execute
@@ -35,8 +37,8 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Exit guard for long option positions.")
     p.add_argument("--check", action="store_true")
     p.add_argument("--execute", action="store_true")
-    p.add_argument("--target-pct", type=Decimal, default=Decimal("0.50"))
-    p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.50"))
+    p.add_argument("--target-pct", type=Decimal, default=Decimal("0.02"))
+    p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.25"))
     p.add_argument("--max-dte", type=int, default=2)
     p.add_argument("--max-hold-days", type=int, default=5)
     p.add_argument("--config", default="config/approval_routes.json")
@@ -62,6 +64,42 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
     return "HOLD", f"premium {ret:.0%}, DTE {dte}, day {hold_days}"
 
 
+def _load_tracked(path: Path) -> dict:
+    """Symbol -> {first_seen, cost}, tolerating the legacy nested schema.
+
+    Older builds wrote the whole previous state document under "tracked", so
+    symbol records can sit at several depths. Walk the tree and keep the
+    earliest first_seen seen for each symbol so hold-days stays monotonic.
+    """
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return {}
+
+    merged: dict = {}
+
+    def walk(node) -> None:
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key in ("updated", "evaluated"):
+                continue
+            if key == "tracked":
+                walk(value)
+                continue
+            if isinstance(value, dict) and "first_seen" in value:
+                prior = merged.get(key)
+                if prior is None or str(value.get("first_seen")) < str(
+                        prior.get("first_seen")):
+                    merged[key] = {"first_seen": value.get("first_seen"),
+                                   "cost": value.get("cost")}
+
+    walk(raw)
+    return merged
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     settings = build_settings(args.config, args.env_file)
@@ -78,7 +116,7 @@ def main(argv=None) -> int:
     env = {**load_env(args.env_file), **os.environ}
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
     data = AlpacaOptionsData.from_values(env)
-    state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    state = _load_tracked(STATE_FILE)
     today = date.today()
 
     results = []
@@ -142,6 +180,11 @@ def main(argv=None) -> int:
             results.append({"symbol": symbol, "action": "error",
                             "reason": f"{type(exc).__name__}: {exc}"})
             print(json.dumps(results[-1]))
+    # Drop symbols no longer held so a later re-entry starts a fresh first_seen
+    # (otherwise it would inherit an old date and trip STALE prematurely).
+    held = {str(r.get("symbol")) for r in results if r.get("symbol")}
+    state = {sym: rec for sym, rec in state.items() if sym in held}
+
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps({"updated": today.isoformat(), "tracked": state,
                                       "evaluated": results}, indent=2, default=str))
