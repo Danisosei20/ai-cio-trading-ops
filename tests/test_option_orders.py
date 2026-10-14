@@ -339,5 +339,53 @@ class OptionGuardTest(unittest.TestCase):
             self.assertEqual(self.guard._load_tracked(broken), {})
 
 
+class OptionsWatchTradeTest(unittest.TestCase):
+    """15:10 watch -> trade gate (owner 2026-10-14)."""
+
+    def setUp(self):
+        import importlib.util
+        sys_path = str(Path("scripts/options_watch_trade.py"))
+        spec = importlib.util.spec_from_file_location("options_watch_trade", sys_path)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+    def _screen(self, ranked):
+        import json
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        tmp.write(json.dumps({"date": "2026-10-13", "ranked": ranked}))
+        tmp.close()
+        self.addCleanup(Path(tmp.name).unlink)
+        return Path(tmp.name)
+
+    def test_gate_skips_overbought_and_held(self):
+        path = self._screen([
+            {"symbol": "MRNA", "rsi": 66.3, "mom20": 0.50},
+            {"symbol": "NTAP", "rsi": 75.2, "mom20": 0.26},   # overbought
+            {"symbol": "HPE", "rsi": 59.5, "mom20": -0.02},   # held -> skip
+            {"symbol": "EIX", "rsi": 45.2, "mom20": 0.017},
+            {"symbol": "MTD", "rsi": 72.0, "mom20": 0.20},
+        ])
+        got = self.mod.gated_candidates(path, top=5, max_rsi=73.0,
+                                        held={"HPE"})
+        self.assertEqual(got, [("MRNA", "call"), ("EIX", "call"), ("MTD", "call")])
+
+    def test_direction_follows_momentum_and_stops_at_top(self):
+        path = self._screen([
+            {"symbol": "AAA", "rsi": 50.0, "mom20": -0.10},  # down -> put
+            {"symbol": "BBB", "rsi": 50.0, "mom20": 0.10},   # up -> call
+            {"symbol": "CCC", "rsi": 50.0, "mom20": 0.10},
+        ])
+        self.assertEqual(self.mod.gated_candidates(path, top=2, max_rsi=73.0,
+                                                   held=set()),
+                         [("AAA", "put"), ("BBB", "call")])
+
+    def test_missing_screen_is_empty_not_crash(self):
+        self.assertEqual(
+            self.mod.gated_candidates(Path("/no/such/screen.json"), 5, 73.0, set()),
+            [])
+
+
 if __name__ == "__main__":
     unittest.main()
