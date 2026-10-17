@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
@@ -21,7 +22,7 @@ class PaperAutonomySettings:
     human_approval_required: bool = True
     regular_session_only: bool = True
     earliest_entry_time_et: str = "10:15"
-    latest_entry_time_et: str = "15:30"
+    latest_entry_time_et: str = "15:45"
     require_limit_orders: bool = True
     forbid_price_chasing: bool = True
     notify_slack_after_execution: bool = True
@@ -68,6 +69,10 @@ class RuntimeSettings:
     live_broker: str = "robinhood"
     paper_trading_enabled: bool = False
     paper_autonomy: PaperAutonomySettings = field(default_factory=PaperAutonomySettings)
+    # Injectable ET clock so tests are not weekday-dependent (lesson 2026-10-17).
+    clock: Callable[[], datetime] = field(
+        default_factory=lambda: datetime.now(ZoneInfo("America/New_York"))
+    )
     disclosure_intelligence: DisclosureIntelligenceSettings = field(
         default_factory=DisclosureIntelligenceSettings
     )
@@ -94,7 +99,7 @@ class RuntimeSettings:
         if not self.paper_trading_enabled or not self.paper_autonomy.enabled:
             raise PolicyViolation("Autonomous Alpaca paper execution is disabled.")
         if self.paper_autonomy.regular_session_only:
-            now_et = datetime.now(ZoneInfo("America/New_York"))
+            now_et = self.clock()
             earliest = datetime.strptime(self.paper_autonomy.earliest_entry_time_et, "%H:%M").time()
             latest = datetime.strptime(self.paper_autonomy.latest_entry_time_et, "%H:%M").time()
             if now_et.weekday() >= 5 or not earliest <= now_et.time().replace(tzinfo=None) <= latest:

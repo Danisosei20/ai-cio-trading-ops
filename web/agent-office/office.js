@@ -11,6 +11,9 @@ frameScene();narrow.addEventListener('change',frameScene);
 function current(){if(!demo)return real;const phase=Math.floor((time-demoStart)/9)%7,tasks=Object.fromEntries(names.map((n,i)=>[n,phase===6?'complete':i<phase?'complete':i===phase?'working':'queued']));if(phase>=3)tasks.news='blocked';return {mode:'demo',tasks,run_id:'Sample cycle • no real tasks executed',note:phase===6?'4 tasks complete. News needs attention.':'A sample workday • watch the handoffs between desks'}}
 function avatar(i){const el=document.createElement('span');el.className='avatar';el.style.setProperty('--color',colors[i]);el.style.setProperty('--skin',['#e8ba98','#bd8d73','#edc5a4','#cc9e7e','#e7b7a4'][i]);return el}
 function renderPanel(){const d=current(),key=JSON.stringify([d,selected,connected,demo]);if(key===lastKey)return;lastKey=key;
+ const sess=d.session||{};const open=sess.open===true;
+ $('session').textContent=open?"Trading window OPEN":"Trading window CLOSED";
+ $('session').className="session-pill"+(open?" open":" closed");
  $('mode').textContent=demo?'Demo simulation':!connected?'Disconnected':d.mode==='live'?'Fleet working':'Office idle';$('mode').className='mode'+(demo?' demo':'');$('subtitle').textContent=d.note;$('scene-note').textContent=demo?'Demo simulation • no real tasks run':'Ambient movement • actual task states';
  names.forEach((name,i)=>{const state=d.tasks[name]||'idle';if(previous[name]!==state){if(state!=='idle'&&state!=='queued')journal.unshift({name:cap(name),state,label:state==='complete'?'finished the task':state==='blocked'?'needs attention':state==='working'?'started working':state==='skipped'?'had no work to process':'has no confirmed result',time:demo?'Demo event':d.mode==='live'?'Live fleet event':'Last recorded result'});previous[name]=state}});
  journal=journal.slice(0,5);const active=document.activeElement?.dataset.worker;

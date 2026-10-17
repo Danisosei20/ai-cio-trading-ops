@@ -3,19 +3,43 @@
 import argparse
 import json
 import sys
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.office_state import snapshot
+from scripts.office_state import snapshot  # noqa: E402
+
+ET = ZoneInfo("America/New_York")
+SESSION_START = "10:15"
+SESSION_END = "15:45"
+
+
+def trading_window() -> dict:
+    """Whether the desk's trading window (10:15-15:45 ET weekdays) is open."""
+    now = datetime.now(ET)
+    start = datetime.strptime(SESSION_START, "%H:%M").time()
+    end = datetime.strptime(SESSION_END, "%H:%M").time()
+    open_window = now.weekday() < 5 and start <= now.time() <= end
+    return {
+        "window": f"{SESSION_START}-{SESSION_END} ET",
+        "open": open_window,
+        "weekday": now.strftime("%A"),
+        "now_et": now.isoformat(),
+        "note": "Trading is gated to this window; outside it the desk researches only.",
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = self.path.split("?", 1)[0]
         if route == "/api/status":
-            body = json.dumps(snapshot(ROOT)).encode()
+            body = json.dumps({**snapshot(ROOT), "session": trading_window()}).encode()
+            mime = "application/json"
+        elif route == "/api/session":
+            body = json.dumps(trading_window()).encode()
             mime = "application/json"
         elif route in ("/", "/office.js", "/office.css", "/scene.js"):
             name = "index.html" if route == "/" else route[1:]
