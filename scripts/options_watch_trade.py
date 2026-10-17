@@ -16,8 +16,11 @@ Entry gate (all deterministic, mirror of the trading-playbook):
   - underlier not already held (no doubling a name)
   - direction follows 20d momentum (mom20 >= 0 -> call, else put)
   - S&P 500 constituent or ETF allowlist, premium <= cap, <=5 options,
-    <=3 contracts, earnings blackout, session window -- all enforced
+    <=5 contracts, earnings blackout, session window -- all enforced
     downstream by options_pilot -> place_long_option. We never bypass.
+  - Liquid signal gate: skip CALL on crowded longs where smart money is
+    fading; skip PUT on crowded shorts where smart money is buying.
+    Read-only -- never places trades itself.
 
   python3 scripts/options_watch_trade.py                        # dry-run (default)
   python3 scripts/options_watch_trade.py --execute
@@ -61,6 +64,8 @@ def parse_args(argv=None):
     p.add_argument("--execute", action="store_true")
     p.add_argument("--no-exits", action="store_true")
     p.add_argument("--no-notify", action="store_true")
+    p.add_argument("--liquid-signals", default="outputs/liquid/latest.json",
+                   help="Liquid signals file from Co-Invest MCP (signal gate only)")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
@@ -119,6 +124,33 @@ def held_underliers(env_file: str) -> set[str]:
         return set()
 
 
+def liquid_signal_filter(symbol: str, side: str,
+                         signals_path: str | Path) -> tuple[bool, str]:
+    """Pure: apply Liquid signal gate to one candidate.
+
+    Returns (allowed, reason).
+
+    Rules (read-only signals, never execution):
+    - Skip a CALL on a symbol that is a crowded long where smart money is
+      fading — the crowd is already long, the smart money is exiting.
+    - Skip a PUT on a symbol that is a crowded short where smart money is
+      buying — the crowd is already short, the smart money is entering.
+    - Everything else passes through.
+    """
+    try:
+        doc = json.loads(Path(signals_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True, "no liquid signals file"
+    signals = doc.get("signals", {}) or {}
+    crowded_longs = set(signals.get("crowded_longs_smart_money_fading", []) or [])
+    crowded_shorts = set(signals.get("crowded_shorts_smart_money_buying", []) or [])
+    if side == "call" and symbol in crowded_longs:
+        return False, "liquid: crowded long, smart money fading"
+    if side == "put" and symbol in crowded_shorts:
+        return False, "liquid: crowded short, smart money buying"
+    return True, "liquid: signal clear"
+
+
 def run(cmd: list[str]):
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     return proc.returncode, proc.stdout, proc.stderr
@@ -153,6 +185,11 @@ def main(argv=None) -> int:
           f"candidates={candidates[:args.max_tries]}")
     pilot_exec = "--execute" if args.execute else "--dry-run"
     for symbol, side in candidates[:args.max_tries]:
+        liquid_ok, liquid_reason = liquid_signal_filter(symbol, side,
+                                                        args.liquid_signals)
+        if not liquid_ok:
+            print(f"[entry] skip {symbol} {side} -> {liquid_reason}")
+            continue
         rc, out, err = run([py, "scripts/options_pilot.py",
                             "--ticker", symbol, "--direction", side,
                             "--premium-cap", str(args.premium_cap),

@@ -1,6 +1,7 @@
 """Options order path tests: fingerprint, ledger, guarded placement (sim)."""
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from decimal import Decimal
@@ -13,6 +14,7 @@ from robinhood_tools.models import OptionLeg, OptionOrderRequest
 from robinhood_tools.risk import RiskLimits
 from robinhood_tools.service import RobinhoodTradingService
 from robinhood_tools.sim_broker import SimulationBroker
+from scripts.options_watch_trade import liquid_signal_filter
 
 
 def leg(**overrides) -> OptionLeg:
@@ -489,6 +491,59 @@ class OptionsWatchTradeTest(unittest.TestCase):
         self.assertEqual(
             self.mod.gated_candidates(Path("/no/such/screen.json"), 5, 73.0, set()),
             [])
+
+
+class TestLiquidSignalFilter(unittest.TestCase):
+    def _write_signals(self, root, data):
+        d = Path(root) / "outputs" / "liquid"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "latest.json").write_text(json.dumps(data))
+
+    def test_crowded_long_call_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {
+                    "crowded_longs_smart_money_fading": ["BTCD", "TWST"],
+                    "crowded_shorts_smart_money_buying": ["SMH"],
+                }})
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("BTCD", "call", path)
+            self.assertFalse(allowed)
+            self.assertIn("liquid:", why)
+            allowed, why = liquid_signal_filter("BTCD", "put", path)
+            self.assertTrue(allowed)
+
+    def test_crowded_short_put_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {
+                    "crowded_longs_smart_money_fading": [],
+                    "crowded_shorts_smart_money_buying": ["SMH"],
+                }})
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("SMH", "put", path)
+            self.assertFalse(allowed)
+            allowed, why = liquid_signal_filter("SMH", "call", path)
+            self.assertTrue(allowed)
+
+    def test_clear_symbol_passes(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {
+                    "crowded_longs_smart_money_fading": ["BTCD"],
+                    "crowded_shorts_smart_money_buying": ["SMH"],
+                }})
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("PTC", "call", path)
+            self.assertTrue(allowed)
+            allowed, why = liquid_signal_filter("PTC", "put", path)
+            self.assertTrue(allowed)
+
+    def test_missing_file_passes(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("PTC", "call", path)
+            self.assertTrue(allowed)
 
 
 if __name__ == "__main__":
