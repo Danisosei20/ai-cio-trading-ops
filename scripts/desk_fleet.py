@@ -44,6 +44,7 @@ PRESETS = {
     "morning": "screen,research,verify,report",
     "research-lite": "screen,research,verify,report",
     "research": "screen,research,news,verify,report",
+    "earnings-desk": "screen,earnings,research,verify,report",
 }
 
 
@@ -110,6 +111,14 @@ def task_screen(ctx: dict, args) -> dict:
 def _research(ctx: dict, args, name: str, extra: list[str], tag: str) -> dict:
     date = datetime.now(ET).date().isoformat()
     wanted = ctx.get("tickers", [])[: args.task_top]
+    # Respect the Earnings department blackout when it ran earlier in the plan.
+    earned = ctx.get("results", {}).get("earnings", {}).get("statuses", {})
+    if earned:
+        wanted = [t for t in wanted if earned.get(t) != "blacked_out"]
+        skipped = [t for t in ctx.get("tickers", [])[: args.task_top]
+                   if earned.get(t) == "blacked_out"]
+        if skipped:
+            ctx["notes"].append(f"{name}: skipped blacked-out {', '.join(skipped)}")
     runs = []
     for i, t in enumerate(wanted):
         if i > 0 and args.cooldown:
@@ -131,6 +140,53 @@ def task_research(ctx: dict, args) -> dict:
 def task_news(ctx: dict, args) -> dict:
     """Agent 3 (LLM, research only): news analyst per candidate."""
     return _research(ctx, args, "news", ["--analysts", "news"], "news")
+
+
+def task_earnings(ctx: dict, args) -> dict:
+    """Agent: Earnings department — enforces the 5-day earnings blackout.
+
+    Reads the optional earnings cache (outputs/earnings/latest.json,
+    shape {symbol: "YYYY-MM-DD"}) and flags any candidate whose next
+    earnings fall inside the blackout window. Safe default: unknown
+    earnings are *not* blocked — the desk never trades on a guess.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    blackout_until = today + timedelta(days=5)
+    cache = ROOT / "outputs/earnings" / "latest.json"
+    data = {}
+    if cache.exists():
+        try:
+            data = json.loads(cache.read_text())
+        except (json.JSONDecodeError, OSError):
+            ctx["notes"].append("earnings: cache unreadable — treating all as unknown")
+
+    statuses: dict[str, str] = {}
+    blacked: list[str] = []
+    for t in ctx.get("tickers", []):
+        raw = data.get(t)
+        if not raw:
+            statuses[t] = "unknown"
+            continue
+        try:
+            edate = date.fromisoformat(str(raw))
+        except ValueError:
+            statuses[t] = "unknown"
+            continue
+        if today <= edate <= blackout_until:
+            statuses[t] = "blacked_out"
+            blacked.append(t)
+        else:
+            statuses[t] = "clear"
+
+    if blacked:
+        ctx["notes"].append(
+            "earnings blackout: " + ", ".join(blacked) +
+            " earning within 5 days — held out of research"
+        )
+    return {"tickers": ctx.get("tickers", []), "statuses": statuses,
+            "blacked_out": blacked, "window_days": 5}
 
 
 def task_verify(ctx: dict, args) -> dict:
@@ -183,6 +239,7 @@ TASKS = {
     "screen": task_screen,
     "research": task_research,
     "news": task_news,
+    "earnings": task_earnings,
     "verify": task_verify,
     "report": task_report,
 }

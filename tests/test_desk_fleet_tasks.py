@@ -10,9 +10,13 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -92,6 +96,57 @@ class TestResearchTaskNoTickers(unittest.TestCase):
         self.assertEqual(res["tickers"], [])
         self.assertEqual(res["runs"], [])
         self.assertTrue(any("no tickers" in n for n in ctx["notes"]))
+
+
+class TestEarningsTask(unittest.TestCase):
+    def _write_cache(self, root, entries):
+        d = Path(root) / "outputs" / "earnings"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "latest.json").write_text(json.dumps(entries))
+
+    def test_blacked_out_within_five_days(self):
+        with tempfile.TemporaryDirectory() as root:
+            soon = (datetime.now(ET) + timedelta(days=2)).date().isoformat()
+            self._write_cache(root, {"MRNA": soon, "AAPL": "2030-01-01"})
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": ["MRNA", "AAPL"], "notes": []}
+                res = desk_fleet.task_earnings(ctx, SimpleNamespace())
+            self.assertEqual(res["statuses"]["MRNA"], "blacked_out")
+            self.assertEqual(res["statuses"]["AAPL"], "clear")
+            self.assertIn("MRNA", res["blacked_out"])
+            self.assertTrue(any("blackout" in n for n in ctx["notes"]))
+
+    def test_unknown_earnings_not_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_cache(root, {"MRNA": "2026-12-25"})
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": ["MRNA", "PTC"], "notes": []}
+                res = desk_fleet.task_earnings(ctx, SimpleNamespace())
+            self.assertEqual(res["statuses"]["MRNA"], "clear")
+            self.assertEqual(res["statuses"]["PTC"], "unknown")
+            self.assertNotIn("PTC", res["blacked_out"])
+
+    def test_missing_cache_safe_default(self):
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": ["MRNA"], "notes": []}
+                res = desk_fleet.task_earnings(ctx, SimpleNamespace())
+            self.assertEqual(res["statuses"]["MRNA"], "unknown")
+            self.assertEqual(res["blacked_out"], [])
+
+    def test_research_skips_blacked_out(self):
+        with tempfile.TemporaryDirectory() as root:
+            soon = (datetime.now(ET) + timedelta(days=1)).date().isoformat()
+            self._write_cache(root, {"MRNA": soon})
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": ["MRNA", "PTC"], "notes": [],
+                       "results": {"earnings": {"statuses": {"MRNA": "blacked_out",
+                                                             "PTC": "clear"}}},
+                       "log_dir": Path(root) / "outputs" / "fleet" / "test"}
+                (Path(root) / "outputs" / "fleet" / "test").mkdir(parents=True)
+                res = desk_fleet.task_research(ctx, SimpleNamespace(task_top=3, cooldown=0))
+            self.assertEqual(res["tickers"], ["PTC"])
+            self.assertTrue(any("blacked-out" in n for n in ctx["notes"]))
 
 
 if __name__ == "__main__":

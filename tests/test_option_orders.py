@@ -294,6 +294,25 @@ class OptionGuardTest(unittest.TestCase):
         self.assertEqual(decide(Decimal("1000"), Decimal("2800"), 2, 1,
                                 Decimal("0"), Decimal("0.15"), 2, 5)[0], "EXPIRE")
 
+    def test_trailing_stop_protects_big_winners(self):
+        """2026-10-17: once peak >= +25%, the stop ratchets up from the peak."""
+        decide = self.guard.decide
+        D = Decimal
+        # Peaked +200% (floor +80%): still above floor -> keep riding.
+        self.assertEqual(decide(D("2000"), D("5000"), 30, 2,
+                                D("0"), D("0.15"), 2, 5, peak_ret=D("2.0"))[0], "HOLD")
+        # Fell back to +70%: below the +80% floor -> trail exit.
+        act, why = decide(D("2000"), D("3400"), 30, 2,
+                          D("0"), D("0.15"), 2, 5, peak_ret=D("2.0"))
+        self.assertEqual(act, "TRAIL")
+        self.assertIn("floor", why)
+        # Peak under the +25% arm: plain winners-run rules apply.
+        self.assertEqual(decide(D("1000"), D("1150"), 30, 2,
+                                D("0"), D("0.15"), 2, 5, peak_ret=D("0.20"))[0], "HOLD")
+        # A +30% peak arms the trail at a +12% floor.
+        self.assertEqual(decide(D("1000"), D("1100"), 30, 2,
+                                D("0"), D("0.15"), 2, 5, peak_ret=D("0.30"))[0], "TRAIL")
+
     def test_watchlist_format(self):
         import importlib.util
 

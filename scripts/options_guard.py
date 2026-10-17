@@ -51,19 +51,32 @@ def parse_args(argv=None):
 
 def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
            target_pct: Decimal, stop_pct: Decimal,
-           max_dte: int, max_hold_days: int) -> tuple[str, str]:
-    """Pure exit decision. Returns (action, reason)."""
+           max_dte: int, max_hold_days: int,
+           peak_ret: Decimal | None = None) -> tuple[str, str]:
+    """Pure exit decision. Returns (action, reason).
+
+    Owner policy 2026-10-17: profit is unlimited, but winners protect
+    themselves. Once a position has peaked above --trail-arm (default +25%),
+    the -15% stop ratchets up to trail from the peak instead of the entry,
+    so a +200% winner can never ride back below its locked-in floor.
+    """
     if entry_cost <= 0:
         raise PolicyViolation("Entry cost must be positive.")
     ret = mark_value / entry_cost - 1
     if dte <= max_dte:
         return "EXPIRE", f"DTE {dte} <= {max_dte}"
+    trail_arm = Decimal("0.25")
+    peak = peak_ret if peak_ret is not None else ret
+    if peak >= trail_arm:
+        floor = peak * (1 - stop_pct / trail_arm)
+        if floor > 0 and ret <= floor:
+            return "TRAIL", f"peak +{peak:.0%} -> floor +{floor:.0%}, now {ret:.0%}"
     if ret <= -stop_pct:
         return "STOP", f"premium {ret:.0%} <= -{stop_pct:.0%}"
     if target_pct > 0 and ret >= target_pct:
         return "TARGET", f"premium {ret:.0%} >= {target_pct:.0%}"
     if ret > 0:
-        return "HOLD", f"profit {ret:.0%} — winners run (no target)"
+        return "HOLD", f"profit {ret:.0%} — winners run (trail armed at +{trail_arm:.0%})"
     if hold_days >= max_hold_days:
         return "STALE", f"held {hold_days}d at {ret:.0%}"
     return "HOLD", f"premium {ret:.0%}, DTE {dte}, day {hold_days}"
@@ -146,11 +159,21 @@ def main(argv=None) -> int:
             snap = snaps.get(symbol) or {}
             bid = Decimal(str((snap.get("latestQuote") or {}).get("bp", "0")))
             mark_value = bid * qty * 100
+            ret = (mark_value / cost - 1) if cost > 0 else Decimal("-1")
+            # Ratchet: remember the best return this position ever reached.
+            try:
+                prior_peak = Decimal(seen.get("peak", "0"))
+            except InvalidOperation:
+                prior_peak = Decimal("0")
+            peak = max(prior_peak, ret)
+            seen["peak"] = str(peak)
             action, reason = decide(cost, mark_value, dte, hold_days,
                                    args.target_pct, args.stop_pct,
-                                   args.max_dte, args.max_hold_days)
+                                   args.max_dte, args.max_hold_days,
+                                   peak_ret=peak)
             rec.update({"qty": qty, "dte": dte, "hold_days": hold_days,
-                        "return": f"{(mark_value / cost - 1):.0%}" if cost > 0 else None,
+                        "return": f"{ret:.0%}" if cost > 0 else None,
+                        "peak": f"+{peak:.0%}",
                         "signal": action, "reason": reason})
             if action != "HOLD" and args.execute:
                 from robinhood_tools.alpaca_options import snapshot_to_quote  # noqa: E402
