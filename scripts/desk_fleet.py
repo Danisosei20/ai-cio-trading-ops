@@ -43,8 +43,9 @@ PRESETS = {
     "scan": "screen,verify,report",
     "morning": "screen,research,verify,report",
     "research-lite": "screen,research,verify,report",
-    "research": "screen,research,news,verify,report",
+    "research": "screen,liquid,research,news,verify,report",
     "earnings-desk": "screen,earnings,research,verify,report",
+    "liquid-desk": "screen,liquid,research,verify,report",
 }
 
 
@@ -119,6 +120,14 @@ def _research(ctx: dict, args, name: str, extra: list[str], tag: str) -> dict:
                    if earned.get(t) == "blacked_out"]
         if skipped:
             ctx["notes"].append(f"{name}: skipped blacked-out {', '.join(skipped)}")
+    # Respect Liquid signals — skip crowded longs where smart money is fading.
+    liquid = ctx.get("results", {}).get("liquid", {})
+    if liquid:
+        avoid = set(liquid.get("crowded_longs", []))
+        skipped = [t for t in wanted if t in avoid]
+        wanted = [t for t in wanted if t not in avoid]
+        if skipped:
+            ctx["notes"].append(f"{name}: skipped liquid-crowded {', '.join(skipped)}")
     runs = []
     for i, t in enumerate(wanted):
         if i > 0 and args.cooldown:
@@ -140,6 +149,44 @@ def task_research(ctx: dict, args) -> dict:
 def task_news(ctx: dict, args) -> dict:
     """Agent 3 (LLM, research only): news analyst per candidate."""
     return _research(ctx, args, "news", ["--analysts", "news"], "news")
+
+
+def task_liquid(ctx: dict, args) -> dict:
+    """Agent: Liquid signal department — read-only market intelligence from
+    Co-Invest MCP. News, unusual activity, positioning pulse (smart money vs
+    crowd), and leaderboard of profitable traders. Never places trades."""
+    import json
+
+    signals_path = ROOT / "outputs/liquid" / "latest.json"
+    data = {}
+    if signals_path.exists():
+        try:
+            data = json.loads(signals_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            ctx["notes"].append("liquid: signals file unreadable")
+    if not data:
+        ctx["notes"].append("liquid: no signals file — run liquid_signals refresh")
+        return {"signals": {}, "crowded_longs": [], "crowded_shorts": [],
+                "leaderboard": [], "positioning": {}, "news": {},
+                "note": "no liquid signals file"}
+    signals = data.get("signals", {})
+    positioning = data.get("positioning", {})
+    leaderboard = data.get("leaderboard", [])
+    crowded_longs = [s["symbol"] for s in positioning.get("long_heavy_crowd", [])]
+    crowded_shorts = [s["symbol"] for s in positioning.get("short_heavy_crowd", [])]
+    ctx["notes"].append(
+        f"liquid: {len(crowded_longs)} crowded longs / {len(crowded_shorts)} crowded shorts "
+        f"| {len(leaderboard)} leaders tracked"
+    )
+    return {
+        "signals": signals,
+        "crowded_longs": crowded_longs,
+        "crowded_shorts": crowded_shorts,
+        "leaderboard": leaderboard[:5],
+        "positioning": positioning,
+        "news": data.get("news", {}),
+        "updated_at": data.get("updated_at"),
+    }
 
 
 def task_earnings(ctx: dict, args) -> dict:
@@ -239,6 +286,7 @@ TASKS = {
     "screen": task_screen,
     "research": task_research,
     "news": task_news,
+    "liquid": task_liquid,
     "earnings": task_earnings,
     "verify": task_verify,
     "report": task_report,

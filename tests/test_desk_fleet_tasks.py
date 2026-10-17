@@ -40,7 +40,7 @@ class TestTaskModeParsing(unittest.TestCase):
 
 class TestTaskRegistry(unittest.TestCase):
     def test_expected_tasks_present(self):
-        for name in ("screen", "research", "news", "verify", "report"):
+        for name in ("screen", "research", "news", "liquid", "verify", "report"):
             self.assertIn(name, desk_fleet.TASKS)
             self.assertTrue(callable(desk_fleet.TASKS[name]))
 
@@ -147,6 +147,75 @@ class TestEarningsTask(unittest.TestCase):
                 res = desk_fleet.task_research(ctx, SimpleNamespace(task_top=3, cooldown=0))
             self.assertEqual(res["tickers"], ["PTC"])
             self.assertTrue(any("blacked-out" in n for n in ctx["notes"]))
+
+
+class TestLiquidTask(unittest.TestCase):
+    def _write_signals(self, root, data):
+        d = Path(root) / "outputs" / "liquid"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "latest.json").write_text(json.dumps(data))
+
+    def test_reads_signals_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {"signals": {}, "positioning": {},
+                                        "leaderboard": [], "news": {},
+                                        "updated_at": "2026-10-17T12:00:00-04:00"})
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": [], "notes": []}
+                res = desk_fleet.task_liquid(ctx, SimpleNamespace())
+            self.assertEqual(res["signals"], {})
+            self.assertEqual(res["crowded_longs"], [])
+            self.assertEqual(res["crowded_shorts"], [])
+            self.assertEqual(res["updated_at"], "2026-10-17T12:00:00-04:00")
+
+    def test_crowded_longs_and_shorts(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {},
+                "positioning": {
+                    "long_heavy_crowd": [
+                        {"symbol": "BTCD", "crowd_long_pct": 100, "smart_money_long_pct": 2},
+                        {"symbol": "TWST", "crowd_long_pct": 100, "smart_money_long_pct": 21},
+                    ],
+                    "short_heavy_crowd": [
+                        {"symbol": "SMH", "crowd_long_pct": 2, "smart_money_long_pct": 62},
+                    ],
+                },
+                "leaderboard": [{"rank": 1, "name": "VolatiEntropy", "pnl": 700639}],
+                "news": {},
+                "updated_at": "2026-10-17T12:00:00-04:00",
+            })
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": [], "notes": []}
+                res = desk_fleet.task_liquid(ctx, SimpleNamespace())
+            self.assertEqual(res["crowded_longs"], ["BTCD", "TWST"])
+            self.assertEqual(res["crowded_shorts"], ["SMH"])
+            self.assertEqual(len(res["leaderboard"]), 1)
+            self.assertTrue(any("liquid:" in n for n in ctx["notes"]))
+
+    def test_missing_file_safe_default(self):
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": [], "notes": []}
+                res = desk_fleet.task_liquid(ctx, SimpleNamespace())
+            self.assertEqual(res["signals"], {})
+            self.assertEqual(res["crowded_longs"], [])
+            self.assertEqual(res["crowded_shorts"], [])
+            self.assertTrue(any("no signals file" in n for n in ctx["notes"]))
+
+
+class TestResearchSkipsLiquidCrowded(unittest.TestCase):
+    def test_research_skips_liquid_crowded_longs(self):
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(desk_fleet, "ROOT", Path(root)):
+                ctx = {"tickers": ["BTCD", "PTC", "TWST"], "notes": [],
+                       "results": {"liquid": {"crowded_longs": ["BTCD", "TWST"],
+                                               "crowded_shorts": ["SMH"]}},
+                       "log_dir": Path(root) / "outputs" / "fleet" / "test"}
+                (Path(root) / "outputs" / "fleet" / "test").mkdir(parents=True)
+                res = desk_fleet.task_research(ctx, SimpleNamespace(task_top=3, cooldown=0))
+            self.assertEqual(res["tickers"], ["PTC"])
+            self.assertTrue(any("liquid-crowded" in n for n in ctx["notes"]))
 
 
 if __name__ == "__main__":
