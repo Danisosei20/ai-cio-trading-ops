@@ -10,6 +10,7 @@ from robinhood_tools.approvals import option_fingerprint
 from robinhood_tools.database import CioDatabase
 from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.models import OptionLeg, OptionOrderRequest
+from robinhood_tools.risk import RiskLimits
 from robinhood_tools.service import RobinhoodTradingService
 from robinhood_tools.sim_broker import SimulationBroker
 
@@ -312,6 +313,64 @@ class OptionGuardTest(unittest.TestCase):
         # A +30% peak arms the trail at a +12% floor.
         self.assertEqual(decide(D("1000"), D("1100"), 30, 2,
                                 D("0"), D("0.15"), 2, 5, peak_ret=D("0.30"))[0], "TRAIL")
+
+    def test_market_clock_closed_blocks_execution(self):
+        """Execution guard must refuse when the Alpaca market clock is closed."""
+        from unittest.mock import patch
+
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+
+        from robinhood_tools.alpaca_paper import AlpacaPaperBackend
+        from robinhood_tools.errors import PolicyViolation
+        from robinhood_tools.runtime import (_build_paper_service,
+                                              PaperAutonomySettings,
+                                              RuntimeSettings)
+        from robinhood_tools.universe import Sp500Snapshot
+        from pathlib import Path
+
+        settings = RuntimeSettings(
+            mode="paper_auto", trading_enabled=False, channel_id="C1",
+            approval_window_minutes=60,
+            database_path=Path(tempfile.mkdtemp()) / "paper.db",
+            dashboard_path=Path(tempfile.mkdtemp()) / "dashboard.html",
+            risk_limits=RiskLimits(
+                max_order_value=Decimal("500"), max_symbol_exposure=Decimal("500"),
+                min_cash_dollars=Decimal("50"), max_open_positions=1),
+            paper_trading_enabled=True,
+            paper_autonomy=PaperAutonomySettings(
+                enabled=True, regular_session_only=True,
+                earliest_entry_time_et="10:15", latest_entry_time_et="15:45"),
+        )
+        snapshot = Sp500Snapshot(
+            symbols=frozenset({"SPY"}), as_of="2026-01-01T00:00:00Z",
+            source_url="https://example.com")
+
+        # Patch the global datetime clock to a Tuesday 11:00 ET (inside the
+        # window) so the guard reaches the market-clock check.
+        fake_now = _dt(2026, 10, 13, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+        with patch("datetime.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.strptime.side_effect = _dt.strptime
+            mock_dt.time = _dt.time
+            mock_dt.side_effect = _dt
+
+            def run_guard(is_open: bool) -> None:
+                with patch.object(AlpacaPaperBackend, "market_clock",
+                                  return_value={"is_open": is_open}):
+                    svc = _build_paper_service(
+                        settings=settings, sp500_snapshot=snapshot,
+                        earliest="10:15", latest="15:45")
+                    svc.execution_guard()
+
+            # Market closed -> guard raises.
+            with self.assertRaises(PolicyViolation):
+                run_guard(False)
+
+            # Market open -> guard passes.
+            run_guard(True)  # does not raise
+
+
 
     def test_watchlist_format(self):
         import importlib.util

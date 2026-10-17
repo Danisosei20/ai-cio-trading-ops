@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +17,31 @@ ET = ZoneInfo("America/New_York")
 SESSION_START = "10:15"
 SESSION_END = "15:45"
 
+_MARKET_CLOCK_CACHE = {"value": None, "fetched_at": 0.0}
+
+
+def _alpaca_market_clock() -> str | None:
+    """Best-effort Alpaca market clock. Cached 60s; 'unknown' if credentials
+    or network are unavailable. Never blocks the office viewer."""
+    now = time.time()
+    if _MARKET_CLOCK_CACHE["value"] is not None and now - _MARKET_CLOCK_CACHE["fetched_at"] < 60:
+        return _MARKET_CLOCK_CACHE["value"]
+    try:
+        from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport  # noqa: E402
+        from robinhood_tools.settings import load_env  # noqa: E402
+        import os
+
+        env = {**load_env(".env"), **os.environ}
+        transport = AlpacaPaperHttpTransport.from_values(env)
+        backend = AlpacaPaperBackend(transport)
+        clock = backend.market_clock()
+        result = "open" if clock.get("is_open") else "closed"
+    except Exception:  # noqa: BLE001 — viewer must stay up even if Alpaca is unreachable
+        result = "unknown"
+    _MARKET_CLOCK_CACHE["value"] = result
+    _MARKET_CLOCK_CACHE["fetched_at"] = now
+    return result
+
 
 def trading_window() -> dict:
     """Whether the desk's trading window (10:15-15:45 ET weekdays) is open."""
@@ -23,12 +49,20 @@ def trading_window() -> dict:
     start = datetime.strptime(SESSION_START, "%H:%M").time()
     end = datetime.strptime(SESSION_END, "%H:%M").time()
     open_window = now.weekday() < 5 and start <= now.time() <= end
+    market = _alpaca_market_clock()
+    # Trading is allowed only when BOTH the desk window is open AND the market
+    # clock says the market is open (fail-closed: unknown == not tradeable).
+    tradeable = open_window and market == "open"
     return {
         "window": f"{SESSION_START}-{SESSION_END} ET",
-        "open": open_window,
+        "window_open": open_window,
+        "market_clock": market,
+        "tradeable": tradeable,
         "weekday": now.strftime("%A"),
         "now_et": now.isoformat(),
-        "note": "Trading is gated to this window; outside it the desk researches only.",
+        "note": ("Market is open — trading allowed within the window."
+                 if tradeable else
+                 "Desk researches only — market clock closed or outside the window."),
     }
 
 
