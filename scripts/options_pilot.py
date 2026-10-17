@@ -31,7 +31,8 @@ def parse_args(argv=None):
     p.add_argument("--ticker", default="NVDA")
     p.add_argument("--direction", default="call", choices=["call", "put"])
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
-    p.add_argument("--max-contracts", type=int, default=3)
+    p.add_argument("--max-contracts", type=int, default=5,
+                   help="owner rule 2026-10-17: raised from 3 to 5")
     p.add_argument("--qty", type=int, default=0,
                    help="exact contracts (owner-directed); capped by premium-cap")
     p.add_argument("--max-positions", type=int, default=5,

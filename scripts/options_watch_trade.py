@@ -53,7 +53,8 @@ def parse_args(argv=None):
                    help="skip names above this RSI (overbought gas)")
     p.add_argument("--direction", default="auto", choices=["auto", "call", "put"])
     p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
-    p.add_argument("--max-contracts", type=int, default=3)
+    p.add_argument("--max-contracts", type=int, default=5,
+                   help="owner rule 2026-10-17: raised from 3 to 5")
     p.add_argument("--max-positions", type=int, default=5)
     p.add_argument("--max-tries", type=int, default=4,
                    help="candidates to attempt before giving up this run")

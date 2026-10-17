@@ -3,9 +3,11 @@
 
 Evaluates every open OCC position each run:
   EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
-  TARGET  premium up >= --target-pct (default 0.02, owner day-trade plan)
-  STOP    premium down <= --stop-pct (default 0.25, owner day-trade plan)
-  STALE   held >= --max-hold-days (default 5) without hitting target
+  EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
+  STOP    premium down <= --stop-pct (default 0.15)
+  TARGET  premium up >= --target-pct (default 0 = disabled, profit unlimited)
+  STALE   held >= --max-hold-days (default 5) while NOT in profit
+Owners run: winners are never closed by a fixed target or by time.
 Exits sell-to-close through review + ledger + session guard. Paper only.
 Defaults mirror the desk owner plan (+2% take / -25% stop) and the stock
 guard (paper_position_guard.py, +2%/-1%).
@@ -37,8 +39,9 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Exit guard for long option positions.")
     p.add_argument("--check", action="store_true")
     p.add_argument("--execute", action="store_true")
-    p.add_argument("--target-pct", type=Decimal, default=Decimal("0.02"))
-    p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.25"))
+    p.add_argument("--target-pct", type=Decimal, default=Decimal("0"),
+                   help="0 = unlimited profit (default); >0 re-enables a take-profit exit")
+    p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.15"))
     p.add_argument("--max-dte", type=int, default=2)
     p.add_argument("--max-hold-days", type=int, default=5)
     p.add_argument("--config", default="config/approval_routes.json")
@@ -55,12 +58,14 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
     ret = mark_value / entry_cost - 1
     if dte <= max_dte:
         return "EXPIRE", f"DTE {dte} <= {max_dte}"
-    if ret >= target_pct:
-        return "TARGET", f"premium {ret:.0%} >= {target_pct:.0%}"
     if ret <= -stop_pct:
         return "STOP", f"premium {ret:.0%} <= -{stop_pct:.0%}"
+    if target_pct > 0 and ret >= target_pct:
+        return "TARGET", f"premium {ret:.0%} >= {target_pct:.0%}"
+    if ret > 0:
+        return "HOLD", f"profit {ret:.0%} — winners run (no target)"
     if hold_days >= max_hold_days:
-        return "STALE", f"held {hold_days}d without target"
+        return "STALE", f"held {hold_days}d at {ret:.0%}"
     return "HOLD", f"premium {ret:.0%}, DTE {dte}, day {hold_days}"
 
 

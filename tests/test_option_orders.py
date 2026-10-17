@@ -260,13 +260,39 @@ class OptionGuardTest(unittest.TestCase):
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "TARGET")
         self.assertEqual(decide(Decimal("1000"), Decimal("400"), 30, 1,
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "STOP")
-        self.assertEqual(decide(Decimal("1000"), Decimal("1100"), 30, 6,
+        # STALE is for positions that are NOT winning; a loser drifts out.
+        self.assertEqual(decide(Decimal("1000"), Decimal("950"), 30, 6,
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "STALE")
         self.assertEqual(decide(Decimal("1000"), Decimal("1100"), 30, 1,
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "HOLD")
         with self.assertRaises(PolicyViolation):
             decide(Decimal("0"), Decimal("100"), 30, 1,
                    Decimal("0.5"), Decimal("0.5"), 2, 5)
+
+    def test_winners_run_never_closed_by_time(self):
+        """2026-10-17 owner reset: profit is unlimited.
+
+        A winning position must survive both the old 2% target and the STALE
+        time exit -- only downside (STOP) and expiry (EXPIRE) close it.
+        """
+        decide = self.guard.decide
+        # +180% held 9 days: no target, so no TARGET; in profit, so no STALE.
+        act, why = decide(Decimal("1000"), Decimal("2800"), 10, 9,
+                          Decimal("0"), Decimal("0.15"), 2, 5)
+        self.assertEqual(act, "HOLD")
+        self.assertIn("winners run", why)
+        # Small winner on day 1 also holds -- nothing closes it early.
+        self.assertEqual(decide(Decimal("1000"), Decimal("1030"), 30, 1,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "HOLD")
+        # Downside still stops at -15%, winner or not.
+        self.assertEqual(decide(Decimal("1000"), Decimal("850"), 30, 1,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "STOP")
+        # Flat/losing trades still get flushed by STALE.
+        self.assertEqual(decide(Decimal("1000"), Decimal("1000"), 30, 6,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "STALE")
+        # Expiry guard is untouched -- nothing is held into the weekend.
+        self.assertEqual(decide(Decimal("1000"), Decimal("2800"), 2, 1,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "EXPIRE")
 
     def test_watchlist_format(self):
         import importlib.util

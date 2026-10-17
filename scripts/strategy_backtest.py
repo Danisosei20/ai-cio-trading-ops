@@ -14,9 +14,11 @@ Families (long-only, next-open execution):
 Costs (the video's honest part): --commission $/share/side and
 --slippage-bps on fill price, both sides, every trade.
 
-Incubation: first 70% of bars = in-sample (rank), last 30% =
-out-of-sample. A variant passes only with >= --min-trades in BOTH
-segments. Ranked by in-sample Sharpe, reported with OOS return.
+Incubation: first 70% of bars = in-sample, last 30% = out-of-sample.
+A variant passes only with >= --min-trades in BOTH segments AND a
+positive return and Sharpe in BOTH -- a variant that blows up in
+sample is overfit, not incubated, whatever it does out of sample.
+Ranked by out-of-sample Sharpe by default (--rank is|oos|robust).
 
   python3 scripts/strategy_backtest.py --tickers NVDA,SPY --start 2023-01-01
   python3 scripts/strategy_backtest.py --tickers NVDA --wide --min-trades 20
@@ -260,6 +262,9 @@ def main() -> int:
     ap.add_argument("--commission", type=float, default=0.005, help="$/share/side")
     ap.add_argument("--slippage-bps", type=float, default=5.0)
     ap.add_argument("--min-trades", type=int, default=30)
+    ap.add_argument("--rank", choices=["oos", "is", "robust"], default="oos",
+                    help="leaderboard sort key: out-of-sample (default), in-sample, "
+                         "or min(IS,OOS) Sharpe")
     ap.add_argument("--wide", action="store_true", help="expand grid (~6x variants)")
     ap.add_argument("--top", type=int, default=10)
     a = ap.parse_args()
@@ -285,44 +290,76 @@ def main() -> int:
             runner = run_overnight if v["family"] == "overnight" else run_segment
             is_r = runner(bars[:cut], pos[:cut], a.cash, a.commission, slip)
             oos_r = runner(bars[cut:], pos[cut:], a.cash, a.commission, slip)
-            passed = is_r["trades"] >= a.min_trades and oos_r["trades"] >= a.min_trades
+            # Tightened gate: robust in BOTH segments. Requiring only OOS>0 lets
+            # a variant that blew up in-sample "pass"; require positive return
+            # and positive Sharpe in sample too, plus enough trades in both.
+            passed = (is_r["trades"] >= a.min_trades and oos_r["trades"] >= a.min_trades
+                      and is_r["return"] > 0 and oos_r["return"] > 0
+                      and is_r["sharpe"] > 0 and oos_r["sharpe"] > 0)
             all_rows.append({"ticker": ticker, "variant": label(v), **v,
                              "bars": len(bars),
                              "is_return": round(is_r["return"], 4), "is_sharpe": round(is_r["sharpe"], 3),
-                             "is_trades": is_r["trades"], "is_curve": is_r["curve"],
+                             "is_trades": is_r["trades"], "is_excess": round(is_r["excess"], 4),
+                             "is_curve": is_r["curve"],
                              "oos_return": round(oos_r["return"], 4), "oos_sharpe": round(oos_r["sharpe"], 3),
                              "oos_trades": oos_r["trades"], "oos_max_dd": round(oos_r["max_dd"], 4),
-                             "oos_win_rate": round(oos_r["win_rate"], 3),
+                             "oos_win_rate": round(oos_r["win_rate"], 3), "oos_excess": round(oos_r["excess"], 4),
                              "oos_curve": oos_r["curve"],
-                             "incubation_pass": passed and oos_r["return"] > 0})
-    eligible = [r for r in all_rows if r["is_trades"] >= a.min_trades]
-    eligible.sort(key=lambda r: r["is_sharpe"], reverse=True)
+                             "robust": round(min(is_r["sharpe"], oos_r["sharpe"]), 3),
+                             "incubation_pass": passed})
+    # Rankable only with enough trades in BOTH windows, so a small-n OOS fluke
+    # cannot top an out-of-sample-ranked board.
+    eligible = [r for r in all_rows
+                if r["is_trades"] >= a.min_trades and r["oos_trades"] >= a.min_trades]
+    if a.rank == "is":
+        eligible.sort(key=lambda r: r["is_sharpe"], reverse=True)
+    elif a.rank == "robust":
+        eligible.sort(key=lambda r: (r["robust"], r["oos_sharpe"]), reverse=True)
+    else:  # oos: rank by what survives out-of-sample, tie-break on in-sample
+        eligible.sort(key=lambda r: (r["oos_sharpe"], r["is_sharpe"]), reverse=True)
     top = eligible[:a.top]
+    passers = sorted([r for r in eligible if r["incubation_pass"]],
+                     key=lambda r: r["oos_sharpe"], reverse=True)
 
     (out / "summary.json").write_text(json.dumps({
         "run_id": run_id, "params": vars(a), "variants_tested": len(all_rows),
         "eligible": len(eligible), "top": top, "prices": price_series,
-        "incubation_passed": [r for r in top if r["incubation_pass"]]}, indent=2, default=str))
+        "passers": passers, "pass_count": len(passers),
+        "incubation_passed": passers}, indent=2, default=str))
+    fields = ["ticker", "variant", "bars", "is_return", "is_sharpe", "is_trades",
+              "is_excess", "oos_return", "oos_sharpe", "oos_trades", "oos_max_dd",
+              "oos_win_rate", "oos_excess", "robust", "incubation_pass"]
     with open(out / "leaderboard.csv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["ticker", "variant", "bars", "is_return", "is_sharpe",
-                                           "is_trades", "oos_return", "oos_sharpe", "oos_trades",
-                                           "oos_max_dd", "oos_win_rate", "incubation_pass"])
+        w = csv.DictWriter(fh, fieldnames=fields)
         w.writeheader()
         for r in top:
+            w.writerow({k: r[k] for k in w.fieldnames})
+    with open(out / "all_eligible.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        for r in eligible:
             w.writerow({k: r[k] for k in w.fieldnames})
     Path("outputs/backtests/latest.json").write_text(json.dumps(
         {"run_id": run_id, "top": top, "prices": price_series}, indent=2, default=str))
 
-    print(f"tested={len(all_rows)} eligible(trades>={a.min_trades})={len(eligible)} -> {out}")
-    print(f"{'ticker':6} {'variant':14} {'IS_ret':>7} {'IS_sh':>6} {'IS_tr':>5} | "
-          f"{'OOS_ret':>7} {'OOS_sh':>6} {'OOS_tr':>5} {'OOS_dd':>7} pass")
+    print(f"tested={len(all_rows)} eligible(is+oos trades>={a.min_trades})={len(eligible)} "
+          f"rank={a.rank} -> {out}")
+    print(f"{'ticker':6} {'variant':14} {'IS_ret':>8} {'IS_sh':>6} {'IS_tr':>5} | "
+          f"{'OOS_ret':>8} {'OOS_sh':>6} {'OOS_tr':>5} {'OOS_dd':>7} {'OOS_x':>7} pass")
     for r in top:
         flag = "PASS" if r["incubation_pass"] else "----"
-        print(f"{r['ticker']:6} {r['variant']:14} {r['is_return']:7.1%} {r['is_sharpe']:6.2f} "
-              f"{r['is_trades']:5d} | {r['oos_return']:7.1%} {r['oos_sharpe']:6.2f} "
-              f"{r['oos_trades']:5d} {r['oos_max_dd']:7.1%} {flag}")
-    if not any(r["incubation_pass"] for r in top):
-        print("No variant passed incubation (OOS>0 with min trades). Correct answer: trade nothing.")
+        print(f"{r['ticker']:6} {r['variant']:14} {r['is_return']:8.1%} {r['is_sharpe']:6.2f} "
+              f"{r['is_trades']:5d} | {r['oos_return']:8.1%} {r['oos_sharpe']:6.2f} "
+              f"{r['oos_trades']:5d} {r['oos_max_dd']:7.1%} {r['oos_excess']:7.1%} {flag}")
+    if passers:
+        print(f"\n{len(passers)} variant(s) passed the tightened gate "
+              f"(IS>0 & OOS>0, Sharpe>0 both, >={a.min_trades} trades both):")
+        for r in passers:
+            print(f"  {r['ticker']:6} {r['variant']:14} IS {r['is_return']:+8.1%} sh{r['is_sharpe']:5.2f} | "
+                  f"OOS {r['oos_return']:+8.1%} sh{r['oos_sharpe']:5.2f} n{r['oos_trades']:3d} "
+                  f"OOS-excess {r['oos_excess']:+8.1%}")
+    else:
+        print("\nNo variant passed the tightened gate. Correct answer: trade nothing.")
     return 0
 
 
