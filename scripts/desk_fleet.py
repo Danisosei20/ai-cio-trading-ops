@@ -46,6 +46,8 @@ PRESETS = {
     "research": "screen,liquid,research,news,verify,report",
     "earnings-desk": "screen,earnings,research,verify,report",
     "liquid-desk": "screen,liquid,research,verify,report",
+    "skeptic-desk": "screen,liquid,research,skeptic,news,verify,report",
+    "crypto-desk": "screen,liquid,bijective,research,verify,report",
 }
 
 
@@ -109,7 +111,8 @@ def task_screen(ctx: dict, args) -> dict:
     return {"returncode": proc.returncode, "count": len(tickers), "tickers": tickers}
 
 
-def _research(ctx: dict, args, name: str, extra: list[str], tag: str) -> dict:
+def _research(ctx: dict, args, name: str, extra: list[str], tag: str,
+              skip_liquid: bool = False) -> dict:
     date = datetime.now(ET).date().isoformat()
     wanted = ctx.get("tickers", [])[: args.task_top]
     # Respect the Earnings department blackout when it ran earlier in the plan.
@@ -121,13 +124,16 @@ def _research(ctx: dict, args, name: str, extra: list[str], tag: str) -> dict:
         if skipped:
             ctx["notes"].append(f"{name}: skipped blacked-out {', '.join(skipped)}")
     # Respect Liquid signals — skip crowded longs where smart money is fading.
-    liquid = ctx.get("results", {}).get("liquid", {})
-    if liquid:
-        avoid = set(liquid.get("crowded_longs", []))
-        skipped = [t for t in wanted if t in avoid]
-        wanted = [t for t in wanted if t not in avoid]
-        if skipped:
-            ctx["notes"].append(f"{name}: skipped liquid-crowded {', '.join(skipped)}")
+    # Skeptic intentionally ignores this filter so it can stress-test crowded
+    # longs from a bear perspective.
+    if not skip_liquid:
+        liquid = ctx.get("results", {}).get("liquid", {})
+        if liquid:
+            avoid = set(liquid.get("crowded_longs", []))
+            skipped = [t for t in wanted if t in avoid]
+            wanted = [t for t in wanted if t not in avoid]
+            if skipped:
+                ctx["notes"].append(f"{name}: skipped liquid-crowded {', '.join(skipped)}")
     runs = []
     for i, t in enumerate(wanted):
         if i > 0 and args.cooldown:
@@ -149,6 +155,16 @@ def task_research(ctx: dict, args) -> dict:
 def task_news(ctx: dict, args) -> dict:
     """Agent 3 (LLM, research only): news analyst per candidate."""
     return _research(ctx, args, "news", ["--analysts", "news"], "news")
+
+
+def task_skeptic(ctx: dict, args) -> dict:
+    """Agent: Skeptic department — bear-case research per candidate.
+
+    Runs TradingAgents with a skeptical analyst lens to stress-test the
+    bull-case thesis from the Research department. Never places trades.
+    """
+    return _research(ctx, args, "skeptic", ["--analysts", "skeptic"], "skeptic",
+                     skip_liquid=True)
 
 
 def task_liquid(ctx: dict, args) -> dict:
@@ -187,6 +203,91 @@ def task_liquid(ctx: dict, args) -> dict:
         "news": data.get("news", {}),
         "updated_at": data.get("updated_at"),
     }
+
+
+def task_bijective(ctx: dict, args) -> dict:
+    """Agent: Bijective crypto department — autonomous crypto research agent.
+
+    Runs `tra run` in the bijective-desk subdirectory. The agent proposes;
+    the system decides: every figure comes from ccxt market data, never from
+    the model, and every refusal names its figure. Produces snapshot, briefs,
+    answers, intent, and cycle.json per run. Never places trades — sandbox
+    mode by default; sandbox writes each decision down and sends nothing.
+
+    Reads outputs/bijective/intent.json if a previous cycle wrote one
+    (signals mode for external execution), otherwise runs `tra run` fresh.
+    """
+    import json
+    import subprocess
+
+    bijective_dir = ROOT / "bijective-desk"
+    tra = "/opt/homebrew/bin/tra"
+    intent_path = bijective_dir / "outputs/bijective_intent.json"
+
+    result = {"instrument": None, "decision": None, "reason": None,
+              "conviction": None, "size": None, "stop": None, "target": None,
+              "cycle_id": None, "blocked": False, "blocked_reason": None}
+
+    # If a previous cycle already wrote an intent file, read it (signal mode,
+    # no new data pull, no tokens).
+    if intent_path.exists():
+        try:
+            data = json.loads(intent_path.read_text())
+            result.update({k: data.get(k) for k in
+                           ("instrument", "decision", "reason", "conviction",
+                            "size", "stop", "target", "cycle_id", "blocked",
+                            "blocked_reason")})
+            ctx["notes"].append(f"bijective: read intent from last cycle "
+                                f"({result.get('cycle_id') or 'unknown'})")
+            return result
+        except (json.JSONDecodeError, OSError):
+            ctx["notes"].append("bijective: intent file unreadable, running fresh")
+
+    # Run one autonomous cycle: snapshot → agents → cost gate → sandbox intent.
+    try:
+        subprocess.run(
+            [tra, "run"],
+            cwd=bijective_dir, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        ctx["notes"].append(f"bijective: run failed ({exc})")
+        result["blocked"] = True
+        result["blocked_reason"] = str(exc)
+        return result
+
+    # Read cycle.json for the structured record (the source of truth).
+    cycles_dir = bijective_dir / "runs/cycles"
+    if cycles_dir.exists():
+        cycle_dirs = [p for p in cycles_dir.iterdir()
+                      if p.is_dir() and (p / "cycle.json").exists()]
+        if cycle_dirs:
+            latest = sorted(cycle_dirs, key=lambda p: p.stat().st_mtime,
+                            reverse=True)[0]
+            cycle_json = latest / "cycle.json"
+            try:
+                cdata = json.loads(cycle_json.read_text())
+                result["cycle_id"] = cdata.get("cycle_id") or latest.name
+                result["instrument"] = cdata.get("instrument")
+                result["decision"] = cdata.get("intent")
+                result["reason"] = cdata.get("stopped_by")
+                result["conviction"] = cdata.get("conviction")
+                result["size"] = cdata.get("size")
+                result["stop"] = cdata.get("stop")
+                result["target"] = cdata.get("target")
+                # A cycle that hit the data or gate guard is blocked.
+                if cdata.get("intent") is None:
+                    result["blocked"] = True
+                    refusals = cdata.get("refusals", [])
+                    if refusals:
+                        result["blocked_reason"] = refusals[0][:120] + "…"
+                    elif cdata.get("stopped_by"):
+                        result["blocked_reason"] = cdata["stopped_by"][:120] + "…"
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    ctx["notes"].append(f"bijective: cycle {result.get('cycle_id') or 'unknown'} "
+                        f"→ {result.get('decision') or 'no decision'} "
+                        f"({result.get('instrument') or 'no instrument'})")
+    return result
 
 
 def task_earnings(ctx: dict, args) -> dict:
@@ -286,7 +387,9 @@ TASKS = {
     "screen": task_screen,
     "research": task_research,
     "news": task_news,
+    "skeptic": task_skeptic,
     "liquid": task_liquid,
+    "bijective": task_bijective,
     "earnings": task_earnings,
     "verify": task_verify,
     "report": task_report,

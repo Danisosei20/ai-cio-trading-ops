@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--ticker", required=True, help="e.g. NVDA, AAPL, SPY")
     p.add_argument("--date", required=True, help="analysis date YYYY-MM-DD, must be past or today")
-    p.add_argument("--provider", default="openai", help="openai|nvidia|anthropic|google|... (see TradingAgents catalog)")
+    p.add_argument("--provider", default=os.environ.get("TRADINGAGENTS_LLM_PROVIDER", "openai"), help="openai|nvidia|anthropic|google|... (see TradingAgents catalog)")
     p.add_argument("--quick-model", default=None, help="override quick_think_llm")
     p.add_argument("--deep-model", default=None, help="override deep_think_llm")
     p.add_argument("--analysts", default="market,news,fundamentals",
@@ -38,7 +39,35 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
+def _load_llm_env() -> None:
+    """Export LLM keys from ../TradingAgents/.env (if present) into os.environ.
+
+    The research bridge never hardcodes keys; it only lifts ones the user
+    stored in the TradingAgents checkout. Existing environment values win.
+    """
+    import os
+    from pathlib import Path as _Path
+
+    dotenv = _Path(__file__).resolve().parents[1].parent / "TradingAgents" / ".env"
+    if not dotenv.exists():
+        return
+    try:
+        for line in dotenv.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if key and value:
+                os.environ.setdefault(key, value)
+    except OSError:
+        pass
+
+
 def main(argv=None) -> int:
+    # Load LLM env vars from ../TradingAgents/.env before parsing args so that
+    # TRADINGAGENTS_LLM_PROVIDER (and any API key) are visible to the default.
+    _load_llm_env()
     args = parse_args(argv)
     ticker = args.ticker.strip().upper()
     try:

@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from robinhood_tools.analysis import ExitPlan, MarketSnapshot, ResearchSource, TradeCandidate
 from robinhood_tools.database import CioDatabase
@@ -85,6 +86,8 @@ class PaperAutonomyTests(unittest.TestCase):
             enabled=True, human_approval_required=False, earliest_entry_time_et="00:00",
             latest_entry_time_et="23:59",
         )
+        # Fixed Tuesday-mid-morning ET clock: session-window tests must not
+        # depend on the day they run (they failed on weekends before this).
         self.settings = RuntimeSettings(
             "paper_auto", False, "C1", 120, self.db.path, Path(self.temp.name) / "paper.html",
             RiskLimits(
@@ -92,6 +95,7 @@ class PaperAutonomyTests(unittest.TestCase):
                 min_cash_dollars=Decimal("50"), max_open_positions=1,
             ),
             paper_trading_enabled=True, paper_autonomy=self.policy,
+            clock=lambda: datetime(2026, 10, 13, 10, 30, tzinfo=ZoneInfo("America/New_York")),
         )
         universe = Sp500Snapshot(
             frozenset({"AAPL"}), datetime.now(timezone.utc).isoformat(), "https://spglobal.com/sp500",
