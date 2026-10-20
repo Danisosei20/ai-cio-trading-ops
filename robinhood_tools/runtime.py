@@ -21,7 +21,7 @@ class PaperAutonomySettings:
     enabled: bool = False
     human_approval_required: bool = True
     regular_session_only: bool = True
-    earliest_entry_time_et: str = "10:15"
+    earliest_entry_time_et: str = "09:45"
     latest_entry_time_et: str = "15:45"
     require_limit_orders: bool = True
     forbid_price_chasing: bool = True
