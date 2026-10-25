@@ -71,7 +71,7 @@ class RuntimeSettings:
     paper_autonomy: PaperAutonomySettings = field(default_factory=PaperAutonomySettings)
     # Injectable ET clock so tests are not weekday-dependent (lesson 2026-10-17).
     clock: Callable[[], datetime] = field(
-        default_factory=lambda: datetime.now(ZoneInfo("America/New_York"))
+        default_factory=lambda: lambda: datetime.now(ZoneInfo("America/New_York"))
     )
     disclosure_intelligence: DisclosureIntelligenceSettings = field(
         default_factory=DisclosureIntelligenceSettings
