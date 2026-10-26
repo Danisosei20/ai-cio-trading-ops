@@ -18,6 +18,24 @@ from .research import ResearchExperiment, ResearchRun
 DATABASE_SCHEMA_VERSION = 7
 
 
+class ClosingConnection(sqlite3.Connection):
+    """sqlite3.Connection that also CLOSES when a `with` block exits.
+
+    `with sqlite3.connect(...)` commits/rolls back but never closes the
+    handle. On Windows an open handle blocks deleting the database file
+    (test temp dirs, restore drills, migration backups), so every bare
+    `with sqlite3.connect(...)` leaked a handle. Pass this as
+    ``factory=`` (see CioDatabase.connect) or use closing_connect();
+    behavior inside the block is unchanged.
+    """
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            super().__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self.close()
+
+
 class CioDatabase:
     """Transactional approval, audit, exit-plan, delivery, and learning store."""
 
@@ -27,7 +45,8 @@ class CioDatabase:
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None,
+                                     factory=ClosingConnection)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA journal_mode=WAL")
@@ -242,7 +261,8 @@ class CioDatabase:
     def backup(self, destination: str | Path) -> Path:
         target = Path(destination)
         target.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as source, sqlite3.connect(target) as backup:
+        with self.connect() as source, sqlite3.connect(
+                target, factory=ClosingConnection) as backup:
             source.backup(backup)
         return target
 
@@ -595,7 +615,7 @@ class CioDatabase:
     def list_trade_candidates(self, limit: int = 10) -> list[dict]:
         with self.connect() as db:
             return [dict(row) for row in db.execute(
-                "SELECT * FROM trade_candidates ORDER BY updated_at DESC LIMIT ?",
+                "SELECT * FROM trade_candidates ORDER BY updated_at DESC, rowid DESC LIMIT ?",
                 (limit,))]
 
     def candidate_timeline(self, candidate_id: str) -> dict:

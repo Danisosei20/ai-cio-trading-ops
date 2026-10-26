@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -37,7 +38,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parents[1]
-TAVENV = Path("/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python")
+# TradingAgents venv interpreter. Keep the macOS source-machine path as the
+# default for backwards compatibility; set TRADINGAGENTS_VENV_PYTHON (e.g. to
+# TradingAgents/.venv/Scripts/python.exe on Windows) to override per machine.
+TAVENV = Path(os.environ.get(
+    "TRADINGAGENTS_VENV_PYTHON",
+    "/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python"))
 
 PRESETS = {
     "scan": "screen,verify,report",
@@ -53,6 +59,21 @@ PRESETS = {
 
 def _python() -> str:
     return str(TAVENV if TAVENV.exists() else sys.executable)
+
+
+def _tradingagents_available() -> bool:
+    """Does the interpreter chosen for LLM tasks actually have tradingagents?
+
+    Portable replacement for the old hardcoded TAVENV.exists() check: works
+    on any machine, and passes exactly when the research leg can run.
+    """
+    try:
+        proc = subprocess.run([_python(), "-c", "import tradingagents"],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=120)
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def parse_args(argv=None):
@@ -88,7 +109,8 @@ def _run(ctx: dict, name: str, cmd: list[str], timeout: int = 1800):
         fh.write("$ " + " ".join(cmd) + "\n")
         fh.flush()
         proc = subprocess.run(cmd, cwd=ROOT, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, timeout=timeout)
+                              stderr=subprocess.STDOUT, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
         fh.write(proc.stdout or "")
     return proc
 
@@ -348,7 +370,7 @@ def task_verify(ctx: dict, args) -> dict:
     else:
         checks["screener_fresh"] = False
         checks["screener_age_hours"] = None
-    checks["tradingagents_venv"] = TAVENV.exists()
+    checks["tradingagents_installed"] = _tradingagents_available()
     checks["has_tickers"] = bool(ctx.get("tickers"))
     ok = all(v for v in checks.values() if isinstance(v, bool))
     if not ok:
@@ -520,7 +542,7 @@ def run_agents(args) -> int:
             fh.write(f"\n=== agent {ticker} start {datetime.now(ET).isoformat()} ===\n")
             proc = subprocess.run(cmd, cwd=ROOT, env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True)
+                                  text=True, encoding="utf-8", errors="replace")
             fh.write(proc.stdout)
         rec = {"ticker": ticker, "returncode": proc.returncode}
         try:

@@ -25,6 +25,14 @@ import os
 import sys
 from pathlib import Path
 
+# Windows consoles default to cp1252 and crash on non-ASCII LLM output
+# (langchain pretty_print): force UTF-8, never fail on an odd glyph.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+except (AttributeError, OSError):
+    pass
+
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])

@@ -50,6 +50,32 @@ STATUS_FILE = Path("outputs/paper/tradingagents/status.json")
 RUN_LOG = Path("outputs/paper/tradingagents/live.log")
 
 
+def _load_llm_env() -> None:
+    """Export LLM keys from ../TradingAgents/.env (if present) into os.environ.
+
+    Mirrors scripts/tradingagents_research.py: LLM clients read API keys from
+    the process environment, and the desk keeps them in the sibling
+    TradingAgents checkout. Existing environment values win.
+    """
+    import os
+    from pathlib import Path as _Path
+
+    dotenv = _Path(__file__).resolve().parents[1].parent / "TradingAgents" / ".env"
+    if not dotenv.exists():
+        return
+    try:
+        for line in dotenv.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if key and value:
+                os.environ.setdefault(key, value)
+    except OSError:
+        pass
+
+
 def set_stage(ticker: str, stage: str, detail: str = "") -> None:
     """Write live progress for the UI (best effort, never raises)."""
     try:
@@ -249,7 +275,51 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
              f"status={result['status']} order={result['order_id']}")
 
 
+def _record_shadow_outcome(settings, trade_date: str, rec: dict,
+                           regime: str, args) -> None:
+    """One shadow-equity row per ticker/run — the track record while gated.
+
+    Blocked ideas (CHOP regime, closed session, stale quote, desk
+    disagreement) still tell us what the desk WOULD have done; that is what
+    the learning machinery later scores against the S&P 500 at 1/5/20 days.
+    Never raises: shadow logging must not break a trading run.
+    """
+    if str(rec.get("action", "")).endswith("_placed"):
+        return  # a real order exists in the ledger; no shadow row needed
+    try:
+        from robinhood_tools.database import CioDatabase
+
+        decision = str(rec.get("decision", "") or "")
+        sig = decision.strip().lower()
+        reason = str(rec.get("reason", ""))
+        desk_disagreed = "desk disagrees" in reason
+        desk_failed = str(rec.get("desk_outcome", "")).startswith("record-failed")
+        qualified = ((sig in BUY_SIGNALS or sig in SELL_SIGNALS)
+                     and not desk_disagreed and not desk_failed)
+        action = "paper_candidate" if qualified else "no_action"
+        payload = {
+            "decision": decision,
+            "desk_verdict": rec.get("desk_verdict", ""),
+            "desk_outcome": rec.get("desk_outcome", ""),
+            "action": rec.get("action", ""),
+            "reason": reason,
+            "source": "tradingagents-paper-auto",
+            "models": f"{args.provider}/{args.quick_model}",
+            "execution_eligible": bool(qualified),
+            "blocked_reason": reason,
+        }
+        CioDatabase(settings.database_path).record_shadow_recommendation(
+            recommendation_id=f"shadow:{rec['ticker']}:{trade_date}",
+            run_key=f"auto:{rec['ticker']}:{trade_date}",
+            symbol=rec["ticker"], score=None,
+            action=action, market_regime=regime, payload=payload)
+        log_line(f"[{rec['ticker']}] shadow recorded: {action} (regime {regime})")
+    except Exception as exc:  # noqa: BLE001 - shadow logging never blocks a run
+        log_line(f"[{rec.get('ticker', '?')}] shadow record failed: {exc}")
+
+
 def main(argv=None) -> int:
+    _load_llm_env()
     args = parse_args(argv)
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if args.screen:
@@ -445,6 +515,7 @@ def main(argv=None) -> int:
         set_stage(ticker, final_stage, rec.get("reason", rec.get("order_id", rec.get("decision", ""))))
         log_line(f"[{ticker}] done: {rec.get('action')} {rec.get('reason', '')}")
         results.append(rec)
+        _record_shadow_outcome(settings, trade_date, rec, regime, args)
         print(json.dumps(rec))
         out_dir = Path("outputs/paper/tradingagents") / ticker / trade_date
         out_dir.mkdir(parents=True, exist_ok=True)

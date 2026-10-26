@@ -30,13 +30,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TAVENV = Path("/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python")
+# Run as `python scripts/options_watch_trade.py` puts scripts/ (not the repo
+# root) on sys.path; robinhood_tools lives at the root.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# TradingAgents venv interpreter. macOS source-machine path kept as default for
+# backwards compatibility; set TRADINGAGENTS_VENV_PYTHON per machine (Windows:
+# TradingAgents/.venv/Scripts/python.exe).
+TAVENV = Path(os.environ.get(
+    "TRADINGAGENTS_VENV_PYTHON",
+    "/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python"))
 
 
 def desk_python() -> str:
@@ -99,8 +109,14 @@ def gated_candidates(screen_path: str | Path, top: int, max_rsi: float,
     return out
 
 
-def held_underliers(env_file: str) -> set[str]:
-    """Underliers we already hold an OCC contract in (best effort)."""
+def held_underliers(env_file: str) -> set[str] | None:
+    """Underliers we already hold an OCC contract in.
+
+    Fail-closed: returns None when the broker state cannot be read, so the
+    caller must block entries instead of pretending we hold nothing. A silent
+    except here once reported held=[] with a live position open, disabling
+    the "no doubling a name" gate.
+    """
     try:
         import os
 
@@ -120,8 +136,10 @@ def held_underliers(env_file: str) -> set[str]:
                 except Exception:
                     pass
         return held
-    except Exception:
-        return set()
+    except Exception as exc:
+        print(f"[entry] holdings check FAILED ({type(exc).__name__}: {exc}); "
+              "entries blocked this run (fail-closed)", file=sys.stderr)
+        return None
 
 
 def liquid_signal_filter(symbol: str, side: str,
@@ -152,7 +170,8 @@ def liquid_signal_filter(symbol: str, side: str,
 
 
 def run(cmd: list[str]):
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -179,10 +198,13 @@ def main(argv=None) -> int:
     except (OSError, ValueError):
         pass
     held = held_underliers(args.env_file)
-    candidates = gated_candidates(args.screen, args.screen_top, args.max_rsi,
-                                  held, args.direction)
-    print(f"[entry] screen {screen_date} held={sorted(held)} "
-          f"candidates={candidates[:args.max_tries]}")
+    if held is None:
+        candidates = []  # fail-closed: no entries without verified holdings
+    else:
+        candidates = gated_candidates(args.screen, args.screen_top, args.max_rsi,
+                                      held, args.direction)
+        print(f"[entry] screen {screen_date} held={sorted(held)} "
+              f"candidates={candidates[:args.max_tries]}")
     pilot_exec = "--execute" if args.execute else "--dry-run"
     for symbol, side in candidates[:args.max_tries]:
         liquid_ok, liquid_reason = liquid_signal_filter(symbol, side,

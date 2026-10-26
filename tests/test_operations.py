@@ -6,7 +6,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from robinhood_tools.database import CioDatabase
+from robinhood_tools.database import CioDatabase, ClosingConnection
 from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.migrations import CURRENT_SCHEMA_VERSION, migrate_database
 from robinhood_tools.models import Order
@@ -46,7 +46,7 @@ class OperationsTests(unittest.TestCase):
             root = Path(directory)
             database_path = root / "cio.db"
             backup_path = root / "backup.db"
-            with sqlite3.connect(database_path) as database:
+            with sqlite3.connect(database_path, factory=ClosingConnection) as database:
                 database.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
                 database.execute("INSERT INTO schema_version VALUES (?)", (CURRENT_SCHEMA_VERSION - 1,))
                 database.execute("CREATE TABLE legacy_record (value TEXT NOT NULL)")
@@ -55,13 +55,13 @@ class OperationsTests(unittest.TestCase):
             result = migrate_database(database_path, backup_path=backup_path)
             self.assertEqual(result["schema_version"], CURRENT_SCHEMA_VERSION)
             self.assertEqual(result["backup"], str(backup_path))
-            with sqlite3.connect(backup_path) as backup:
+            with sqlite3.connect(backup_path, factory=ClosingConnection) as backup:
                 self.assertEqual(backup.execute("SELECT version FROM schema_version").fetchone()[0],
                                  CURRENT_SCHEMA_VERSION - 1)
                 self.assertIsNone(backup.execute(
                     "SELECT name FROM sqlite_master WHERE name='research_experiments'"
                 ).fetchone())
-            with sqlite3.connect(database_path) as migrated:
+            with sqlite3.connect(database_path, factory=ClosingConnection) as migrated:
                 self.assertEqual(migrated.execute("SELECT version FROM schema_version").fetchone()[0],
                                  CURRENT_SCHEMA_VERSION)
                 self.assertIsNotNone(migrated.execute(
