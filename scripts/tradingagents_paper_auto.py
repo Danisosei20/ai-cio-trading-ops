@@ -169,6 +169,11 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     config["llm_provider"] = args.provider
     config["quick_think_llm"] = args.quick_model
     config["deep_think_llm"] = args.deep_model
+    # Self-learning: pin the memory log inside our outputs so decisions,
+    # settlements, and reflections live with the desk (and settle_memory.py).
+    memory_path = Path(__file__).resolve().parents[1] / "outputs" / "learning" / "trading_memory.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    config["memory_log_path"] = str(memory_path)
     config["max_debate_rounds"] = 1
     config["max_risk_discuss_rounds"] = 1
     if config.get("llm_max_retries") is None:

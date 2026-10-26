@@ -87,6 +87,11 @@ def main(argv=None) -> int:
 
     config = DEFAULT_CONFIG.copy()
     config["llm_provider"] = args.provider
+    # Self-learning: pin the memory log inside our outputs so decisions,
+    # settlements, and reflections live with the desk (and settle_memory.py).
+    memory_path = Path(__file__).resolve().parents[1] / "outputs" / "learning" / "trading_memory.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    config["memory_log_path"] = str(memory_path)
     if args.quick_model:
         config["quick_think_llm"] = args.quick_model
     if args.deep_model:
