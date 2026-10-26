@@ -37,7 +37,8 @@ if str(ROOT) not in sys.path:
 REPO_ENV = ROOT / ".env"
 TA_ENV = ROOT.parent / "TradingAgents" / ".env"
 TA_PY = ROOT.parent / "TradingAgents" / ".venv" / "Scripts" / "python.exe"
-TASKS = ("AI-CIO-AutoTrade-0945", "AI-Desk-Watchdog-0950")
+TASKS = ("AI-CIO-AutoTrade-0945", "AI-Desk-Watchdog-0950",
+         "AI-Desk-ScoreShadows-1630", "AI-Desk-OptionsWatch-1510")
 
 results: list[tuple[str, str, str]] = []
 
