@@ -220,6 +220,13 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
 
     direction = "bullish" if sig in BUY_SIGNALS else "bearish"
     set_stage(ticker, "scouting", f"{direction} chain for {ticker}")
+    # Zone confluence gate (POC + supply/demand): confirm/block only.
+    zone_ok, zone_note = _zone_gate(ticker, "long" if direction == "bullish" else "short")
+    rec["zone"] = zone_note
+    if not zone_ok:
+        rec["reason"] = f"zone: {zone_note}"
+        set_stage(ticker, "skip", rec["reason"])
+        return
     data = AlpacaOptionsData.from_values(env)
     spot_q = get_quote(ticker, data_client=data_client)
     quote, rejected = pick_long_option(
@@ -321,6 +328,29 @@ def _record_shadow_outcome(settings, trade_date: str, rec: dict,
         log_line(f"[{rec['ticker']}] shadow recorded: {action} (regime {regime})")
     except Exception as exc:  # noqa: BLE001 - shadow logging never blocks a run
         log_line(f"[{rec.get('ticker', '?')}] shadow record failed: {exc}")
+
+
+def _zone_gate(ticker: str, direction: str) -> tuple[bool, str]:
+    """Zone confluence gate: POC / value area / supply-demand confirm or block.
+
+    Confirm/block only - it never decides the trade (the LLM judgment tier
+    does). Fails open: a broken zone feed must not block the desk; the LLM
+    decision and the risk gates still stand.
+    """
+    try:
+        from scripts.zone_analysis import analyze
+
+        report = analyze(ticker)
+        if "error" in report:
+            return True, f"zone unavailable ({report['error']}) - fail open"
+        verdict = report.get("verdict", {})
+        code = verdict.get("verdict", "neutral")
+        reasons = "; ".join(verdict.get("reasons", []))
+        blocked = ((code == "long_blocked" and direction == "long")
+                   or (code == "short_blocked" and direction == "short"))
+        return (not blocked), f"zone {code}: {reasons}"
+    except Exception as exc:  # noqa: BLE001 - fail open, never block on a zone bug
+        return True, f"zone check failed ({type(exc).__name__}) - fail open"
 
 
 def main(argv=None) -> int:
@@ -454,62 +484,74 @@ def main(argv=None) -> int:
                                      snapshot=snapshot, env=env, args=args, rec=rec,
                                      data_client=data_client)
                 else:
-                    set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
-                    price, price_source, price_as_of = current_quote(ticker, data_client)
-                    rec["price"] = str(price)
-                    rec["price_source"] = price_source
-                    rec["price_as_of"] = price_as_of
-                    cap = min(args.max_notional, settings.risk_limits.max_order_value)
-                    if sig in BUY_SIGNALS:
-                        earnings = lookup_earnings_date(ticker)
-                        qty = int((cap // price)) if price > 0 else 0
-                        limit = price.quantize(Decimal("0.01"))
-                        stop_px, target_px = None, None
-                        if args.stop_pct and args.stop_pct > 0 and args.target_pct and args.target_pct > 0:
-                            stop_px = (limit * (1 - args.stop_pct)).quantize(Decimal("0.01"))
-                            target_px = (limit * (1 + args.target_pct)).quantize(Decimal("0.01"))
-                        if qty < 1:
-                            rec["reason"] = f"price {price} exceeds ${cap} cap"
-                        elif buying_power < qty * price:
-                            rec["reason"] = f"insufficient buying power {buying_power} for ~${qty * price}"
-                        elif args.dry_run:
-                            rec.update({"action": "dry_run_buy", "qty": qty, "limit": str(limit),
-                                        "stop": str(stop_px), "target": str(target_px)})
-                        else:
-                            set_stage(ticker, "reviewing", f"buy {qty} @ {limit}")
-                            log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
-                            if stop_px is not None:
-                                log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
-                            result = place_signal_order(
-                                settings=settings, snapshot=snapshot,
-                                order=SignalOrder(symbol=ticker, side="buy",
-                                                  quantity=Decimal(qty), limit_price=limit,
-                                                  earnings_date=earnings,
-                                                  max_order_value=cap,
-                                                  take_profit_price=target_px,
-                                                  bracket_stop_price=stop_px),
-                                env_path=args.env_file)
-                            set_stage(ticker, "placing", f"approval {result['approval_id']}")
-                            rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
-                                        "stop": str(stop_px), "target": str(target_px),
-                                        "order_id": result["order_id"], "status": result["status"],
-                                        "approval_id": result["approval_id"]})
-                            log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
-                    elif sig in SELL_SIGNALS:
-                        held = positions.get(ticker, Decimal("0"))
-                        if held <= 0:
-                            rec["reason"] = f"bearish ({decision}) but no position held"
-                        elif args.dry_run:
-                            rec.update({"action": "dry_run_sell", "qty": str(held)})
-                        else:
-                            result = place_signal_order(
-                                settings=settings, snapshot=snapshot,
-                                order=SignalOrder(symbol=ticker, side="sell",
-                                                  quantity=held,
-                                                  limit_price=price.quantize(Decimal("0.01"))),
-                                env_path=args.env_file)
-                            rec.update({"action": "sell_placed", "qty": str(held),
-                                    "order_id": result["order_id"], "status": result["status"]})
+                    # Zone confluence gate (owner directive 2026-10-27: day-trade
+                    # with POC + supply/demand). Confirm/block only. Equity
+                    # exits are never zone-blocked: blocking an exit traps risk.
+                    if sig in SELL_SIGNALS:
+                        zone_ok, zone_note = True, "zone: exit - never blocked"
+                    else:
+                        zone_ok, zone_note = _zone_gate(ticker, "long")
+                        rec["zone"] = zone_note
+                    if not zone_ok:
+                        rec["reason"] = f"zone: {zone_note}"
+                        set_stage(ticker, "skip", rec["reason"])
+                    else:
+                        set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
+                        price, price_source, price_as_of = current_quote(ticker, data_client)
+                        rec["price"] = str(price)
+                        rec["price_source"] = price_source
+                        rec["price_as_of"] = price_as_of
+                        cap = min(args.max_notional, settings.risk_limits.max_order_value)
+                        if sig in BUY_SIGNALS:
+                            earnings = lookup_earnings_date(ticker)
+                            qty = int((cap // price)) if price > 0 else 0
+                            limit = price.quantize(Decimal("0.01"))
+                            stop_px, target_px = None, None
+                            if args.stop_pct and args.stop_pct > 0 and args.target_pct and args.target_pct > 0:
+                                stop_px = (limit * (1 - args.stop_pct)).quantize(Decimal("0.01"))
+                                target_px = (limit * (1 + args.target_pct)).quantize(Decimal("0.01"))
+                            if qty < 1:
+                                rec["reason"] = f"price {price} exceeds ${cap} cap"
+                            elif buying_power < qty * price:
+                                rec["reason"] = f"insufficient buying power {buying_power} for ~${qty * price}"
+                            elif args.dry_run:
+                                rec.update({"action": "dry_run_buy", "qty": qty, "limit": str(limit),
+                                            "stop": str(stop_px), "target": str(target_px)})
+                            else:
+                                set_stage(ticker, "reviewing", f"buy {qty} @ {limit}")
+                                log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
+                                if stop_px is not None:
+                                    log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
+                                result = place_signal_order(
+                                    settings=settings, snapshot=snapshot,
+                                    order=SignalOrder(symbol=ticker, side="buy",
+                                                      quantity=Decimal(qty), limit_price=limit,
+                                                      earnings_date=earnings,
+                                                      max_order_value=cap,
+                                                      take_profit_price=target_px,
+                                                      bracket_stop_price=stop_px),
+                                    env_path=args.env_file)
+                                set_stage(ticker, "placing", f"approval {result['approval_id']}")
+                                rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
+                                            "stop": str(stop_px), "target": str(target_px),
+                                            "order_id": result["order_id"], "status": result["status"],
+                                            "approval_id": result["approval_id"]})
+                                log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
+                        elif sig in SELL_SIGNALS:
+                            held = positions.get(ticker, Decimal("0"))
+                            if held <= 0:
+                                rec["reason"] = f"bearish ({decision}) but no position held"
+                            elif args.dry_run:
+                                rec.update({"action": "dry_run_sell", "qty": str(held)})
+                            else:
+                                result = place_signal_order(
+                                    settings=settings, snapshot=snapshot,
+                                    order=SignalOrder(symbol=ticker, side="sell",
+                                                      quantity=held,
+                                                      limit_price=price.quantize(Decimal("0.01"))),
+                                    env_path=args.env_file)
+                                rec.update({"action": "sell_placed", "qty": str(held),
+                                        "order_id": result["order_id"], "status": result["status"]})
         except PolicyViolation as exc:
             rec["reason"] = f"gate blocked: {exc}"
         except InvalidOperation as exc:

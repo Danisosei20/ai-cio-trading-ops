@@ -44,9 +44,15 @@ class QuoteTest(unittest.TestCase):
         self.assertEqual(q.source, "alpaca-iex")
 
     def test_stale_alpaca_fails_closed(self):
-        with self.assertRaises(PolicyViolation):
-            get_quote("NVDA", data_client=FakeDataClient(snapshot(age_min=30)),
-                      max_age_minutes=5)
+        # Mock yfinance away: with the market open a live yfinance fallback
+        # would return a fresh quote and mask the Alpaca staleness this test
+        # exists to check (the suite must pass in any market state).
+        from unittest import mock
+
+        with mock.patch.dict("sys.modules", {"yfinance": None}):
+            with self.assertRaises(PolicyViolation):
+                get_quote("NVDA", data_client=FakeDataClient(snapshot(age_min=30)),
+                          max_age_minutes=5)
 
     def test_broken_alpaca_no_yfinance_fails(self):
         from unittest import mock

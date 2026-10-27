@@ -24,6 +24,7 @@ echo === auto trade run started %DATE% %TIME% ===>>%LOG%
 
 "%TA_PY%" scripts\options_guard.py --execute>>%LOG% 2>&1
 "%TA_PY%" scripts\universe_screen.py --top 10 --out outputs\screener\latest.json>>%LOG% 2>&1
+"%TA_PY%" scripts\zone_analysis.py --tickers SPY,QQQ,NVDA,AMD,AAPL>>%LOG% 2>&1
 "%TA_PY%" scripts\tradingagents_paper_auto.py --screen outputs\screener\latest.json --screen-top 3 --quick-model openai/gpt-oss-20b --deep-model stepfun-ai/step-5-preview --max-notional 2000>>%LOG% 2>&1
 
 echo === auto trade run finished %DATE% %TIME% ===>>%LOG%
