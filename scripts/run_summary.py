@@ -47,6 +47,31 @@ def collect(today: str) -> tuple[list[dict], list[dict]]:
     return records, shadows
 
 
+def _option_activity(today: str) -> tuple[list[str], str]:
+    """Options-loop activity for the day: entries from the watch log, exits
+    from the guard state. Returns (entries, exits_summary)."""
+    entries: list[str] = []
+    watch = ROOT / "outputs" / "options-watch.log"
+    if watch.exists():
+        for line in watch.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "[entry] PLACED" in line:
+                entries.append(line.split("PLACED", 1)[1].strip())
+    exits = ""
+    guard = ROOT / "outputs" / "paper" / "options_guard.json"
+    if guard.exists():
+        try:
+            state = json.loads(guard.read_text(encoding="utf-8"))
+            for r in state.get("evaluated", []):
+                if r.get("date", "") == today or \
+                        state.get("updated", "") == today:
+                    exits = (f"guard: {r.get('symbol', '?')} {r.get('signal', '?')} "
+                             f"({r.get('reason', '')[:80]})")
+                    break
+        except (OSError, ValueError):
+            pass
+    return entries, exits
+
+
 def _goal_line() -> str:
     """Recurring weekly profit objective (fail-safe: silent on any error)."""
     try:
@@ -131,7 +156,14 @@ def compose(today: str) -> str:
                      f"[{row.get('action')}] regime={row.get('market_regime')}"
                      f" ({str(payload.get('reason', ''))[:100]})")
     placed = sum(1 for r in records if str(r.get("action", "")).endswith("_placed"))
-    lines.append(f"_orders placed: {placed} | shadow rows: {len(shadows)}_")
+    option_entries, exits = _option_activity(today)
+    if option_entries:
+        for entry in option_entries:
+            lines.append(f"- options entry: PLACED {entry}")
+    if exits:
+        lines.append(f"- {exits}")
+    lines.append(f"_equity orders: {placed} | options entries: "
+                 f"{len(option_entries)} | shadow rows: {len(shadows)}_")
     goal = _goal_line()
     if goal:
         lines.insert(1, goal)

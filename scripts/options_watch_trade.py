@@ -212,6 +212,20 @@ def main(argv=None) -> int:
         if not liquid_ok:
             print(f"[entry] skip {symbol} {side} -> {liquid_reason}")
             continue
+        # Zone confluence gate (POC + supply/demand), fail-open on any error.
+        try:
+            from scripts.zone_analysis import analyze
+
+            report = analyze(symbol)
+            code = report.get("verdict", {}).get("verdict", "neutral") \
+                if "error" not in report else "neutral"
+            wanted = "long" if side == "call" else "short"
+            if ((code == "long_blocked" and wanted == "long")
+                    or (code == "short_blocked" and wanted == "short")):
+                print(f"[entry] skip {symbol} {side} -> zone {code}")
+                continue
+        except Exception:  # noqa: BLE001 - a zone bug never blocks the loop
+            pass
         rc, out, err = run([py, "scripts/options_pilot.py",
                             "--ticker", symbol, "--direction", side,
                             "--premium-cap", str(args.premium_cap),

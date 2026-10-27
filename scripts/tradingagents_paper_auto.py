@@ -181,8 +181,20 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     if config.get("max_tool_rounds", 20) > 10:
         config["max_tool_rounds"] = 10
     selected = [a.strip() for a in args.analysts.split(",") if a.strip()]
-    ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
-    state, decision = ta.propagate(ticker, trade_date)
+    try:
+        ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
+        state, decision = ta.propagate(ticker, trade_date)
+    except Exception as exc:  # noqa: BLE001 - degrade, never lose the ticker
+        # Hosted judgment-tier endpoints 504/429 under the Research Manager's
+        # heavy prompt (Step 5 on free NIM did it 3/3 on 2026-10-27). Fall back
+        # to the proven quick model for the whole debate rather than skipping.
+        if config["deep_think_llm"] == config["quick_think_llm"]:
+            raise
+        print(f"  deep tier failed for {ticker} ({type(exc).__name__}); "
+              f"retrying with the quick model")
+        config["deep_think_llm"] = config["quick_think_llm"]
+        ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
+        state, decision = ta.propagate(ticker, trade_date)
     reports = {}
     if isinstance(state, dict):
         for key, value in state.items():
@@ -195,7 +207,7 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     return str(decision), {
         "provider": args.provider,
         "quick_model": args.quick_model,
-        "deep_model": args.deep_model,
+        "deep_model": config["deep_think_llm"],
         "analysts": selected,
         "analyst_reports": reports,
     }
