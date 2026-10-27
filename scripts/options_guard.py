@@ -204,7 +204,9 @@ def main(argv=None) -> int:
                                 "status": result["status"]})
             results.append(rec)
             print(json.dumps(rec))
-        except (PolicyViolation, InvalidOperation, KeyError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - a broker error must never kill the guard
+            # (e.g. HTTP 403 when options trading is not enabled on the account:
+            # the exit fails loudly here and in the state file, the run continues)
             results.append({"symbol": symbol, "action": "error",
                             "reason": f"{type(exc).__name__}: {exc}"})
             print(json.dumps(results[-1]))
