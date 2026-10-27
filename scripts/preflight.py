@@ -106,6 +106,42 @@ def check_junction() -> None:
         record("FAIL", "outputs junction", f"{target} missing")
 
 
+def check_openai_quota() -> None:
+    """If an OpenAI key is set, a 1-token call proves it has credits.
+
+    A key with no credits (429 credit_balance_exhausted) passes every other
+    check and then crashes the deep tier mid-run; this catches it preflight.
+    """
+    key = _env_value(ROOT.parent / "TradingAgents" / ".env", "OPENAI_API_KEY")
+    if not key:
+        record("WARN", "OPENAI_API_KEY", "not set - judgment tier stays on NIM")
+        return
+    try:
+        import json
+        import urllib.request
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps({"model": "gpt-4o-mini", "messages":
+                             [{"role": "user", "content": "hi"}],
+                             "max_tokens": 1}).encode(),
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            json.loads(resp.read() or b"{}")
+        record("PASS", "OPENAI_API_KEY", "key works and has credits")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        if "credit_balance_exhausted" in body or "insufficient_quota" in body:
+            record("WARN", "OPENAI_API_KEY",
+                   "key valid but NO CREDITS (add billing; tier stays on NIM)")
+        else:
+            record("FAIL", "OPENAI_API_KEY", f"HTTP {exc.code}: {body[:100]}")
+    except Exception as exc:  # noqa: BLE001
+        record("WARN", "OPENAI_API_KEY", f"probe failed: {type(exc).__name__}")
+
+
 def check_ta_venv() -> None:
     if not TA_PY.exists():
         record("FAIL", "TradingAgents venv", f"{TA_PY} missing")
@@ -160,6 +196,7 @@ def main(argv=None) -> int:
     check_tasks()
     check_repo_env()
     check_ta_env()
+    check_openai_quota()
     check_junction()
     check_ta_venv()
     check_broker()
