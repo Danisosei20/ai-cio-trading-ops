@@ -214,7 +214,9 @@ def run_segment(bars: list[dict], pos: list[int], cash0: float,
             elif target == 0 and shares > 0:
                 fill = px * (1 - slip)
                 proceeds = shares * fill - shares * commission
-                pnl = proceeds - (cash + shares * entry_px)
+                # Cost basis is the entry fill only; the buy-side commission
+                # was already deducted from cash at entry.
+                pnl = proceeds - shares * entry_px
                 trades += 1
                 holds.append(i - entry_i)
                 if pnl > 0:
@@ -222,7 +224,10 @@ def run_segment(bars: list[dict], pos: list[int], cash0: float,
                     gross_w += pnl
                 else:
                     gross_l += -pnl
-                cash = proceeds
+                # Restore the un-deployed cash buffer: the buy deployed only
+                # 95% of cash, and discarding the remainder taxed every trade
+                # ~5% (123 trades compounded to -99.7% on a +570% market).
+                cash = cash + proceeds
                 shares = 0.0
                 holding = 0
         equity.append(cash + shares * bars[i]["close"])
