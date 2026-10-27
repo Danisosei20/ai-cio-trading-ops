@@ -47,6 +47,32 @@ def collect(today: str) -> tuple[list[dict], list[dict]]:
     return records, shadows
 
 
+def _goal_line() -> str:
+    """Progress toward the profit objective (fail-safe: silent on any error)."""
+    try:
+        import os
+
+        from robinhood_tools.alpaca_paper import (AlpacaPaperBackend,
+                                                  AlpacaPaperHttpTransport)
+        from robinhood_tools.settings import load_env
+
+        goal_file = ROOT / "outputs" / "learning" / "profit_goal.json"
+        if not goal_file.exists():
+            return ""
+        goal = json.loads(goal_file.read_text(encoding="utf-8"))
+        env = {**load_env(".env"), **os.environ}
+        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        equity = float(backend.transport.request("GET", "/v2/account")["equity"])
+        baseline = float(goal["baseline_equity_usd"])
+        target = float(goal["target_pnl_usd"])
+        pnl = equity - baseline
+        pct = pnl / target * 100
+        return (f"*profit objective*: {pnl:+,.0f} USD of {target:,.0f} "
+                f"({pct:+.1f}%) | equity {equity:,.0f}")
+    except Exception:  # noqa: BLE001 - the summary must never fail on the goal line
+        return ""
+
+
 def compose(today: str) -> str:
     records, shadows = collect(today)
     if not records and not shadows:
@@ -73,8 +99,11 @@ def compose(today: str) -> str:
                      f"[{row.get('action')}] regime={row.get('market_regime')}"
                      f" ({str(payload.get('reason', ''))[:100]})")
     placed = sum(1 for r in records if str(r.get("action", "")).endswith("_placed"))
-    lines.append(f"_orders placed: {placed} | shadow rows: {len(shadows)} | "
-                 "paper only - research software, not financial advice_")
+    lines.append(f"_orders placed: {placed} | shadow rows: {len(shadows)}_")
+    goal = _goal_line()
+    if goal:
+        lines.insert(1, goal)
+    lines.append("_paper only - research software, not financial advice_")
     return "\n".join(lines)
 
 

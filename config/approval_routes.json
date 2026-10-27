@@ -42,8 +42,8 @@
   "paper_autonomy": {
     "enabled": true,
     "human_approval_required": false,
-    "max_order_value_usd": 500,
-    "max_symbol_exposure_usd": 500,
+    "max_order_value_usd": 2000,
+    "max_symbol_exposure_usd": 2000,
     "regular_session_only": true,
     "earliest_entry_time_et": "09:45",
     "latest_entry_time_et": "15:45",
