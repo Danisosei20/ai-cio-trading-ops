@@ -48,9 +48,11 @@ def collect(today: str) -> tuple[list[dict], list[dict]]:
 
 
 def _goal_line() -> str:
-    """Progress toward the profit objective (fail-safe: silent on any error)."""
+    """Recurring weekly profit objective (fail-safe: silent on any error)."""
     try:
         import os
+        from datetime import date, datetime, timedelta
+        from zoneinfo import ZoneInfo
 
         from robinhood_tools.alpaca_paper import (AlpacaPaperBackend,
                                                   AlpacaPaperHttpTransport)
@@ -60,15 +62,45 @@ def _goal_line() -> str:
         if not goal_file.exists():
             return ""
         goal = json.loads(goal_file.read_text(encoding="utf-8"))
+        target = float(goal["target_pnl_usd"])
+
         env = {**load_env(".env"), **os.environ}
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
         equity = float(backend.transport.request("GET", "/v2/account")["equity"])
-        baseline = float(goal["baseline_equity_usd"])
-        target = float(goal["target_pnl_usd"])
-        pnl = equity - baseline
-        pct = pnl / target * 100
-        return (f"*profit objective*: {pnl:+,.0f} USD of {target:,.0f} "
-                f"({pct:+.1f}%) | equity {equity:,.0f}")
+
+        if goal.get("cadence") != "weekly":
+            baseline = float(goal["baseline_equity_usd"])
+            pnl = equity - baseline
+            return (f"*profit objective*: {pnl:+,.0f} USD of {target:,.0f} "
+                    f"({pnl / target * 100:+.1f}%) | equity {equity:,.0f}")
+
+        et = ZoneInfo("America/New_York")
+        now = datetime.now(et)
+        this_monday = now.date() - timedelta(days=now.weekday())
+        baseline = goal.get("week_baseline_equity_usd")
+        if goal.get("week_start") != this_monday.isoformat() or not baseline:
+            # New trading week: refresh the anchor and capture the baseline
+            # equity from the first run of the week.
+            goal["week_start"] = this_monday.isoformat()
+            goal["week_baseline_equity_usd"] = equity
+            if not goal.get("anchor_equity_usd"):
+                goal["anchor_equity_usd"] = equity
+                goal["anchor_date"] = this_monday.isoformat()
+                goal["target_pct_of_equity_week"] = round(target / equity * 100, 2)
+            goal_file.write_text(json.dumps(goal, indent=2), encoding="utf-8")
+            baseline = equity
+        baseline = float(baseline)
+        week_pnl = equity - baseline
+        sessions_left = max(0, 4 - now.weekday())
+        pace = (target - week_pnl) / sessions_left if sessions_left else float("nan")
+        total = ""
+        if goal.get("anchor_equity_usd"):
+            total = (f" | all-time {equity - float(goal['anchor_equity_usd']):+,.0f} "
+                     f"since {goal.get('anchor_date', '?')}")
+        return (f"*weekly objective*: {week_pnl:+,.0f} of {target:,.0f} USD "
+                f"({week_pnl / target * 100:+.1f}%) week of {goal['week_start']} | "
+                f"equity {equity:,.0f}{total} | "
+                f"{sessions_left} sessions left -> {pace:,.0f}/session pace")
     except Exception:  # noqa: BLE001 - the summary must never fail on the goal line
         return ""
 
