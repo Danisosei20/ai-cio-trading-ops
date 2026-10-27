@@ -33,6 +33,7 @@ PINNED = ROOT / "outputs" / "learning" / "trading_memory.md"
 DEFAULT = Path(os.path.expanduser("~")) / ".tradingagents" / "memory" / "trading_memory.md"
 PROVIDER = "nvidia"
 MODEL = "openai/gpt-oss-20b"
+REFLECTION_MODEL = "stepfun-ai/step-5-preview"  # lessons shape future decisions
 
 
 def _load_llm_env() -> None:
@@ -67,7 +68,7 @@ def _config() -> dict:
     config = DEFAULT_CONFIG.copy()
     config["llm_provider"] = PROVIDER
     config["quick_think_llm"] = MODEL
-    config["deep_think_llm"] = MODEL
+    config["deep_think_llm"] = REFLECTION_MODEL
     config["memory_log_path"] = str(PINNED)
     return config
 
@@ -95,7 +96,7 @@ def main(argv=None) -> int:
     if args.dry_run:
         return 0
 
-    llm = create_tier_client(config, "quick").get_llm()
+    llm = create_tier_client(config, "deep").get_llm()
     reflector = Reflector(llm)
     with run_config(config):
         result = settlement.settle_all_pending(log, reflector, config)
