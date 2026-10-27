@@ -38,7 +38,8 @@ REPO_ENV = ROOT / ".env"
 TA_ENV = ROOT.parent / "TradingAgents" / ".env"
 TA_PY = ROOT.parent / "TradingAgents" / ".venv" / "Scripts" / "python.exe"
 TASKS = ("AI-CIO-AutoTrade-0945", "AI-Desk-Watchdog-0950",
-         "AI-Desk-ScoreShadows-1630", "AI-Desk-OptionsWatch-1510")
+         "AI-Desk-ScoreShadows-1630", "AI-Desk-OptionsWatch-1510",
+         "AI-Desk-WeeklyReview-1645")
 
 results: list[tuple[str, str, str]] = []
 
