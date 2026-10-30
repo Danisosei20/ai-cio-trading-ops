@@ -124,6 +124,11 @@ def parse_args(argv=None):
     p.add_argument("--target-pct", type=Decimal, default=Decimal("0.20"),
                    help="bracket target above entry")
     p.add_argument("--dry-run", action="store_true", help="research + gates only, never place")
+    p.add_argument("--day-trade", action="store_true",
+                   help="day-trade mode: candidates from outputs/daytrade/<date>.json, "
+                        "placements tagged for a flat-by-15:45 flatten")
+    p.add_argument("--daytrade-file", default=None,
+                   help="scout file (default outputs/daytrade/<today ET>.json)")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
@@ -294,6 +299,8 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
                 "premium": result["premium"], "order_id": result["order_id"],
                 "status": result["status"], "approval_id": result["approval_id"],
                 "candidate_id": candidate_id})
+    _post_buy_rationale(rec, f"*BUY {ticker} {rec.get('contract', '')}* "
+                             f"{contracts} contract(s), premium ${result['premium']}")
     set_stage(ticker, "placing", f"approval {result['approval_id']}")
     log_line(f"[{ticker}] PLACED long {direction} {contracts}x{quote.contract.option_symbol} "
              f"status={result['status']} order={result['order_id']}")
@@ -365,6 +372,33 @@ def _zone_gate(ticker: str, direction: str) -> tuple[bool, str]:
         return True, f"zone check failed ({type(exc).__name__}) - fail open"
 
 
+def _post_buy_rationale(rec: dict, headline: str) -> None:
+    """Slack: why this buy happened (owner directive 2026-10-30).
+
+    Posts the decision, the desk cross-check verdict, the zone confluence,
+    and the market analyst's reasoning. A failed post never blocks trading.
+    """
+    try:
+        from scripts.notify import send
+
+        pieces = [headline,
+                  f"Decision: {rec.get('decision', '?')} | desk cross-check: "
+                  f"{rec.get('desk_verdict', 'n/a')} ({rec.get('desk_outcome', 'n/a')})",
+                  f"Regime: RISK_ON | {rec.get('zone', 'zone: n/a')}"]
+        reports = rec.get("analyst_reports") or {}
+        for key, label in (("market_report", "Market view"),
+                           ("fundamentals_report", "Fundamentals view")):
+            text = str(reports.get(key, "")).strip()
+            if text:
+                pieces.append(f"{label}: {text[:400]}")
+                break
+        record = send("\n".join(pieces))
+        log_line(f"[{rec.get('ticker', '?')}] buy rationale posted "
+                 f"({record['status']} ts={record['message_ts']})")
+    except Exception as exc:  # noqa: BLE001 - a failed post never blocks trading
+        log_line(f"[{rec.get('ticker', '?')}] buy rationale post failed: {exc}")
+
+
 def main(argv=None) -> int:
     _load_llm_env()
     args = parse_args(argv)
@@ -379,6 +413,20 @@ def main(argv=None) -> int:
             return 0
     today_et = datetime.now(ET).date().isoformat()
     trade_date = args.date or today_et
+    if args.day_trade:
+        scout_file = Path(args.daytrade_file) if args.daytrade_file else \
+            Path(f"outputs/daytrade/{trade_date}.json")
+        if not scout_file.exists():
+            print(f"day-trade: scout file {scout_file} missing; run "
+                  "scripts/daytrade_scout.py first.")
+            return 2
+        scout = json.loads(scout_file.read_text(encoding="utf-8"))
+        tickers = [r["ticker"] for r in scout.get("setups", [])
+                   if r.get("setup") in ("long_reclaim", "short_breakdown")]
+        print(f"day-trade: scout {scout_file} -> {tickers}")
+        if not tickers:
+            print("day-trade: no live intraday setups; nothing to do.")
+            return 0
 
     settings = build_settings(args.config, args.env_file)
     if settings.trading_enabled:
@@ -434,6 +482,9 @@ def main(argv=None) -> int:
     results = []
     for ticker in tickers:
         rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": ""}
+        if args.day_trade:
+            rec["trade_style"] = "day_trade"
+            rec["flatten_by"] = "15:45 ET"
         set_stage(ticker, "researching", "TradingAgents analysts running")
         log_line(f"[{ticker}] researching ({trade_date}) via {args.provider}/{args.quick_model}")
         try:
@@ -549,6 +600,11 @@ def main(argv=None) -> int:
                                             "order_id": result["order_id"], "status": result["status"],
                                             "approval_id": result["approval_id"]})
                                 log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
+                                _post_buy_rationale(
+                                    rec, f"*BUY {ticker}* {qty} @ ${limit} "
+                                         f"(day trade, flat by 15:45 ET)"
+                                         if rec.get("trade_style") == "day_trade"
+                                         else f"*BUY {ticker}* {qty} @ ${limit}")
                         elif sig in SELL_SIGNALS:
                             held = positions.get(ticker, Decimal("0"))
                             if held <= 0:
