@@ -75,6 +75,18 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/api/session":
             body = json.dumps(trading_window()).encode()
             mime = "application/json"
+        elif route == "/api/trading":
+            try:
+                from scripts.trading_state import state as trading_state  # noqa: E402
+
+                payload = json.dumps(trading_state(), default=str).encode()
+            except Exception as exc:  # noqa: BLE001 — the page renders an error card
+                payload = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode()
+            body = payload
+            mime = "application/json"
+        elif route == "/trading":
+            body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
+            mime = "text/html"
         elif route in ("/", "/office.js", "/office.css", "/scene.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
