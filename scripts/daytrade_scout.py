@@ -67,12 +67,19 @@ def _odds(rec: dict) -> dict:
     if risk <= 0:
         return {"available": False, "reason": "no risk distance to the range low"}
     target = round(price + 2 * risk, 2)  # 2R, the exit planner's default
+    # The tool anchors the replay on the entry bar's close: round down to the
+    # last completed 5-minute bar (its grid), formatted like "10:25 AM".
+    now = datetime.now(ET)
+    bar_min = (now.minute // 5) * 5
+    h12 = now.hour % 12 or 12
+    entry_time = f"{h12}:{bar_min:02d} {'AM' if now.hour < 12 else 'PM'}"
     try:
         proc = subprocess.run(
             [sys.executable, str(TM_TOOL), "run",
              "--symbol", rec["ticker"], "--date", rec["date"],
              "--entry", str(price), "--stop", str(round(stop, 2)),
-             "--target", str(target), "--until", FLATTEN_BY, "--json"],
+             "--target", str(target), "--entry-time", entry_time,
+             "--until", FLATTEN_BY, "--json"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=420)
         if proc.returncode != 0:
