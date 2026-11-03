@@ -87,6 +87,9 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"
+        elif route == "/pipeline":
+            body = (ROOT / "web/agent-office" / "pipeline.html").read_bytes()
+            mime = "text/html"
         elif route in ("/", "/office.js", "/office.css", "/scene.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()

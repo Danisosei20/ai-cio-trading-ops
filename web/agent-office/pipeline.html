@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080f19">
+<title>Desk pipeline — how a trading day runs</title>
+<link rel="stylesheet" href="/office.css">
+<style>
+  body { margin: 0; background: #080f19; color: #dce6f5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header.top { display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid #1b2a3f; }
+  header.top h1 { font-size: 15px; margin: 0; letter-spacing: .04em; }
+  header.top a { color: #7fa8d8; text-decoration: none; font-size: 13px; }
+  header.top a:hover { text-decoration: underline; }
+  .wrap { padding: 10px 22px 24px; max-width: 1280px; }
+  .diagram { width: 100%; height: auto; display: block; }
+  .diagram text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .lane-title { fill: #7fa8d8; font-size: 13px; font-weight: bold; letter-spacing: .09em; }
+  .box-t { fill: #dce6f5; font-size: 12px; font-weight: bold; }
+  .box-s { fill: #9db4cc; font-size: 10.5px; }
+  .note-s { fill: #8fa8c8; font-size: 10.5px; }
+  .box { fill: #0d1626; stroke: #1b2a3f; }
+  .panel-red { fill: #0d1626; stroke: #6a2b2b; }
+  .panel-amber { fill: #0d1626; stroke: #6a5626; }
+  .panel-green { fill: #0d1626; stroke: #2b5f43; }
+  .sub-red { fill: #ff7a7a; font-size: 12px; font-weight: bold; letter-spacing: .08em; }
+  .sub-amber { fill: #ffce6a; font-size: 12px; font-weight: bold; letter-spacing: .08em; }
+  .sub-green { fill: #4fd08a; font-size: 12px; font-weight: bold; letter-spacing: .08em; }
+  .dot { fill: #ff7a7a; }
+  .arrow { stroke: #64809f; stroke-width: 1.4; fill: none; }
+  .arrow-g { stroke: #4fd08a; stroke-width: 1.4; fill: none; }
+  footer { padding: 6px 22px 18px; color: #5f7fa0; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>DESK PIPELINE — WHAT RUNS, WHEN, AND THROUGH WHICH GATES</h1>
+  <a href="/trading">live numbers →</a>
+  <a href="/">← office</a>
+</header>
+<div class="wrap">
+<svg class="diagram" viewBox="0 0 1180 900" role="img" aria-label="Flow diagram of the paper trading desk">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64809f"/>
+    </marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4fd08a"/>
+    </marker>
+  </defs>
+
+  <!-- ============ LANE A: THE TRADING DAY ============ -->
+  <text x="18" y="104" class="lane-title">A TRADING DAY (ET, WEEKDAYS — ALL PAPER, ACCOUNT ----F55Z)</text>
+  <g>
+    <rect x="18" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="30" y="147" class="box-t">09:45 · AutoTrade</text>
+    <text x="30" y="163" class="box-s">guard exits → screen</text>
+    <text x="30" y="177" class="box-s">→ debate → orders</text>
+    <line x1="171" y1="155" x2="179" y2="155" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="182" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="194" y="147" class="box-t">09:50 · Watchdog</text>
+    <text x="194" y="163" class="box-s">run verified;</text>
+    <text x="194" y="177" class="box-s">Slack alert if silent</text>
+    <line x1="335" y1="155" x2="343" y2="155" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="346" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="358" y="147" class="box-t">10:30 · Day trade</text>
+    <text x="358" y="163" class="box-s">scout → Time Machine</text>
+    <text x="358" y="177" class="box-s">→ judge → entries</text>
+    <line x1="499" y1="155" x2="507" y2="155" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="510" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="522" y="147" class="box-t">15:10 · Options</text>
+    <text x="522" y="163" class="box-s">setups → zone gate</text>
+    <text x="522" y="177" class="box-s">→ call / put entries</text>
+    <line x1="663" y1="155" x2="671" y2="155" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="674" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="686" y="147" class="box-t">15:45 · Flatten</text>
+    <text x="686" y="163" class="box-s">every day trade</text>
+    <text x="686" y="177" class="box-s">closed by the bell</text>
+    <line x1="827" y1="155" x2="835" y2="155" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="838" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="850" y="147" class="box-t">16:30 · Learn</text>
+    <text x="850" y="163" class="box-s">scorecard + shadow</text>
+    <text x="850" y="177" class="box-s">rows → memory</text>
+    <line x1="991" y1="155" x2="999" y2="155" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="1002" y="126" width="150" height="58" rx="8" class="box"/>
+    <text x="1014" y="147" class="box-t">Fri 16:45 · Review</text>
+    <text x="1014" y="163" class="box-s">week vs +$10,000</text>
+    <text x="1014" y="177" class="box-s">→ Slack verdict</text>
+  </g>
+
+  <!-- ============ LANE B: APPROVAL PIPELINE ============ -->
+  <text x="18" y="250" class="lane-title">HOW A TICKER GETS APPROVED (09:45 DEBATE)</text>
+
+  <!-- left column: pipeline -->
+  <g>
+    <rect x="18" y="290" width="300" height="56" rx="8" class="box"/>
+    <text x="30" y="311" class="box-t">Screener — deterministic</text>
+    <text x="30" y="327" class="box-s">top 10 universe → top 3 names</text>
+
+    <line x1="168" y1="348" x2="168" y2="364" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="18" y="368" width="300" height="56" rx="8" class="box"/>
+    <text x="30" y="389" class="box-t">Zone scan</text>
+    <text x="30" y="405" class="box-s">POC · VA · VWAP · supply/demand levels</text>
+
+    <line x1="168" y1="426" x2="168" y2="442" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="18" y="446" width="300" height="56" rx="8" class="box"/>
+    <text x="30" y="467" class="box-t">TradingAgents debate</text>
+    <text x="30" y="483" class="box-s">4 analysts → bull vs bear → manager</text>
+    <text x="30" y="497" class="box-s">NIM lightning-30b · 6 retries · degrade</text>
+
+    <line x1="168" y1="504" x2="168" y2="520" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="18" y="524" width="300" height="56" rx="8" class="box"/>
+    <text x="30" y="545" class="box-t">Every gate on the right</text>
+    <text x="30" y="561" class="box-s">any FAIL → shadow row, no order</text>
+    <text x="30" y="575" class="box-s">(fail-closed)</text>
+
+    <line x1="168" y1="582" x2="168" y2="598" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="18" y="602" width="300" height="56" rx="8" class="box"/>
+    <text x="30" y="623" class="box-t">Alpaca PAPER order</text>
+    <text x="30" y="639" class="box-s">→ Slack buy rationale → /trading page</text>
+  </g>
+
+  <!-- middle: gates -->
+  <g>
+    <rect x="350" y="290" width="400" height="372" rx="8" class="panel-red"/>
+    <text x="366" y="316" class="sub-red">THE GATES — ANY FAIL = NO ORDER</text>
+    <circle cx="372" cy="344" r="3.5" class="dot"/>
+    <text x="384" y="348" class="box-s">desk cross-check — verdict sanity</text>
+    <circle cx="372" cy="382" r="3.5" class="dot"/>
+    <text x="384" y="386" class="box-s">market regime — CHOP / TREND</text>
+    <circle cx="372" cy="420" r="3.5" class="dot"/>
+    <text x="384" y="424" class="box-s">session window 09:45–15:45 + Alpaca clock</text>
+    <circle cx="372" cy="458" r="3.5" class="dot"/>
+    <text x="384" y="462" class="box-s">zone verdict — long_blocked / short_blocked</text>
+    <circle cx="372" cy="496" r="3.5" class="dot"/>
+    <text x="384" y="500" class="box-s">odds gate (day trades): block on ≥40% stop-first</text>
+    <text x="384" y="515" class="box-s">or <20% target-first (Time Machine)</text>
+    <circle cx="372" cy="542" r="3.5" class="dot"/>
+    <text x="384" y="546" class="box-s">risk caps — $2,000 notional · pinned position</text>
+    <text x="384" y="561" class="box-s">limits (unit-test enforced)</text>
+    <line x1="366" y1="580" x2="734" y2="580" stroke="#6a2b2b" stroke-width="1"/>
+    <text x="366" y="602" class="note-s">exits are NEVER gate-blocked — trapping risk is</text>
+    <text x="366" y="617" class="note-s">the only unforgivable error (fail-open)</text>
+    <text x="366" y="640" class="note-s">options guard runs first at 09:45:</text>
+    <text x="366" y="655" class="note-s">+2% take · −25% cut · DTE — winners ride</text>
+  </g>
+
+  <!-- right: day-trade path -->
+  <g>
+    <rect x="780" y="290" width="380" height="372" rx="8" class="panel-amber"/>
+    <text x="796" y="316" class="sub-amber">DAY-TRADE PATH (10:30)</text>
+
+    <rect x="800" y="334" width="340" height="44" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="352" class="box-t">Scout</text>
+    <text x="812" y="368" class="box-s">OR 9:30–9:45 + VWAP + POC confluence</text>
+    <line x1="970" y1="380" x2="970" y2="396" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="800" y="400" width="340" height="44" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="418" class="box-t">Setup?</text>
+    <text x="812" y="434" class="box-s">long_reclaim · short_breakdown · range</text>
+    <line x1="970" y1="446" x2="970" y2="462" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="800" y="466" width="340" height="52" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="484" class="box-t">Time Machine odds</text>
+    <text x="812" y="500" class="box-s">10,000 replays to 15:45 + every past</text>
+    <text x="812" y="514" class="box-s">firing of the same rule — honest odds</text>
+    <line x1="970" y1="520" x2="970" y2="536" class="arrow" marker-end="url(#arr)"/>
+
+    <rect x="800" y="540" width="340" height="44" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="558" class="box-t">Odds gate → entry</text>
+    <text x="812" y="574" class="box-s">tagged day-trade · flat by 15:45</text>
+
+    <text x="800" y="618" class="note-s">short_breakdown → shadow only</text>
+    <text x="800" y="633" class="note-s">(the equity book is long-only)</text>
+    <text x="800" y="655" class="note-s">chop days the gate blocks everything — on purpose</text>
+  </g>
+
+  <!-- ============ LANE C: LEARNING LOOP ============ -->
+  <text x="18" y="712" class="lane-title">SELF-LEARNING LOOP</text>
+  <g>
+    <rect x="18" y="736" width="210" height="64" rx="8" class="panel-green"/>
+    <text x="30" y="757" class="box-t">Every decision +</text>
+    <text x="30" y="773" class="box-s">every blocked idea</text>
+    <text x="30" y="787" class="box-s">(shadow row)</text>
+    <line x1="231" y1="768" x2="243" y2="768" class="arrow-g" marker-end="url(#arrg)"/>
+
+    <rect x="246" y="736" width="210" height="64" rx="8" class="panel-green"/>
+    <text x="258" y="757" class="box-t">16:30 graded:</text>
+    <text x="258" y="773" class="box-s">thesis right / wrong,</text>
+    <text x="258" y="787" class="box-s">excess vs S&P</text>
+    <line x1="459" y1="768" x2="471" y2="768" class="arrow-g" marker-end="url(#arrg)"/>
+
+    <rect x="474" y="736" width="210" height="64" rx="8" class="panel-green"/>
+    <text x="486" y="757" class="box-t">memory log</text>
+    <text x="486" y="773" class="box-s">outputs/learning/</text>
+    <text x="486" y="787" class="box-s">trading_memory.md</text>
+    <line x1="687" y1="768" x2="699" y2="768" class="arrow-g" marker-end="url(#arrg)"/>
+
+    <rect x="702" y="736" width="210" height="64" rx="8" class="panel-green"/>
+    <text x="714" y="757" class="box-t">feeds next prompts</text>
+    <text x="714" y="773" class="box-s">and the review</text>
+    <text x="714" y="787" class="box-s">agenda</text>
+    <line x1="915" y1="768" x2="927" y2="768" class="arrow-g" marker-end="url(#arrg)"/>
+
+    <rect x="930" y="736" width="210" height="64" rx="8" class="panel-green"/>
+    <text x="942" y="757" class="box-t">Fri 16:45 vs +$10,000</text>
+    <text x="942" y="773" class="box-s">→ Slack verdict</text>
+    <text x="942" y="787" class="box-s">→ your sign-off</text>
+
+    <path d="M 1035 802 L 1035 852 L 123 852 L 123 806" class="arrow-g" marker-end="url(#arrg)"/>
+    <text x="579" y="846" class="note-s" text-anchor="middle">tuned dials (only with your sign-off) → next week</text>
+  </g>
+
+  <text x="18" y="888" class="note-s">Paper trading only — research software, not financial advice. Live P/L and decisions: /trading. Drawn 2026-11-03.</text>
+</svg>
+</div>
+<footer>Seven scheduled tasks, one judgment model (nvidia/nemotron-3.5-lightning-30b-a3b on NIM), zero live brokers.</footer>
+</body>
+</html>
