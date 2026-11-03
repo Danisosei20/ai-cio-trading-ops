@@ -11,5 +11,5 @@ if not exist outputs mkdir outputs
 echo.>>outputs\daytrade.log
 echo === daytrade session %DATE% %TIME% ===>>outputs\daytrade.log
 "%TA_PY%" scripts\daytrade_scout.py>>outputs\daytrade.log 2>&1
-"%TA_PY%" scripts\tradingagents_paper_auto.py --day-trade --quick-model openai/gpt-oss-20b --deep-model openai/gpt-oss-20b --max-notional 2000>>outputs\daytrade.log 2>&1
+"%TA_PY%" scripts\tradingagents_paper_auto.py --day-trade --quick-model openai/gpt-oss-20b --deep-model nvidia/nemotron-3.5-lightning-30b-a3b --max-notional 2000>>outputs\daytrade.log 2>&1
 echo === daytrade session done %DATE% %TIME% ===>>outputs\daytrade.log
