@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +44,54 @@ def _bars(ticker: str):
 
     frame = yf.Ticker(ticker).history(period="1d", interval="5m")
     return frame if frame is not None and not frame.empty else None
+
+
+TM_TOOL = (Path(os.path.expanduser("~")) / ".config" / "opencode" / "skills"
+           / "trader-timemachine" / "timemachine.py")
+FLATTEN_BY = "15:45"  # the desk's flat-by time: replays end where we exit
+
+
+def _odds(rec: dict) -> dict:
+    """Time Machine odds for a live setup (10k replays + every past firing).
+
+    The tool is long-side only (buy: stop < entry < target), so short
+    breakdowns pass through with odds recorded as unavailable. Any failure
+    is recorded, never raised: the scout itself must not break the session.
+    """
+    if rec.get("setup") != "long_reclaim":
+        return {"available": False, "reason": "time machine is long-side only"}
+    if not TM_TOOL.exists():
+        return {"available": False, "reason": "timemachine tool not installed"}
+    price, stop = rec["price"], rec["or_low"]
+    risk = price - stop
+    if risk <= 0:
+        return {"available": False, "reason": "no risk distance to the range low"}
+    target = round(price + 2 * risk, 2)  # 2R, the exit planner's default
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(TM_TOOL), "run",
+             "--symbol", rec["ticker"], "--date", rec["date"],
+             "--entry", str(price), "--stop", str(round(stop, 2)),
+             "--target", str(target), "--until", FLATTEN_BY, "--json"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=420)
+        if proc.returncode != 0:
+            return {"available": False,
+                    "reason": f"timemachine refused: {(proc.stderr or proc.stdout)[:120]}"}
+        d = json.loads(proc.stdout)
+        mc, hist = d.get("mc", {}), d.get("history", {})
+        return {"available": True,
+                "target_first": round(float(mc.get("p_target", 0)), 4),
+                "stop_first": round(float(mc.get("p_stop", 0)), 4),
+                "neither": round(float(mc.get("p_neither", 0)), 4),
+                "avg_r": round(float(mc.get("avg_R", 0)), 3),
+                "history_target": hist.get("target"),
+                "history_stop": hist.get("stop"),
+                "history_triggered": hist.get("triggered"),
+                "verdict": d.get("verdict", ""),
+                "plan": {"entry": price, "stop": round(stop, 2), "target": target}}
+    except Exception as exc:  # noqa: BLE001 - odds never break the session
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
 
 
 def scout_one(ticker: str) -> dict:
@@ -97,6 +147,9 @@ def scout_one(ticker: str) -> dict:
         base.update({"setup": "range",
                      "reason": f"price {price:.2f} vs VWAP {vwap:.2f}; "
                                "no directional reclaim"})
+        return base
+    # Live setup: grade it with the Time Machine before the judge sees it.
+    base["odds"] = _odds(base)
     return base
 
 
@@ -114,10 +167,15 @@ def main(argv=None) -> int:
     for ticker in [t.strip().upper() for t in args.tickers.split(",") if t.strip()]:
         rec = scout_one(ticker)
         report["setups"].append(rec)
-        if rec["setup"] != "range":
-            print(f"{ticker}: {rec['setup']} - {rec['reason']}")
-        else:
+        if rec["setup"] == "range":
             print(f"{ticker}: range ({rec['reason'][:80]})")
+            continue
+        odds = rec.get("odds", {})
+        odds_txt = (f" | odds: target {odds['target_first']:.0%} / stop "
+                    f"{odds['stop_first']:.0%} / neither {odds['neither']:.0%}"
+                    f" | {odds.get('verdict', '')}") if odds.get("available") \
+            else f" | odds: n/a ({odds.get('reason', '')[:50]})"
+        print(f"{ticker}: {rec['setup']} - {rec['reason']}{odds_txt}")
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     live = [r for r in report["setups"] if r["setup"] != "range"]
     print(f"daytrade_scout: {len(live)} live setup(s) -> {out}")
