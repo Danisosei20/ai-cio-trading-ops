@@ -32,8 +32,8 @@ if str(ROOT) not in sys.path:
 PINNED = ROOT / "outputs" / "learning" / "trading_memory.md"
 DEFAULT = Path(os.path.expanduser("~")) / ".tradingagents" / "memory" / "trading_memory.md"
 PROVIDER = "nvidia"
-MODEL = "openai/gpt-oss-20b"
-REFLECTION_MODEL = "stepfun-ai/step-5-preview"  # lessons shape future decisions
+MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+REFLECTION_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"  # lessons shape future decisions
 
 
 def _load_llm_env() -> None:

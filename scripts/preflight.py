@@ -107,40 +107,41 @@ def check_junction() -> None:
         record("FAIL", "outputs junction", f"{target} missing")
 
 
-def check_openai_quota() -> None:
-    """If an OpenAI key is set, a 1-token call proves it has credits.
+def check_nim_judgment() -> None:
+    """Prove the NIM judgment endpoint and the deep model are callable.
 
-    A key with no credits (429 credit_balance_exhausted) passes every other
-    check and then crashes the deep tier mid-run; this catches it preflight.
+    The desk's judgment runs on NVIDIA NIM only (no OpenAI per the
+    2026-11-03 directive); a 1-token call catches a dead key, a delisted
+    model, or an endpoint outage before the 09:45 run.
     """
-    key = _env_value(ROOT.parent / "TradingAgents" / ".env", "OPENAI_API_KEY")
+    dotenv = ROOT.parent / "TradingAgents" / ".env"
+    key = _env_value(dotenv, "NVIDIA_API_KEY")
+    model = (_env_value(dotenv, "TRADINGAGENTS_DEEP_THINK_LLM")
+             or "nvidia/nemotron-3.5-lightning-30b-a3b")
     if not key:
-        record("WARN", "OPENAI_API_KEY", "not set - judgment tier stays on NIM")
+        record("FAIL", "NIM judgment", "NVIDIA_API_KEY not set")
         return
     try:
         import json
         import urllib.request
 
         req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=json.dumps({"model": "gpt-4o-mini", "messages":
-                             [{"role": "user", "content": "hi"}],
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            data=json.dumps({"model": model,
+                             "messages": [{"role": "user", "content": "hi"}],
                              "max_tokens": 1}).encode(),
             headers={"Authorization": f"Bearer {key}",
                      "Content-Type": "application/json"},
             method="POST")
         with urllib.request.urlopen(req, timeout=30) as resp:
             json.loads(resp.read() or b"{}")
-        record("PASS", "OPENAI_API_KEY", "key works and has credits")
+        record("PASS", "NIM judgment", f"{model} callable")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
-        if "credit_balance_exhausted" in body or "insufficient_quota" in body:
-            record("WARN", "OPENAI_API_KEY",
-                   "key valid but NO CREDITS (add billing; tier stays on NIM)")
-        else:
-            record("FAIL", "OPENAI_API_KEY", f"HTTP {exc.code}: {body[:100]}")
+        record("FAIL", "NIM judgment",
+               f"{model}: HTTP {exc.code}: {body[:100]}")
     except Exception as exc:  # noqa: BLE001
-        record("WARN", "OPENAI_API_KEY", f"probe failed: {type(exc).__name__}")
+        record("WARN", "NIM judgment", f"probe failed: {type(exc).__name__}")
 
 
 def check_ta_venv() -> None:
@@ -197,7 +198,7 @@ def main(argv=None) -> int:
     check_tasks()
     check_repo_env()
     check_ta_env()
-    check_openai_quota()
+    check_nim_judgment()
     check_junction()
     check_ta_venv()
     check_broker()
