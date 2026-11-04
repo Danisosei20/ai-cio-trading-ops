@@ -3,14 +3,29 @@
 
 Evaluates every open OCC position each run:
   EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
-  EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
-  STOP    premium down <= --stop-pct (default 0.15)
+  STOP    premium down <= --stop-pct (default 0.15 = -15%)
   TARGET  premium up >= --target-pct (default 0 = disabled, profit unlimited)
   STALE   held >= --max-hold-days (default 5) while NOT in profit
+  TRAIL   if peak >= 25%: floor = peak * (1 - stop_pct/trail_arm)
+          (trail_arm=0.25, so floor = peak * 0.40). Exit if current <= floor.
 Owners run: winners are never closed by a fixed target or by time.
 Exits sell-to-close through review + ledger + session guard. Paper only.
-Defaults mirror the desk owner plan (+2% take / -25% stop) and the stock
-guard (paper_position_guard.py, +2%/-1%).
+
+ACTUAL POLICY (reconciled 2026-11-04):
+  - Take-profit: DISABLED by default (target_pct=0). Winners run unlimited.
+  - Stop loss: -15% from entry (not -25%; the -25% in prior docs was the
+    equity guard's stop, not the options guard's).
+  - Trailing: activates at +25% peak. Floor = peak * 0.40 (i.e., a +100%
+    winner locks in +40%). Once armed, the stop ratchets from the peak.
+  - Gap risk: a -15% (or -25%) stop is NOT a guaranteed max loss. Options
+    can gap past the stop during illiquid or overnight sessions. Market
+    orders on illiquid contracts may fill far from the intended price.
+    The pilot's small $250 notional limits exposure to this risk.
+
+Defaults mirror the desk owner plan (+2% take / -25% stop) for the EQUITY
+guard (paper_position_guard.py, +2%/-1%). The OPTIONS guard uses -15% stop
+and unlimited profit because options have asymmetric payoff (limited risk,
+unlimited upside) — the trail protects winners while letting them run.
 
   python3 scripts/options_guard.py --check
   python3 scripts/options_guard.py --execute

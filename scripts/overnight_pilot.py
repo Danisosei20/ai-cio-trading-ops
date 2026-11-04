@@ -5,6 +5,13 @@ Mirrors the backtested overnight50 rule (buy at close when close>50d SMA,
 sell next open) with real gated paper orders. Small fixed notional ($250)
 until live paper confirms or kills the edge.
 
+NOTE: The backtest assumes entry at the closing price. The pilot enters
+between 15:30-15:55 ET using the current price, which may differ from the
+close by up to ~0.5%. This is a known approximation — the 5bps slippage
+in the backtest partially covers this gap. Gap risk: the position is held
+overnight with no stop loss; a gap-down open can exceed the backtested
+max drawdown (-6.3%). The pilot's fixed $250 notional limits exposure.
+
 Sessions (strategy-specific; global 10:15-15:30 window untouched):
   enter: weekdays 15:30-15:55 ET + market clock open
   exit:  weekdays 09:35-10:00 ET + market clock open

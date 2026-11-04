@@ -61,7 +61,8 @@ def _odds(rec: dict) -> dict:
     if rec.get("setup") != "long_reclaim":
         return {"available": False, "reason": "time machine is long-side only"}
     if not TM_TOOL.exists():
-        return {"available": False, "reason": "timemachine tool not installed"}
+        return {"available": False, "reason": "timemachine tool not installed",
+                "error": True}
     price, stop = rec["price"], rec["or_low"]
     risk = price - stop
     if risk <= 0:
@@ -84,7 +85,8 @@ def _odds(rec: dict) -> dict:
             errors="replace", timeout=420)
         if proc.returncode != 0:
             return {"available": False,
-                    "reason": f"timemachine refused: {(proc.stderr or proc.stdout)[:120]}"}
+                    "reason": f"timemachine refused: {(proc.stderr or proc.stdout)[:120]}",
+                    "error": True}
         d = json.loads(proc.stdout)
         mc, hist = d.get("mc", {}), d.get("history", {})
         return {"available": True,
@@ -98,7 +100,8 @@ def _odds(rec: dict) -> dict:
                 "verdict": d.get("verdict", ""),
                 "plan": {"entry": price, "stop": round(stop, 2), "target": target}}
     except Exception as exc:  # noqa: BLE001 - odds never break the session
-        return {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}",
+                "error": True}
 
 
 def scout_one(ticker: str) -> dict:

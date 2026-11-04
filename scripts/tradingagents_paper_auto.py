@@ -618,6 +618,11 @@ def main(argv=None) -> int:
                                     or odds["target_first"] < 0.20):
                                 rec["reason"] = f"time machine: {odds.get('verdict', 'odds against entry')}"
                                 set_stage(ticker, "skip", rec["reason"])
+                        elif odds.get("error"):
+                            # Fail-closed: missing evidence is not permission to trade.
+                            rec["reason"] = f"time machine unavailable (fail-closed): {odds.get('reason', 'unknown')}"
+                            set_stage(ticker, "skip", rec["reason"])
+                            log_line(f"[{ticker}] TIME MACHINE FAILED - blocking (fail-closed): {odds.get('reason', '')}")
                         if not rec.get("reason"):
                             set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
                             price, price_source, price_as_of = current_quote(ticker, data_client)
