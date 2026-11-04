@@ -67,7 +67,21 @@ class RegimeOutput:
 
 
 class RegimeDetector:
-    """Classifies market regime from point-in-time inputs."""
+    """Classifies market regime from point-in-time inputs.
+
+    IMPORTANT: Market data feed matters for breadth and VWAP calculations:
+
+    * IEX (free tier): reflects only NYSE-listed exchange volume (~3-5% of
+      total US market volume). Breadth and VWAP computed from IEX data will
+      NOT reflect full market breadth and may misclassify regime during
+      significant divergence between NYSE and other venues (NASDAQ, CBOE, etc.).
+
+    * SIP (paid tier): consolidated tape across all US exchanges. Use this
+      for accurate breadth and VWAP calculations.
+
+    For production trading, use the SIP feed or compute breadth/VWAP from
+    consolidated tape data before passing to this detector.
+    """
 
     def __init__(
         self,

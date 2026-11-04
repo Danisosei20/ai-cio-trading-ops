@@ -205,7 +205,42 @@ class ProfitTakingEngine:
                 ))
 
         # Select best decision
-        recommended = self._select_best(decisions, direction, entry, current)
+        recommended = self._select_best(decisions, direction, entry, current, atr)
+
+        # Override: if price has breached the stop, that takes absolute
+        # priority over every other decision (protective stop > target)
+        if recommended:
+            stop_breached = False
+            if direction == "long" and current <= stop:
+                stop_breached = True
+            elif direction == "short" and current >= stop:
+                stop_breached = True
+
+            if stop_breached:
+                stop_decision = None
+                for d in decisions:
+                    if d.method in (
+                        ExitMethod.STRUCTURE_BASED,
+                        ExitMethod.ATR_TRAILING_STOP,
+                        ExitMethod.TIME_STOP,
+                    ):
+                        stop_decision = d
+                        break
+                if stop_decision:
+                    recommended = stop_decision
+                    recommended.reason = (
+                        f"STOP BREACHED: {recommended.reason}"
+                    )
+                    recommended.confidence = 100.0
+                else:
+                    recommended = ExitDecision(
+                        method=ExitMethod.STRUCTURE_BASED,
+                        action="exit_full",
+                        exit_price=current,
+                        exit_qty_pct=100.0,
+                        reason=f"STOP BREACHED: price {current:.2f} at/below stop {stop:.2f}",
+                        confidence=100.0,
+                    )
 
         return ExitEvaluation(
             symbol=symbol,
@@ -226,19 +261,27 @@ class ProfitTakingEngine:
         direction: str,
         entry: float,
         current: float,
+        atr: float,
     ) -> Optional[ExitDecision]:
-        """Select the best exit decision."""
+        """Select the best exit decision.
+
+        Priority order (protective stops first):
+        1. STRUCTURE_BASED - structure stop protects capital
+        2. ATR_TRAILING_STOP - trailing stop protects gains
+        3. TIME_STOP - time stop protects capital
+        4. FIXED_TARGET - target is good but not protective
+        5. PARTIAL_EXIT - partial exit is optional
+        """
         if not decisions:
             return None
 
-        # Priority order: fixed_target > partial_exit > structure_based >
-        # atr_trailing_stop > time_stop
+        # Priority order: protective stops first, then profit-taking
         priority = {
-            ExitMethod.FIXED_TARGET: 5,
-            ExitMethod.PARTIAL_EXIT: 4,
-            ExitMethod.STRUCTURE_BASED: 3,
-            ExitMethod.ATR_TRAILING_STOP: 2,
-            ExitMethod.TIME_STOP: 1,
+            ExitMethod.STRUCTURE_BASED: 5,
+            ExitMethod.ATR_TRAILING_STOP: 4,
+            ExitMethod.TIME_STOP: 3,
+            ExitMethod.FIXED_TARGET: 2,
+            ExitMethod.PARTIAL_EXIT: 1,
         }
 
         # Filter to only actionable decisions
