@@ -32,6 +32,74 @@ flowchart LR
     P --> G[Position guard: stop / target]
 ```
 
+### The trading day (ET, weekdays)
+
+```mermaid
+flowchart LR
+    A[09:45 AutoTrade\n guard → screen → debate → orders] --> B[09:50 Watchdog]
+    B --> C[10:30 Day trade\n scout → Time Machine → judge]
+    C --> D[15:10 Options\n zone gate → calls/puts]
+    D --> E[15:45 Flatten\n day trades closed]
+    E --> F[16:30 Learn\n scorecard + memory]
+    F --> G[Fri 16:45 Review\n vs +$10,000]
+```
+
+### How a ticker gets approved
+
+```mermaid
+flowchart TD
+    SC[Screener: top 10 → top 5] --> Z[Zone scan: POC · VA · VWAP · EMA 9/21 · S/D]
+    Z --> DEB[TradingAgents debate\n 4 analysts → bull vs bear → manager (NIM lightning-30b)]
+    DEB --> G1{Gates}
+    G1 -- desk cross-check --> G2{regime CHOP/TREND}
+    G2 --> G3{session 09:45–15:45 + clock}
+    G3 --> G4{zone verdict}
+    G4 --> G5{odds gate (day trades)\n ≥40% stop / <20% target → block}
+    G5 --> G6{risk caps\n $2k notional · pinned limits}
+    G6 -- all pass --> ORD[Alpaca PAPER order\n → Slack rationale → /trading page]
+    G1 -- any FAIL --> SHADOW[shadow row, no order (fail-closed)]
+    G2 -- FAIL --> SHADOW
+    G3 -- FAIL --> SHADOW
+    G4 -- FAIL --> SHADOW
+    G5 -- FAIL --> SHADOW
+    G6 -- FAIL --> SHADOW
+```
+
+### Day-trade path (10:30)
+
+```mermaid
+flowchart LR
+    SK[Scout: OR 9:30–9:45 + VWAP + POC] --> ST{setup?}
+    ST -- long_reclaim --> TM[Time Machine\n 10k replays + every past firing]
+    TM --> OG{odds gate}
+    OG -- pass --> EN[entry tagged → flat 15:45]
+    OG -- block --> SH[shadow only]
+    ST -- short_breakdown --> SH2[shadow only\n (long-only desk)]
+    ST -- range --> SKIP[skipped]
+```
+
+### Self-learning loop
+
+```mermaid
+flowchart LR
+    DEC[Every decision + every blocked idea] --> GR[16:30 graded\n thesis right/wrong · excess vs S&P]
+    GR --> MEM[memory log\n trading_memory.md]
+    MEM --> FEED[feeds next prompts]
+    FEED --> REV[Fri 16:45 vs +$10,000\n → Slack → your sign-off]
+    REV --> DIALS[tuned dials → next week]
+    DIALS --> DEC
+```
+
+### Guard exits (run first at 09:45)
+
+```mermaid
+flowchart LR
+    GU[options guard] --> TAKE[+2% take profit]
+    GU --> CUT[-25% cut loss]
+    GU --> DTE[DTE / expiry]
+    TAKE --> RIDE[winners ride\n e.g. ACN +144%]
+```
+
 | Track | Entry point | What it does |
 |---|---|---|
 | Research | `scripts/tradingagents_research.py` | Multi-agent LLM debate per ticker. Never orders. |
