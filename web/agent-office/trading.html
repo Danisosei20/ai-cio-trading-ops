@@ -14,7 +14,7 @@
   header.top a:hover { text-decoration: underline; }
   header.top .spacer { flex: 1; }
   header.top .clock { font-size: 13px; color: #8fa8c8; }
-  .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; padding: 18px 22px; max-width: 1280px; }
+  .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; padding: 18px 22px; max-width: 1280px; }
   .card { background: #0d1626; border: 1px solid #1b2a3f; border-radius: 10px; padding: 14px 16px; }
   .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #7fa8d8; }
   .big { font-size: 26px; margin: 2px 0; }
@@ -27,9 +27,14 @@
   .tag.ok { color: #4fd08a; border-color: #2b5f43; }
   .tag.block { color: #ffce6a; border-color: #6a5626; }
   .tag.err { color: #ff7a7a; border-color: #6a2b2b; }
+  .tag.long { color: #4fd08a; border-color: #2b5f43; }
+  .tag.short { color: #ff7a7a; border-color: #6a2b2b; }
   .reason { color: #9db4cc; font-size: 11.5px; max-width: 340px; }
   .pace { font-size: 12px; color: #ffce6a; }
   .err { color: #ff7a7a; font-size: 13px; }
+  .metric { display: flex; justify-content: space-between; font-size: 12px; margin: 3px 0; }
+  .metric .label { color: #8fa8c8; }
+  .metric .value { font-weight: 600; }
   footer { padding: 10px 22px; color: #5f7fa0; font-size: 11.5px; }
 </style>
 </head>
@@ -47,11 +52,16 @@
     <div class="big" id="obj-big">–</div>
     <div class="pace" id="obj-pace"></div>
     <div class="dim" id="obj-sub" style="font-size:12px;margin-top:6px"></div>
-  <div id="obj-today" style="font-size:13px;margin-top:4px"></div>
+    <div id="obj-today" style="font-size:13px;margin-top:4px"></div>
   </section>
   <section class="card">
-    <h2>Positions</h2>
+    <h2>Positions by direction</h2>
+    <div id="positions-dir"></div>
     <div id="positions"></div>
+  </section>
+  <section class="card">
+    <h2>Strategy performance</h2>
+    <div id="strategy-perf"></div>
   </section>
   <section class="card">
     <h2>Today's decisions</h2>
@@ -99,12 +109,40 @@ async function refresh() {
     document.getElementById("obj-big").textContent = `equity ${fmt$(o.equity)}`;
   }
 
+  // Positions by direction
+  const pd = d.positions_by_direction || {};
+  const pdEl = document.getElementById("positions-dir");
+  const longPnl = pd.long?.unrealized_pl ?? 0;
+  const shortPnl = pd.short?.unrealized_pl ?? 0;
+  pdEl.innerHTML = `
+    <div class="metric"><span class="label">Long positions:</span><span class="value tag long">${pd.long?.count ?? 0}</span></div>
+    <div class="metric"><span class="label">Long P/L:</span><span class="value ${sign(longPnl)}">${fmt$(longPnl)}</span></div>
+    <div class="metric"><span class="label">Short positions:</span><span class="value tag short">${pd.short?.count ?? 0}</span></div>
+    <div class="metric"><span class="label">Short P/L:</span><span class="value ${sign(shortPnl)}">${fmt$(shortPnl)}</span></div>
+    <div class="metric"><span class="label">Total unrealized:</span><span class="value ${sign(pd.total_unrealized_pl ?? 0)}">${fmt$(pd.total_unrealized_pl ?? 0)}</span></div>
+  `;
+
+  // Positions detail table
   const pos = document.getElementById("positions");
   if (!d.positions || !d.positions.length) pos.innerHTML = "<div class='dim'>flat — no open positions</div>";
-  else pos.innerHTML = "<table><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Now</th><th>P/L</th></tr>" +
-    d.positions.map(p => `<tr><td>${p.symbol}</td><td>${p.qty}</td><td>${p.avg_entry_price}</td>` +
+  else pos.innerHTML = "<table><tr><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Now</th><th>P/L</th></tr>" +
+    d.positions.map(p => `<tr><td>${p.symbol}</td><td><span class="tag ${p.direction}">${p.direction}</span></td><td>${p.qty}</td><td>${p.avg_entry_price}</td>` +
       `<td>${p.current_price}</td><td class="${sign(parseFloat(p.unrealized_pl))}">` +
       `${fmt$(parseFloat(p.unrealized_pl))} (${(parseFloat(p.unrealized_plpc) * 100).toFixed(1)}%)</td></tr>`).join("") + "</table>";
+
+  // Strategy performance
+  const sp = document.getElementById("strategy-perf");
+  const spData = d.strategy_performance || {};
+  if (spData.total_trades === 0) {
+    sp.innerHTML = "<div class='dim'>no strategy data yet</div>";
+  } else {
+    sp.innerHTML = `
+      <div class="metric"><span class="label">Total trades:</span><span class="value">${spData.total_trades}</span></div>
+      <div class="metric"><span class="label">Open:</span><span class="value">${spData.open}</span></div>
+      <div class="metric"><span class="label">Closed:</span><span class="value">${spData.closed}</span></div>
+      <div class="metric"><span class="label">Realized P/L:</span><span class="value ${sign(spData.total_realized_pnl ?? 0)}">${fmt$(spData.total_realized_pnl ?? 0)}</span></div>
+    `;
+  }
 
   const t = document.getElementById("today");
   if (!d.today || !d.today.length) t.innerHTML = "<div class='dim'>no decisions recorded today</div>";

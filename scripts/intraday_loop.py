@@ -34,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from robinhood_tools.trade_state import TradeStateMachine, TradeState
+
 ET = ZoneInfo("America/New_York")
 LOG_FILE = ROOT / "outputs" / "intraday.log"
 TRADED_FILE = ROOT / "outputs" / "daytrade" / "traded_setups.json"
@@ -190,6 +192,9 @@ def main(argv=None) -> int:
     # Reset traded list if it's a new day
     traded = [t for t in traded if t.get("date") == today]
 
+    # State machine for trade lifecycle tracking
+    sm = TradeStateMachine()
+
     _log(f"intraday loop starting: {args.start}-{args.end} ET, "
          f"interval={args.interval}min, dry_run={args.dry_run}")
 
@@ -221,6 +226,17 @@ def main(argv=None) -> int:
             new_tickers = filter_new_setups(scout, traded)
             if new_tickers:
                 _log(f"new setups: {new_tickers}")
+                # Create state machine records for each new setup
+                for s in scout.get("setups", []):
+                    if s["ticker"] in new_tickers:
+                        direction = "long" if s["setup"] == "long_reclaim" else "short"
+                        trade = sm.create_trade(
+                            ticker=s["ticker"], direction=direction,
+                            setup=s["setup"], strategy="intraday",
+                            regime="", entry_price=s.get("price", 0),
+                            stop_price=s.get("or_low", 0),
+                            client_order_id=f"{s['ticker']}:{today}:{s['setup']}")
+                        sm.transition(trade.id, TradeState.SIGNAL_FOUND, "scout detected setup")
                 if not args.dry_run:
                     run_judge(new_tickers)
                     # Record traded setups

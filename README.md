@@ -65,18 +65,21 @@ flowchart TD
     G6 -- FAIL --> SHADOW
 ```
 
-### Day-trade path (10:30)
+### Day-trade path (10:00-15:30)
 
 ```mermaid
 flowchart LR
-    SK[Scout: OR 9:30–9:45 + VWAP + POC] --> ST{setup?}
+    SK[Scout: OR 9:30-9:45 + VWAP + POC] --> ST{setup?}
     ST -- long_reclaim --> TM[Time Machine\n 10k replays + every past firing]
+    ST -- short_breakdown --> TM
     TM --> OG{odds gate}
-    OG -- pass --> EN[entry tagged → flat 15:45]
+    OG -- pass --> RG[risk controller]
+    RG -- pass --> EN[entry tagged → flat 15:45]
     OG -- block --> SH[shadow only]
-    ST -- short_breakdown --> SH2[shadow only\n (long-only desk)]
+    RG -- block --> SH
     ST -- range --> SKIP[skipped]
 ```
+
 
 ### Self-learning loop
 

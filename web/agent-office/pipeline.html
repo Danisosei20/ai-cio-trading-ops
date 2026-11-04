@@ -157,32 +157,41 @@
 
   <!-- right: day-trade path -->
   <g>
-    <rect x="780" y="290" width="380" height="372" rx="8" class="panel-amber"/>
-    <text x="796" y="316" class="sub-amber">DAY-TRADE PATH (10:30)</text>
+    <rect x="780" y="290" width="380" height="440" rx="8" class="panel-amber"/>
+    <text x="796" y="316" class="sub-amber">DAY-TRADE PATH (10:00-15:30)</text>
 
     <rect x="800" y="334" width="340" height="44" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
     <text x="812" y="352" class="box-t">Scout</text>
-    <text x="812" y="368" class="box-s">OR 9:30–9:45 + VWAP + POC confluence</text>
-    <line x1="970" y1="380" x2="970" y2="396" class="arrow" marker-end="url(#arr)"/>
+    <text x="812" y="368" class="box-s">OR 9:30-9:45 + VWAP + POC confluence</text>
+    <line x1="970" y1="356" x2="970" y2="372" class="arrow" marker-end="url(#arr)"/>
 
-    <rect x="800" y="400" width="340" height="44" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
-    <text x="812" y="418" class="box-t">Setup?</text>
-    <text x="812" y="434" class="box-s">long_reclaim · short_breakdown · range</text>
-    <line x1="970" y1="446" x2="970" y2="462" class="arrow" marker-end="url(#arr)"/>
+    <rect x="800" y="382" width="340" height="52" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="400" class="box-t">Setup detection</text>
+    <text x="812" y="416" class="box-s">long_reclaim · short_breakdown</text>
+    <text x="812" y="430" class="box-s">EMA 9/21 · supply/demand zones</text>
+    <line x1="970" y1="406" x2="970" y2="422" class="arrow" marker-end="url(#arr)"/>
 
-    <rect x="800" y="466" width="340" height="52" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
-    <text x="812" y="484" class="box-t">Time Machine odds</text>
-    <text x="812" y="500" class="box-s">10,000 replays to 15:45 + every past</text>
-    <text x="812" y="514" class="box-s">firing of the same rule — honest odds</text>
-    <line x1="970" y1="520" x2="970" y2="536" class="arrow" marker-end="url(#arr)"/>
+    <rect x="800" y="442" width="340" height="52" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="460" class="box-t">Time Machine odds</text>
+    <text x="812" y="476" class="box-s">10,000 replays + history · fail-closed</text>
+    <text x="812" y="490" class="box-s">target ≥20% / stop <40% required</text>
+    <line x1="970" y1="474" x2="970" y2="490" class="arrow" marker-end="url(#arr)"/>
 
-    <rect x="800" y="540" width="340" height="44" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
-    <text x="812" y="558" class="box-t">Odds gate → entry</text>
-    <text x="812" y="574" class="box-s">tagged day-trade · flat by 15:45</text>
+    <rect x="800" y="496" width="340" height="52" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="514" class="box-t">Risk controller</text>
+    <text x="812" y="530" class="box-s">0.25% risk per trade · 1.5:1 R:R min</text>
+    <text x="812" y="544" class="box-s">position sizing · duplicates blocked</text>
+    <line x1="970" y1="522" x2="970" y2="538" class="arrow" marker-end="url(#arr)"/>
 
-    <text x="800" y="618" class="note-s">short_breakdown → shadow only</text>
-    <text x="800" y="633" class="note-s">(the equity book is long-only)</text>
-    <text x="800" y="655" class="note-s">chop days the gate blocks everything — on purpose</text>
+    <rect x="800" y="552" width="340" height="52" rx="8" style="fill:#0d1626;stroke:#3f3418"/>
+    <text x="812" y="570" class="box-t">Execute · manage · exit</text>
+    <text x="812" y="586" class="box-s">stop/target · trailing stop · flatten 15:45</text>
+    <line x1="970" y1="578" x2="970" y2="594" class="arrow" marker-end="url(#arr)"/>
+
+    <text x="800" y="628" class="note-s">short_breakdown requires borrow availability</text>
+    <text x="800" y="643" class="note-s">easy-to-borrow securities only</text>
+    <text x="800" y="658" class="note-s">no new entries after 15:15 · flat by 15:45</text>
+    <text x="800" y="673" class="note-s">max 2 concurrent day trades</text>
   </g>
 
   <!-- ============ LANE C: LEARNING LOOP ============ -->

@@ -92,12 +92,52 @@ def _positions() -> list[dict]:
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
         out = []
         for p in backend.list_positions():
-            out.append({k: p.get(k) for k in
-                        ("symbol", "qty", "avg_entry_price", "current_price",
-                         "market_value", "unrealized_pl", "unrealized_plpc")})
+            qty = float(p.get("qty", 0))
+            direction = "long" if qty > 0 else "short"
+            pos = {k: p.get(k) for k in
+                   ("symbol", "qty", "avg_entry_price", "current_price",
+                    "market_value", "unrealized_pl", "unrealized_plpc")}
+            pos["direction"] = direction
+            out.append(pos)
         return out
     except Exception:  # noqa: BLE001
         return []
+
+
+def _positions_by_direction() -> dict:
+    """Split positions into long and short with aggregated P/L."""
+    positions = _positions()
+    long_positions = [p for p in positions if p.get("direction") == "long"]
+    short_positions = [p for p in positions if p.get("direction") == "short"]
+    
+    long_pnl = sum(float(p.get("unrealized_pl", 0)) for p in long_positions)
+    short_pnl = sum(float(p.get("unrealized_pl", 0)) for p in short_positions)
+    
+    return {
+        "long": {
+            "count": len(long_positions),
+            "unrealized_pl": round(long_pnl, 2),
+            "positions": long_positions,
+        },
+        "short": {
+            "count": len(short_positions),
+            "unrealized_pl": round(short_pnl, 2),
+            "positions": short_positions,
+        },
+        "total_unrealized_pl": round(long_pnl + short_pnl, 2),
+    }
+
+
+def _strategy_performance() -> dict:
+    """Strategy performance from trade state machine."""
+    try:
+        from robinhood_tools.trade_state import TradeStateMachine
+        sm = TradeStateMachine()
+        summary = sm.summary()
+        return summary
+    except Exception:  # noqa: BLE001
+        return {"total_trades": 0, "open": 0, "closed": 0,
+                "states": {}, "total_realized_pnl": 0.0}
 
 
 def _today_records(today: str) -> list[dict]:
@@ -181,9 +221,11 @@ def state() -> dict:
         "date": today,
         "objective": _objective(today),
         "positions": _positions(),
+        "positions_by_direction": _positions_by_direction(),
         "today": _today_records(today),
         "option_entries": _option_entries(today),
         "scorecard": _scorecard(),
+        "strategy_performance": _strategy_performance(),
         "recent_shadows": _recent_shadows(),
     }
 
