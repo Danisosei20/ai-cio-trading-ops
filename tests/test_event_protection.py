@@ -1,38 +1,48 @@
 import sys
-sys.path.insert(0, '.')
+import unittest
+from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from robinhood_tools.event_protection import EventProtection
 
 ET = ZoneInfo("America/New_York")
-ep = EventProtection()
 
-# Test earnings block
-now = datetime.now(ET)
-earnings_data = {"NVDA": [(now + timedelta(days=1)).isoformat()]}
-result = ep.check_symbol("NVDA", now, earnings_data=earnings_data)
-print(f"Earnings tomorrow: action={result.action}, reason={result.reason}")
-assert result.action == "avoid"
-assert "earnings" in result.reason.lower()
 
-# Test no events - should enter
-result = ep.check_symbol("AAPL", now, earnings_data={})
-print(f"No events: action={result.action}, reason={result.reason}")
-assert result.action == "enter"
+class TestEventProtection(unittest.TestCase):
+    def setUp(self):
+        self.ep = EventProtection()
+        self.now = datetime.now(ET)
 
-# Test halted symbol
-result = ep.check_symbol("TSLA", now, halted_symbols={"TSLA"})
-print(f"Halted symbol: action={result.action}, reason={result.reason}")
-assert result.action == "avoid"
+    def test_earnings_block(self):
+        earnings_data = {"NVDA": [(self.now + timedelta(days=1)).isoformat()]}
+        result = self.ep.check_symbol("NVDA", self.now, earnings_data=earnings_data)
+        self.assertEqual(result.action, "avoid")
+        self.assertIn("earnings", result.reason.lower())
 
-# Test economic event today
-economic_events = [
-    {"event": "FOMC", "date": now.strftime("%Y-%m-%d"), "time_et": "14:00"}
-]
-result = ep.check_symbol("NVDA", now, economic_events=economic_events)
-print(f"Economic event today: action={result.action}, reason={result.reason}")
-assert result.action == "avoid"
-assert "FOMC" in result.reason
+    def test_no_events(self):
+        result = self.ep.check_symbol("AAPL", self.now, earnings_data={})
+        self.assertEqual(result.action, "enter")
 
-print()
-print("All event protection tests passed!")
+    def test_halted_symbol(self):
+        result = self.ep.check_symbol("TSLA", self.now, halted_symbols={"TSLA"})
+        self.assertEqual(result.action, "avoid")
+        self.assertIn("halted", result.reason.lower())
+
+    def test_economic_event_today(self):
+        future_time = self.now + timedelta(minutes=10)
+        economic_events = [
+            {"event": "FOMC", "date": future_time.strftime("%Y-%m-%d"),
+             "time_et": future_time.strftime("%H:%M")}
+        ]
+        result = self.ep.check_symbol("NVDA", self.now, economic_events=economic_events)
+        self.assertEqual(result.action, "avoid")
+        self.assertIn("FOMC", result.reason)
+
+
+if __name__ == "__main__":
+    unittest.main()
