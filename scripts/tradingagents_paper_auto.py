@@ -118,7 +118,12 @@ def parse_args(argv=None):
     p.add_argument("--quick-model", default="moonshotai/kimi-k3")
     p.add_argument("--deep-model", default="moonshotai/kimi-k3")
     p.add_argument("--analysts", default="market,news,fundamentals")
-    p.add_argument("--max-notional", type=Decimal, default=Decimal("500"))
+    p.add_argument("--max-tool-rounds", type=int, default=10,
+                   help="cap tool rounds per analyst (default 10)")
+    p.add_argument("--ticker-timeout", type=int, default=600,
+                   help="per-ticker research timeout in seconds (default 600)")
+    p.add_argument("--max-notional", type=Decimal, default=Decimal("500"),
+                   help="max notional per order (default 500)")
     p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.08"),
                    help="bracket stop below entry (0 to disable brackets)")
     p.add_argument("--target-pct", type=Decimal, default=Decimal("0.20"),
@@ -183,8 +188,8 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     config["max_risk_discuss_rounds"] = 1
     if config.get("llm_max_retries") is None:
         config["llm_max_retries"] = 6
-    if config.get("max_tool_rounds", 20) > 10:
-        config["max_tool_rounds"] = 10
+    if config.get("max_tool_rounds", 20) > args.max_tool_rounds:
+        config["max_tool_rounds"] = args.max_tool_rounds
     selected = [a.strip() for a in args.analysts.split(",") if a.strip()]
     try:
         ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
@@ -514,9 +519,9 @@ def main(argv=None) -> int:
 
             _t = _threading.Thread(target=_run_research, daemon=True)
             _t.start()
-            _t.join(timeout=300)
+            _t.join(timeout=args.ticker_timeout)
             if _t.is_alive():
-                raise TimeoutError(f"research exceeded 300s for {ticker}")
+                raise TimeoutError(f"research exceeded {args.ticker_timeout}s for {ticker}")
             if _box["e"] is not None:
                 raise _box["e"]
             decision, meta = _box["d"], _box["m"]
