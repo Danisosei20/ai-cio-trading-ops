@@ -27,11 +27,40 @@ Usage:
 """
 from __future__ import annotations
 
+# import fcntl  # not available on Windows; using file-based lock instead
 import json
 import os
 import sys
-import time
 from dataclasses import dataclass, field, asdict
+import time as _time
+
+# ... (existing imports)
+
+
+def _acquire_lock(timeout: float = 10.0):
+    """Acquire a file-based lock (Windows-compatible). Returns fd."""
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    deadline = _time.time() + timeout
+    while True:
+        try:
+            fd = os.open(str(LOCK_FILE), os.O_RDWR | os.O_CREAT | os.O_EXCL)
+            return fd
+        except (IOError, OSError):
+            if _time.time() > deadline:
+                raise TimeoutError("could not acquire portfolio risk lock")
+            _time.sleep(0.05)
+
+
+def _release_lock(fd: int) -> None:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        LOCK_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +73,7 @@ if str(ROOT) not in sys.path:
 ET = ZoneInfo("America/New_York")
 STATE_FILE = ROOT / "outputs" / "paper" / "portfolio_risk_state.json"
 KILL_SWITCH_FILE = ROOT / "outputs" / "paper" / "KILL_SWITCH"
+LOCK_FILE = ROOT / "outputs" / "paper" / "portfolio_risk.lock"
 
 
 @dataclass
@@ -166,64 +196,82 @@ class PortfolioRiskController:
              strategy: str, data_age_sec: float = 0,
              current_equity: float = 0) -> RiskVerdict:
         """Single entry point. Returns approved/rejected with reasons."""
-        checks = {}
-        notional = Decimal(str(notional))
+        # Atomic: acquire lock before reading state
+        try:
+            fd = _acquire_lock()
+        except TimeoutError:
+            return RiskVerdict(False, "could not acquire risk lock (concurrent access)", {})
+        try:
+            # Reload state from disk (another process may have updated it)
+            self.state = self._load_state()
+            checks = {}
+            notional = Decimal(str(notional))
 
-        # 1. Kill switch
-        if self.check_kill_switch():
-            checks["kill_switch"] = "ENGAGED"
-            return RiskVerdict(False, "global kill switch engaged", checks)
+            # 1. Kill switch
+            if self.check_kill_switch():
+                checks["kill_switch"] = "ENGAGED"
+                return RiskVerdict(False, "global kill switch engaged", checks)
 
-        # 2. Duplicate order
-        if self.check_duplicate(symbol, side, strategy):
-            checks["duplicate"] = "BLOCKED"
-            return RiskVerdict(False, f"duplicate {side} {symbol} within {self._duplicate_cooldown_sec}s cooldown", checks)
+            # 2. Duplicate order
+            if self.check_duplicate(symbol, side, strategy):
+                checks["duplicate"] = "BLOCKED"
+                return RiskVerdict(False, f"duplicate {side} {symbol} within {self._duplicate_cooldown_sec}s cooldown", checks)
 
-        # 3. Exposure limits
-        ok, reason = self.check_exposure(symbol, notional)
-        checks["exposure"] = reason
-        if not ok:
-            return RiskVerdict(False, reason, checks)
-
-        # 4. Drawdown
-        if current_equity > 0:
-            ok, reason = self.check_drawdown(current_equity)
-            checks["drawdown"] = reason
+            # 3. Exposure limits
+            ok, reason = self.check_exposure(symbol, notional)
+            checks["exposure"] = reason
             if not ok:
                 return RiskVerdict(False, reason, checks)
 
-        # 5. Stale data
-        if data_age_sec > 0:
-            ok, reason = self.check_stale_data(data_age_sec)
-            checks["stale_data"] = reason
-            if not ok:
-                return RiskVerdict(False, reason, checks)
+            # 4. Drawdown
+            if current_equity > 0:
+                ok, reason = self.check_drawdown(current_equity)
+                checks["drawdown"] = reason
+                if not ok:
+                    return RiskVerdict(False, reason, checks)
 
-        checks["all"] = "PASS"
-        return RiskVerdict(True, "approved", checks)
+            # 5. Stale data
+            if data_age_sec > 0:
+                ok, reason = self.check_stale_data(data_age_sec)
+                checks["stale_data"] = reason
+                if not ok:
+                    return RiskVerdict(False, reason, checks)
+
+            checks["all"] = "PASS"
+            return RiskVerdict(True, "approved", checks)
+        finally:
+            _release_lock(fd)
 
     def record_order(self, symbol: str, side: str, strategy: str,
                      notional: Decimal | float = 0) -> None:
         """Record a placed order for duplicate detection and exposure tracking."""
-        self.state.recent_orders.append({
-            "symbol": symbol, "side": side, "strategy": strategy,
-            "ts": datetime.now(ET).isoformat(), "notional": str(notional),
-        })
-        # Prune old orders (keep last 24h)
-        cutoff = datetime.now(ET) - timedelta(hours=24)
-        self.state.recent_orders = [
-            o for o in self.state.recent_orders
-            if datetime.fromisoformat(o["ts"]) > cutoff
-        ]
-        # Track exposure
-        if side == "buy":
-            self.state.open_positions[symbol] = {
-                "strategy": strategy, "notional": str(notional),
-                "entered_at": datetime.now(ET).isoformat(),
-            }
-        elif side == "sell":
-            self.state.open_positions.pop(symbol, None)
-        self._save_state()
+        try:
+            fd = _acquire_lock()
+        except TimeoutError:
+            return
+        try:
+            self.state = self._load_state()
+            self.state.recent_orders.append({
+                "symbol": symbol, "side": side, "strategy": strategy,
+                "ts": datetime.now(ET).isoformat(), "notional": str(notional),
+            })
+            # Prune old orders (keep last 24h)
+            cutoff = datetime.now(ET) - timedelta(hours=24)
+            self.state.recent_orders = [
+                o for o in self.state.recent_orders
+                if datetime.fromisoformat(o["ts"]) > cutoff
+            ]
+            # Track exposure
+            if side == "buy":
+                self.state.open_positions[symbol] = {
+                    "strategy": strategy, "notional": str(notional),
+                    "entered_at": datetime.now(ET).isoformat(),
+                }
+            elif side == "sell":
+                self.state.open_positions.pop(symbol, None)
+            self._save_state()
+        finally:
+            _release_lock(fd)
 
     def remove_position(self, symbol: str) -> None:
         """Remove a position from tracking (after exit)."""

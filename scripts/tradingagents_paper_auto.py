@@ -624,7 +624,25 @@ def main(argv=None) -> int:
                             set_stage(ticker, "skip", rec["reason"])
                             log_line(f"[{ticker}] TIME MACHINE FAILED - blocking (fail-closed): {odds.get('reason', '')}")
                         if not rec.get("reason"):
-                            set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
+                            # Central portfolio risk gate (atomic, fail-closed)
+                            try:
+                                from robinhood_tools.portfolio_risk import PortfolioRiskController
+                                _ctrl = PortfolioRiskController(settings, env)
+                                _verdict = _ctrl.check(
+                                    ticker, "buy", cap, rec.get("trade_style", "swing"),
+                                    data_age_sec=0, current_equity=float(
+                                        backend.transport.request("GET", "/v2/account").get("equity", 0)))
+                                if not _verdict.approved:
+                                    rec["reason"] = f"portfolio risk: {_verdict.reason}"
+                                    set_stage(ticker, "skip", rec["reason"])
+                                    log_line(f"[{ticker}] PORTFOLIO RISK BLOCKED: {_verdict.reason}")
+                                else:
+                                    _ctrl.record_order(ticker, "buy", rec.get("trade_style", "swing"), cap)
+                            except Exception as _exc:  # noqa: BLE001
+                                rec["reason"] = f"portfolio risk check failed: {type(_exc).__name__}"
+                                set_stage(ticker, "skip", rec["reason"])
+                                log_line(f"[{ticker}] portfolio risk check error: {_exc}")
+                        if not rec.get("reason"):
                             price, price_source, price_as_of = current_quote(ticker, data_client)
                             rec["price"] = str(price)
                             rec["price_source"] = price_source
