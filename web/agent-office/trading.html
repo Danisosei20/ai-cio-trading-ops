@@ -47,6 +47,7 @@
     <div class="big" id="obj-big">–</div>
     <div class="pace" id="obj-pace"></div>
     <div class="dim" id="obj-sub" style="font-size:12px;margin-top:6px"></div>
+  <div id="obj-today" style="font-size:13px;margin-top:4px"></div>
   </section>
   <section class="card">
     <h2>Positions</h2>
@@ -90,6 +91,10 @@ async function refresh() {
       o.sessions_left ? `${o.sessions_left} session(s) left -> ${fmt$((10000 - pnl) / o.sessions_left)}/session pace` : "";
     document.getElementById("obj-sub").textContent =
       `equity ${fmt$(o.equity ?? 0)} | all-time ${fmt$(o.all_time_pnl_usd ?? 0)}`;
+    if (o.today_pnl_usd != null) {
+      document.getElementById("obj-today").innerHTML =
+        `today <span class="${sign(o.today_pnl_usd)}">${fmt$(o.today_pnl_usd)}</span> vs prev close`;
+    }
   } else if (o.equity) {
     document.getElementById("obj-big").textContent = `equity ${fmt$(o.equity)}`;
   }

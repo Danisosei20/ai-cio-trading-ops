@@ -67,6 +67,14 @@ def _objective(today: str) -> dict:
         if goal.get("anchor_equity_usd") and equity:
             out["all_time_pnl_usd"] = round(
                 equity - float(goal["anchor_equity_usd"]), 2)
+        # Today's P/L vs previous close (Alpaca last_equity)
+        try:
+            acct = backend.transport.request("GET", "/v2/account")
+            last_eq = float(acct.get("last_equity", 0))
+            if last_eq:
+                out["today_pnl_usd"] = round(equity - last_eq, 2)
+        except Exception:  # noqa: BLE001
+            pass
     else:
         baseline = goal.get("baseline_equity_usd")
         if baseline and equity:
