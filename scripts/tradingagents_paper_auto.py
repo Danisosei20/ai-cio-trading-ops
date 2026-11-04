@@ -497,7 +497,29 @@ def main(argv=None) -> int:
                 _snap = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
             _snap.require_eligible_purchase(ticker)
             set_stage(ticker, "researching", "S&P500 OK, LLM debate running")
-            decision, meta = run_research(ticker, trade_date, args)
+
+            # Per-ticker timeout: a hung LLM debate (NIM under load has done
+            # it) must not stall the whole session. The daemon thread is
+            # abandoned on timeout; the outer except records the skip and the
+            # loop moves on. llm_max_retries=6 already covers transient errors.
+            import threading as _threading
+
+            _box = {"d": None, "m": None, "e": None}
+
+            def _run_research():
+                try:
+                    _box["d"], _box["m"] = run_research(ticker, trade_date, args)
+                except Exception as _exc:  # noqa: BLE001
+                    _box["e"] = _exc
+
+            _t = _threading.Thread(target=_run_research, daemon=True)
+            _t.start()
+            _t.join(timeout=300)
+            if _t.is_alive():
+                raise TimeoutError(f"research exceeded 300s for {ticker}")
+            if _box["e"] is not None:
+                raise _box["e"]
+            decision, meta = _box["d"], _box["m"]
             rec.update(meta)
             rec["decision"] = decision
             log_line(f"[{ticker}] decision: {decision}")
