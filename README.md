@@ -49,7 +49,7 @@ flowchart LR
 ```mermaid
 flowchart TD
     SC[Screener: top 10 → top 7] --> Z[Zone scan: POC · VA · VWAP · EMA 9/21 · S/D]
-    Z --> DEB[TradingAgents debate\n 4 analysts → bull vs bear → manager (NIM lightning-30b)]
+    Z --> DEB[TradingAgents debate\n 2 analysts (market, news) → bull vs bear → manager (NIM lightning-30b)]
     DEB --> G1{Gates}
     G1 -- desk cross-check --> G2{regime CHOP/TREND}
     G2 --> G3{session 09:45–15:45 + clock}
