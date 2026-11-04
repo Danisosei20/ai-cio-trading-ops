@@ -37,7 +37,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     A[09:45 AutoTrade\n guard → screen → debate → orders] --> B[09:50 Watchdog]
-    B --> C[10:30 Day trade\n scout → Time Machine → judge]
+    B --> C[10:00-15:30 Loop\n scan 45min → judge → enter]
     C --> D[15:10 Options\n zone gate → calls/puts]
     D --> E[15:45 Flatten\n day trades closed]
     E --> F[16:30 Learn\n scorecard + memory]
