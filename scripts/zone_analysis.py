@@ -42,6 +42,8 @@ if str(ROOT) not in sys.path:
 ET = ZoneInfo("America/New_York")
 ZONE_DIR = ROOT / "outputs" / "zones"
 NODE_MULTIPLIER = 1.5   # a bucket >= 1.5x mean volume is a supply/demand node
+EMA_FAST = 9            # fast EMA period (5m bars) for intraday trend
+EMA_SLOW = 21           # slow EMA period (5m bars) for intraday trend
 PIN_DISTANCE = 0.0025   # within 0.25% of a node = "at" the node
 BROKEN_DISTANCE = 0.015 # > 1.5% below prior VAL/VWAP = broken structure
 
@@ -52,6 +54,17 @@ def _bucket_size(price: float) -> float:
         if price < threshold:
             return size
     return 10.0
+
+
+def _ema(closes: list[float], period: int) -> float | None:
+    """Exponential moving average of the close series (last value)."""
+    if not closes or len(closes) < period:
+        return None
+    k = 2.0 / (period + 1)
+    ema = closes[0]
+    for c in closes[1:]:
+        ema = c * k + ema * (1 - k)
+    return round(ema, 4)
 
 
 def _session_bars(bars, session: str):
@@ -106,11 +119,18 @@ def _session_profile(session_bars) -> dict:
         if volume >= mean_vol * NODE_MULTIPLIER and bucket != poc:
             side = "demand" if bucket < poc else "supply"
             nodes[side].append({"price": bucket, "volume": round(volume)})
+    closes = [float(r["Close"]) for _, r in session_bars.iterrows()]
+    ema_fast = _ema(closes, EMA_FAST)
+    ema_slow = _ema(closes, EMA_SLOW)
     return {
         "poc": poc,
         "vah": hi,
         "val": lo,
         "vwap": round(vwap_num / total_vol, 4) if total_vol else None,
+        "ema_fast": ema_fast,
+        "ema_slow": ema_slow,
+        "ema_fast_period": EMA_FAST,
+        "ema_slow_period": EMA_SLOW,
         "session_volume": int(total_vol),
         "bars": len(session_bars),
         "developing": len(session_bars) < 12,
@@ -144,6 +164,12 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
     developing = profile.get("developing")
     if developing:
         reasons.append("session developing - prior profile is the reference")
+    ema_fast = profile.get("ema_fast")
+    ema_slow = profile.get("ema_slow")
+    ema_bullish = (ema_fast is not None and ema_slow is not None
+                   and price > ema_fast and price > ema_slow)
+    ema_bearish = (ema_fast is not None and ema_slow is not None
+                   and price < ema_fast and price < ema_slow)
 
     def block_long():
         blocker = None
@@ -157,6 +183,9 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
             floor = min(x for x in (prior_val, prior_vwap, prior.get("low")) if x)
             if price < floor * (1 + BROKEN_DISTANCE) and _dist(price, floor) > BROKEN_DISTANCE:
                 blocker = blocker or f"broken below prior structure ({floor:.2f})"
+        if ema_bearish:
+            blocker = blocker or (f"EMA bearish alignment: price below both "
+                                  f"9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
         if blocker:
             return f"LONG blocked: {blocker}"
         return None
@@ -173,6 +202,9 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
             cap = max(x for x in (prior_vah, prior_vwap, prior.get("high")) if x)
             if price > cap * (1 + BROKEN_DISTANCE):
                 blocker = blocker or f"extended above prior structure ({cap:.2f})"
+        if ema_bullish:
+            blocker = blocker or (f"EMA bullish alignment: price above both "
+                                  f"9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
         if blocker:
             return f"SHORT blocked: {blocker}"
         return None
@@ -187,6 +219,13 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
     where = ("above value area" if price > vah else
              "below value area" if price < val else "inside value area")
     reasons.append(f"POC {poc:.2f} / VA {val:.2f}-{vah:.2f} / price {where}")
+    if ema_fast is not None and ema_slow is not None:
+        if ema_bullish:
+            reasons.append(f"EMA bullish: price above 9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
+        elif ema_bearish:
+            reasons.append(f"EMA bearish: price below 9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
+        else:
+            reasons.append(f"EMA mixed: 9/21 EMA {ema_fast:.2f}/{ema_slow:.2f}")
     return {"verdict": "long_ok", "reasons": reasons}
 
 
@@ -233,9 +272,11 @@ def main(argv=None) -> int:
             print(f"{ticker}: {report['error']}")
             continue
         v = report.get("verdict", {})
+        ema = report.get("profile", {})
         print(f"{ticker} {report['session']}: price {report['price']:.2f} | "
               f"POC {report['profile']['poc']:.2f} | "
               f"VA {report['profile']['val']:.2f}-{report['profile']['vah']:.2f} | "
+              f"EMA {ema.get('ema_fast', '?')}/{ema.get('ema_slow', '?')} | "
               f"{v.get('verdict', '?')} ({'; '.join(v.get('reasons', []))[:120]})")
     return 0
 

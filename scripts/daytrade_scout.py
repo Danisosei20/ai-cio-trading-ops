@@ -130,6 +130,9 @@ def scout_one(ticker: str) -> dict:
         zone = analyze(ticker)
         base["zone_verdict"] = zone.get("verdict", {}).get("verdict", "neutral")
         base["zone_reasons"] = zone.get("verdict", {}).get("reasons", [])
+        prof = zone.get("profile") or {}
+        base["ema_fast"] = prof.get("ema_fast")
+        base["ema_slow"] = prof.get("ema_slow")
     except Exception:  # noqa: BLE001 - the scout itself never crashes
         base["zone_verdict"] = "neutral"
         base["zone_reasons"] = ["zone analysis unavailable"]
