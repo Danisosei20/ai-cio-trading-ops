@@ -275,13 +275,18 @@ class ProfitTakingEngine:
         if not decisions:
             return None
 
-        # Priority order: protective stops first, then profit-taking
+        # Priority order:
+        # 1. FIXED_TARGET: target reached, exit at target (highest priority)
+        # 2. PARTIAL_EXIT: 1R profit reached, partial exit
+        # 3. STRUCTURE_BASED: stop trailed below support, trail stop
+        # 4. ATR_TRAILING_STOP: ATR-based trailing stop
+        # 5. TIME_STOP: time stop, exit after time threshold
         priority = {
-            ExitMethod.STRUCTURE_BASED: 5,
-            ExitMethod.ATR_TRAILING_STOP: 4,
-            ExitMethod.TIME_STOP: 3,
-            ExitMethod.FIXED_TARGET: 2,
-            ExitMethod.PARTIAL_EXIT: 1,
+            ExitMethod.FIXED_TARGET: 5,
+            ExitMethod.PARTIAL_EXIT: 4,
+            ExitMethod.STRUCTURE_BASED: 3,
+            ExitMethod.ATR_TRAILING_STOP: 2,
+            ExitMethod.TIME_STOP: 1,
         }
 
         # Filter to only actionable decisions

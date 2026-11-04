@@ -142,11 +142,16 @@ def _calc_reward_to_risk(entry: float, stop: float, target: float,
     return Decimal(str(reward)) / Decimal(str(risk))
 
 
-def _validate_setup(rec: dict, equity: Decimal) -> tuple[bool, str, dict]:
+def _validate_setup(rec: dict, equity: Decimal, open_positions: dict | None = None) -> tuple[bool, str, dict]:
     """Validate a scout setup against risk rules.
 
     Returns (approved, reason, plan_dict) where plan_dict contains
-    entry, stop, target, qty, r_r_ratio, risk_amount.
+    entry, stop, target, qty, r_r_ratio, risk_amount, direction.
+
+    Long setups (long_reclaim): buy entry, stop at OR low, target at 2R.
+    Short setups (short_breakdown): sell entry, stop at OR high, target at 2R.
+      - If we already hold a long position, this is a sell-to-close (exit).
+      - If we have no long position, this is a short entry candidate.
     """
     ticker = rec["ticker"]
     setup = rec.get("setup", "")
@@ -157,12 +162,24 @@ def _validate_setup(rec: dict, equity: Decimal) -> tuple[bool, str, dict]:
     zone_verdict = rec.get("zone_verdict", "neutral")
     odds = rec.get("odds", {})
 
-    direction = "long" if setup == "long_reclaim" else "short"
-
-    # ── Technical validation ────────────────────────────────────────
     if setup not in ("long_reclaim", "short_breakdown"):
         return False, f"not a tradeable setup: {setup}", {}
 
+    # ── Determine direction & intent ────────────────────────────────
+    if setup == "long_reclaim":
+        direction = "long"
+        is_short = False
+    else:  # short_breakdown
+        direction = "short"
+        # Check if we already hold a long position → sell-to-close, not short entry
+        existing_long = open_positions.get(ticker, {}).get("qty", 0) if open_positions else 0
+        if existing_long > 0:
+            direction = "sell_to_close"
+            is_short = False
+        else:
+            is_short = True
+
+    # ── Technical validation ────────────────────────────────────────
     # Zone gate: fail-closed
     if zone_verdict in ("long_blocked", "short_blocked"):
         return False, f"zone blocked: {zone_verdict}", {}
@@ -184,10 +201,33 @@ def _validate_setup(rec: dict, equity: Decimal) -> tuple[bool, str, dict]:
         entry = price
         stop = or_low
         target = entry + 2 * (entry - stop)  # 2R default
-    else:
+    elif direction == "short":
         entry = price
         stop = or_high
-        target = entry - 2 * (stop - entry)
+        target = entry - 2 * (stop - entry)  # 2R default
+    else:  # sell_to_close
+        # Exit at current price; no stop/target needed for exit
+        entry = price
+        stop = None
+        target = None
+        risk_distance = abs(entry - price)  # zero
+        qty = open_positions.get(ticker, {}).get("qty", 0) if open_positions else 0
+        if qty <= 0:
+            return False, "sell_to_close but no long position held", {}
+        plan = {
+            "ticker": ticker,
+            "direction": "sell",
+            "setup": setup,
+            "entry": round(entry, 2),
+            "stop": None,
+            "target": None,
+            "qty": float(qty),
+            "risk_amount": 0.0,
+            "r_r_ratio": 0.0,
+            "odds": odds,
+            "zone_verdict": zone_verdict,
+        }
+        return True, "approved (sell-to-close)", plan
 
     risk_distance = abs(entry - stop)
     if risk_distance <= 0:
@@ -230,9 +270,10 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
     try:
         from robinhood_tools.portfolio_risk import PortfolioRiskController
         ctrl = PortfolioRiskController()
+        side = "buy" if plan["direction"] == "long" else "sell"
         verdict = ctrl.check(
             symbol=plan["ticker"],
-            side="buy" if plan["direction"] == "long" else "sell",
+            side=side,
             notional=plan["qty"] * plan["entry"],
             strategy="intraday",
             data_age_sec=0,
@@ -241,7 +282,7 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
         if verdict.approved:
             ctrl.record_order(
                 plan["ticker"],
-                "buy" if plan["direction"] == "long" else "sell",
+                side,
                 "intraday",
                 plan["qty"] * plan["entry"],
             )
@@ -307,8 +348,8 @@ def _place_order(plan: dict) -> tuple[bool, str, str | None]:
             limit_price=Decimal(str(plan["entry"])),
             earnings_date=None,
             max_order_value=Decimal(str(plan["qty"] * plan["entry"])),
-            take_profit_price=Decimal(str(plan["target"])),
-            bracket_stop_price=Decimal(str(plan["stop"])),
+            take_profit_price=Decimal(str(plan["target"])) if plan.get("target") else None,
+            bracket_stop_price=Decimal(str(plan["stop"])) if plan.get("stop") else None,
         )
         result = place_signal_order(
             settings=settings, snapshot=snapshot,
@@ -316,7 +357,27 @@ def _place_order(plan: dict) -> tuple[bool, str, str | None]:
         db.update_candidate_status(candidate_id, "approved")
         return True, result.get("status", "placed"), result.get("order_id")
     except Exception as exc:  # noqa: BLE001
-        return False, f"order error: {type(exc).__name__}: {exc}", None
+        error_msg = str(exc)
+        # Provide clearer error for quote/data issues
+        if "403" in error_msg or "quote" in error_msg.lower() or "data" in error_msg.lower():
+            return False, f"quote/data error: {error_msg}", None
+        return False, f"order error: {type(exc).__name__}: {error_msg}", None
+
+
+def _place_order_with_timeout(plan: dict, timeout_sec: int = 30) -> tuple[bool, str, str | None]:
+    """Place order with timeout to prevent hanging on slow LLM research.
+
+    The LLM research call inside place_signal_order can hang indefinitely
+    on slow NIM endpoints. This wrapper ensures we never block the pipeline
+    for more than timeout_sec seconds.
+    """
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_place_order, plan)
+        try:
+            return future.result(timeout=timeout_sec)
+        except concurrent.futures.TimeoutError:
+            return False, f"research timeout after {timeout_sec}s", None
 
 
 def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
@@ -338,6 +399,17 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
     result = {"date": today, "cycle": datetime.now(ET).isoformat(),
               "setups": [], "entries": [], "blocks": []}
 
+    # ── Load open positions from state machine ────────────────────────
+    open_trades = sm.get_open_trades()
+    open_positions = {}
+    for t in open_trades:
+        open_positions[t.ticker] = {
+            "qty": float(t.filled_qty or t.qty),
+            "direction": t.direction,
+            "trade_id": t.id,
+        }
+    open_count = len([t for t in open_trades if t.direction in ("long", "short")])
+
     # ── Scan ──────────────────────────────────────────────────────────
     try:
         from scripts.daytrade_scout import main as scout_main
@@ -356,40 +428,51 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
         scout = {"setups": []}
 
     # ── Evaluate each setup ──────────────────────────────────────────
-    open_count = _count_open_day_trades()
     for rec in scout.get("setups", []):
         setup = rec.get("setup", "")
         if setup not in ("long_reclaim", "short_breakdown"):
             continue
 
         ticker = rec["ticker"]
-        direction = "long" if setup == "long_reclaim" else "short"
+        raw_direction = "long" if setup == "long_reclaim" else "short"
+
+        # ── Determine actual action (sell-to-close vs new entry) ─────
+        existing_pos = open_positions.get(ticker, {})
+        existing_qty = existing_pos.get("qty", 0)
+
+        if setup == "short_breakdown" and existing_qty > 0:
+            # Sell-to-close: we hold a long and got a bearish signal
+            direction = "sell_to_close"
+        elif setup == "short_breakdown":
+            direction = "short"  # New short entry
+        else:
+            direction = "long"
 
         # Dedup: don't re-trade same ticker+setup today
         existing = [t for t in sm.get_open_trades()
-                    if t.ticker == ticker]
+                    if t.ticker == ticker and t.setup == setup]
         if existing:
             result["blocks"].append({
                 "ticker": ticker, "direction": direction,
-                "reason": "already have open position"})
+                "reason": "already have active setup for this ticker"})
             continue
 
-        # Check max concurrent trades
-        if open_count >= MAX_DAY_TRADES:
+        # Check max concurrent trades (long/short entries only, not exits)
+        if direction in ("long", "short") and open_count >= MAX_DAY_TRADES:
             result["blocks"].append({
                 "ticker": ticker, "direction": direction,
                 "reason": f"max {MAX_DAY_TRADES} concurrent day trades"})
             continue
 
         # No new entries after cutoff
-        if _is_no_new_entries_time():
+        if _is_no_new_entries_time() and direction in ("long", "short"):
             result["blocks"].append({
                 "ticker": ticker, "direction": direction,
                 "reason": "no new entries after 15:15 ET"})
             continue
 
-        # Validate setup
-        approved, reason, plan = _validate_setup(rec, equity)
+        # Validate setup (fail-closed, pass open positions for sell-to-close)
+        approved, reason, plan = _validate_setup(rec, equity, open_positions)
         if not approved:
             result["blocks"].append({
                 "ticker": ticker, "direction": direction,
@@ -397,7 +480,34 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
             _log(f"blocked {ticker} {direction}: {reason}")
             continue
 
-        # Risk controller (atomic, fail-closed)
+        # ── Sell-to-close: place sell order, no risk gate needed ─────
+        if plan["direction"] == "sell":
+            _log(f"sell-to-close {ticker} qty={plan['qty']} @ {plan['entry']}")
+            if not dry_run:
+                sell_plan = {**plan, "direction": "sell"}
+                ok, reason, order_id = _place_order(sell_plan)
+                if ok:
+                    # Close the open trade record
+                    existing_trade = [t for t in sm.get_open_trades()
+                                      if t.ticker == ticker][0]
+                    sm.transition(existing_trade.id, TradeState.ORDER_PENDING,
+                                  "sell order placed")
+                    sm.transition(existing_trade.id, TradeState.POSITION_OPEN,
+                                  "filled")
+                    open_count -= 1
+                    result["entries"].append({**plan, "trade_id": existing_trade.id,
+                                              "order_id": order_id,
+                                              "status": reason,
+                                              "action": "sell_to_close"})
+                    _log(f"SOLD {ticker} qty={plan['qty']} @ {plan['entry']}")
+                else:
+                    result["blocks"].append({
+                        "ticker": ticker, "direction": direction,
+                        "reason": f"sell order failed: {reason}"})
+                    _log(f"sell order failed {ticker}: {reason}")
+            continue
+
+        # ── Risk controller (atomic, fail-closed) for new entries ───
         risk_ok, risk_reason = _call_risk_controller(plan, equity)
         if not risk_ok:
             result["blocks"].append({
@@ -424,8 +534,8 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
             result["entries"].append({**plan, "dry_run": True,
                                       "trade_id": trade.id})
         else:
-            # Place order
-            ok, reason, order_id = _place_order(plan)
+            # Place order with timeout to prevent hanging on slow LLM research
+            ok, reason, order_id = _place_order_with_timeout(plan, timeout_sec=30)
             if ok:
                 sm.transition(trade.id, TradeState.ORDER_PENDING, "order placed")
                 sm.transition(trade.id, TradeState.POSITION_OPEN, "filled")
