@@ -25,7 +25,7 @@ echo === auto trade run started %DATE% %TIME% ===>>%LOG%
 "%TA_PY%" scripts\options_guard.py --execute>>%LOG% 2>&1
 "%TA_PY%" scripts\universe_screen.py --top 10 --out outputs\screener\latest.json>>%LOG% 2>&1
 "%TA_PY%" scripts\zone_analysis.py --tickers SPY,QQQ,NVDA,AMD,AAPL>>%LOG% 2>&1
-"%TA_PY%" scripts\tradingagents_paper_auto.py --screen outputs\screener\latest.json --screen-top 7 --quick-model nvidia/nemotron-3.5-lightning-30b-a3b --deep-model nvidia/nemotron-3.5-lightning-30b-a3b --max-notional 2000>>%LOG% 2>&1
+"%TA_PY%" scripts\tradingagents_paper_auto.py --screen outputs\screener\latest.json --screen-top 7 --max-tool-rounds 5 --quick-model nvidia/nemotron-3.5-lightning-30b-a3b --deep-model nvidia/nemotron-3.5-lightning-30b-a3b --max-notional 2000>>%LOG% 2>&1
 
 echo === auto trade run finished %DATE% %TIME% ===>>%LOG%
 "%TA_PY%" -c "import json,pathlib,datetime,zoneinfo; p=pathlib.Path('outputs/auto-trade-run.json'); d=json.loads(p.read_text()) if p.exists() else {}; d['finished_at']=datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York')).isoformat(); d['status']='finished'; p.write_text(json.dumps(d))"

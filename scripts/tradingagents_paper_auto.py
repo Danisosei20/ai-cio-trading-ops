@@ -117,7 +117,7 @@ def parse_args(argv=None):
     p.add_argument("--provider", default="nvidia")
     p.add_argument("--quick-model", default="moonshotai/kimi-k3")
     p.add_argument("--deep-model", default="moonshotai/kimi-k3")
-    p.add_argument("--analysts", default="market,news,fundamentals")
+    p.add_argument("--analysts", default="market,news")
     p.add_argument("--max-tool-rounds", type=int, default=10,
                    help="cap tool rounds per analyst (default 10)")
     p.add_argument("--ticker-timeout", type=int, default=600,
@@ -486,6 +486,21 @@ def main(argv=None) -> int:
     if regime != "RISK_ON":
         print(f"RISK {regime}: buys blocked desk-wide, sells only.")
 
+    # Daily circuit breaker: if equity is down >2% from previous close,
+    # block all new buys for the rest of the session (fail-closed).
+    circuit_broken = False
+    try:
+        acct = backend.transport.request("GET", "/v2/account")
+        equity_now = float(acct.get("equity", 0))
+        last_eq = float(acct.get("last_equity", 0))
+        if last_eq > 0 and (equity_now - last_eq) / last_eq < -0.02:
+            circuit_broken = True
+            log_line(f"CIRCUIT BREAKER: equity down {(equity_now-last_eq)/last_eq*100:.1f}% "
+                     f"from prev close (${last_eq:,.0f} -> ${equity_now:,.0f}) - buys blocked")
+            print(f"CIRCUIT BROKEN: equity down >2% from prev close - buys blocked desk-wide")
+    except Exception:  # noqa: BLE001
+        pass
+
     results = []
     for ticker in tickers:
         rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": ""}
@@ -567,8 +582,11 @@ def main(argv=None) -> int:
             else:
                 # Regime gates every premium buy (stock AND long puts/calls).
                 # Only equity sells (exits) pass in CHOP/UNKNOWN.
-                if regime != "RISK_ON" and not (sig in SELL_SIGNALS and not args.options):
-                    rec["reason"] = f"regime {regime}: new risk blocked desk-wide"
+                if (regime != "RISK_ON" or circuit_broken) and not (sig in SELL_SIGNALS and not args.options):
+                    if circuit_broken and regime == "RISK_ON":
+                        rec["reason"] = "circuit breaker: equity down >2% from prev close - buys blocked"
+                    else:
+                        rec["reason"] = f"regime {regime}: new risk blocked desk-wide"
                     set_stage(ticker, "skip", rec["reason"])
                 elif args.options:
                     trade_option_leg(ticker=ticker, sig=sig, decision=decision,
