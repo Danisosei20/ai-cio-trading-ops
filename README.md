@@ -4,47 +4,65 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
-An autonomous, safety-gated **multi-agent trading desk**: AI analysts debate,
-a deterministic risk engine disposes, and every decision lands in an auditable
-ledger. Paper-first on Alpaca — live Robinhood stays behind explicit human
-approval, always.
+An autonomous, safety-gated **multi-agent trading desk**: AI analysts debate, a deterministic risk engine disposes, and every decision lands in an auditable ledger. Paper-first on Alpaca — live Robinhood stays behind explicit human approval, always.
+
+## OpenAI Policy
+
+**This desk does not use OpenAI.** All judgment runs on NVIDIA NIM hosted models
+(`nvidia/nemotron-3.5-lightning-30b-a3b`). The OpenAI key is commented out in
+`.env` and is not used for any judgment, research, or execution path.
 
 > **Not financial advice.** Research software. Strategies can and do lose
 > money; backtested edges routinely die out-of-sample (ours publish their
 > failures too).
 
+---
+
+## Quick Start
+
 ```bash
 git clone https://github.com/Danisosei20/ai-cio-trading-ops.git
 cd ai-cio-trading-ops && cp .env.example .env   # no secrets in git, ever
-python3 scripts/paper_dashboard.py              # read-only status
-python3 scripts/desk_server.py --port 8100      # live console: http://127.0.0.1:8100/
 ```
 
-```mermaid
-flowchart LR
-    S[Signal: debate / alert / screen] --> D[Desk debate: bull vs bear vs red]
-    D --> J[Judge: CALL / PUT / NO_TRADE]
-    J --> R{Risk engine: deterministic}
-    R -- FAIL --> X[Rejected + logged]
-    R -- PASS --> V[Broker review]
-    V --> L[Approval ledger]
-    L --> P[Guarded placement]
-    P --> G[Position guard: stop / target]
+Then edit `.env` with your Alpaca paper keys, Slack webhook, and other settings.
+Never commit `.env` — it is git-ignored.
+
+Run the full test suite:
+
+```bash
+python3 -m unittest discover -s tests   # 358 tests, all green
 ```
 
-### The trading day (ET, weekdays)
+Run preflight before any trading session:
 
-```mermaid
-flowchart LR
-    A[09:45 AutoTrade\n guard → screen → debate → orders] --> B[09:50 Watchdog]
-    B --> C[10:00-15:30 Loop\n scan 45min → judge → enter]
-    C --> D[15:10 Options\n zone gate → calls/puts]
-    D --> E[15:45 Flatten\n day trades closed]
-    E --> F[16:30 Learn\n scorecard + memory]
-    F --> G[Fri 16:45 Review\n vs +$10,000]
+```bash
+python3 scripts/preflight.py            # 9 checks, all must PASS
 ```
 
-### How a ticker gets approved
+---
+
+## Architecture
+
+The desk is a set of scheduled, independent loops that share a single Central
+Portfolio Risk Controller. No strategy can place a broker order without passing
+through the risk gate.
+
+### Scheduled tasks (9, weekdays, ET)
+
+| Time | Task | Purpose |
+|------|------|---------|
+| 09:35 | `AI-Desk-OvernightExit` | Sell overnight positions at open |
+| 09:45 | `AI-CIO-AutoTrade-0945` | Swing debate → screen 7 names → gate → paper orders |
+| 09:50 | `AI-Desk-Watchdog` | Verify the 09:45 run completed |
+| 10:00–15:30 | `AI-Desk-IntradayLoop` | Continuous scan every 45 min → judge → enter |
+| 15:10 | `AI-Desk-OptionsWatch-1510` | Options entries (zone-gated) |
+| 15:40 | `AI-Desk-OvernightEnter` | NVDA overnight gap capture (backtested edge only) |
+| 15:45 | `AI-Desk-Flatten-1545` | Flatten all day trades before close |
+| 16:30 | `AI-Desk-ScoreShadows-1630` | Grade shadows, settle memory |
+| Fri 16:45 | `AI-Desk-WeeklyReview-1645` | Weekly scorecard vs $10k objective → Slack |
+
+### Pipeline diagram
 
 ```mermaid
 flowchart TD
@@ -55,7 +73,7 @@ flowchart TD
     G2 --> G3{session 09:45–15:45 + clock}
     G3 --> G4{zone verdict}
     G4 --> G5{odds gate (day trades)\n ≥40% stop / <20% target → block}
-    G5 --> G6{risk caps\n $2k notional · pinned limits}
+    G5 --> G6{risk caps · position limits · kill switch}
     G6 -- all pass --> ORD[Alpaca PAPER order\n → Slack rationale → /trading page]
     G1 -- any FAIL --> SHADOW[shadow row, no order (fail-closed)]
     G2 -- FAIL --> SHADOW
@@ -65,21 +83,24 @@ flowchart TD
     G6 -- FAIL --> SHADOW
 ```
 
-### Day-trade path (10:00-15:30)
+### Day-trade path (10:00–15:30, long + short)
 
 ```mermaid
 flowchart LR
     SK[Scout: OR 9:30-9:45 + VWAP + POC] --> ST{setup?}
     ST -- long_reclaim --> TM[Time Machine\n 10k replays + every past firing]
     ST -- short_breakdown --> TM
-    TM --> OG{odds gate}
-    OG -- pass --> RG[risk controller]
-    RG -- pass --> EN[entry tagged → flat 15:45]
+    TM --> OG{odds gate: fail-closed}
+    OG -- pass --> RC[Central Portfolio Risk Controller]
+    RC -- pass --> EN[entry → flat 15:45]
     OG -- block --> SH[shadow only]
     RG -- block --> SH
     ST -- range --> SKIP[skipped]
 ```
 
+Long setups: opening range reclaim above VWAP, EMA 9/21 bullish continuation, demand-zone bounce.
+Short setups: opening range breakdown below VWAP, EMA 9/21 bearish continuation, supply-zone rejection.
+Short trading requires confirmed broker eligibility and borrow availability — easy-to-borrow securities only.
 
 ### Self-learning loop
 
@@ -93,121 +114,107 @@ flowchart LR
     DIALS --> DEC
 ```
 
-### Guard exits (run first at 09:45)
+### Guard exits (options guard, runs at 09:45)
 
 ```mermaid
 flowchart LR
-    GU[options guard] --> TAKE[+2% take profit]
-    GU --> CUT[-25% cut loss]
-    GU --> DTE[DTE / expiry]
-    TAKE --> RIDE[winners ride\n e.g. ACN +144%]
+    GU[options guard] --> TAKE[profit unlimited · winners ride]
+    GU --> CUT[-15% stop loss]
+    GU --> DTE[DTE ≤ 2 days → expire]
+    GU --> TRAIL[trail armed at +25%\n floor = peak × 0.40]
+    TAKE --> RIDE[winners ride · e.g. ACN +144%]
 ```
 
-| Track | Entry point | What it does |
-|---|---|---|
-| Research | `scripts/tradingagents_research.py` | Multi-agent LLM debate per ticker. Never orders. |
-| Auto-trade | `scripts/tradingagents_paper_auto.py` | Debate → gated Alpaca paper orders (`--screen` for universe top-N). |
-| Alerts | `scripts/alert_webhook.py` | External signals → same gates → paper. HMAC secret. |
-| Backtests | `scripts/strategy_backtest.py` | Strategy grid + costs + 70/30 incubation. Promotes nothing that fails. |
-| Overnight | `scripts/overnight_pilot.py` | Close-to-open gap pilot (enter 15:30–15:55, exit 09:35–10:00). |
-| Guard | `scripts/paper_position_guard.py` | Stop/target exits on broker marks. |
-| Console | `scripts/desk_server.py` | 6-page live UI + API + kill switch. |
-| Deploy | `deploy/k8s/` | Staging manifests (research-only defaults). |
+**Important:** Options trading has **no fixed take-profit target** by default — winners run unlimited. The -15% stop is a stop-loss, not a guaranteed exit price during gaps or illiquid trading. A trailing stop armed at +25% locks in at least +40% of peak profit (floor = peak × 0.40).
 
 ---
 
-# AI CIO Trading Tools (legacy core)
+## Project Layout
 
-A safety-gated AI Chief Investment Officer workflow using Alpaca for paper trading, Robinhood for live trading,
-and Slack for notifications.
-
-The project helps review a portfolio, research eligible stocks, prepare broker order reviews, send approval notifications, and learn from outcomes. It is intentionally designed to stop before real execution unless every approval requirement is satisfied.
-
-See [ROADMAP.md](ROADMAP.md) for completed capabilities, remaining operational proof, and the recommended path to a limited live pilot.
-See [docs/upstream_review.md](docs/upstream_review.md) for the Qlib, NautilusTrader, LEAN, and OpenBB comparison
-and the patterns deliberately adopted or rejected.
-
-Slack is notification-only. The desk posts to the fixed `SLACK_CHANNEL_ID` using a bot token in
-`SLACK_BOT_TOKEN` granted only `chat:write`; it does not read, parse, or act on replies, and Slack
-creates no execution authority.
-
-## What This Project Does
-
-- Routes paper account/orders exclusively to Alpaca's paper API.
-- Reads authorized Robinhood account and portfolio information only in live mode.
-- Restricts new purchases to verified current S&P 500 constituent companies.
-- Evaluates fundamentals, valuation, news, volume, liquidity, momentum, volatility, and event risk.
-- Produces structured Slack approval notifications.
-- Formats Slack messages as compact decision summaries with separate order, rationale, market-quality, risk, source, and approval sections.
-- Persists expiring approval records and prevents changed or duplicate orders.
-- Tracks recommendations and outcomes in a learning journal.
-- Coordinates the complete pre-trade workflow through one service.
-- Keeps research, buy, monitoring, sell, profit reporting, and learning in one symbol-named lifecycle task.
-- Uses SQLite for atomic approvals, audit events, exit plans, learning checkpoints, and reconciliation state.
-- Supports safety-wrapped Alpaca paper and Robinhood live equity workflows.
-
-## What It Does Not Do
-
-- It does not treat a Slack message or Slack reply as trade approval.
-- It may place or cancel orders automatically only in the authenticated Alpaca paper account when the separate
-  paper switch and autonomy policy are enabled. Robinhood live remains explicit-approval only.
-- It does not buy options, crypto, leveraged ETFs, inverse ETFs, or non-S&P 500 stocks.
-- It does not sell merely because a position has a small profit.
-- It does not bypass broker review, the paper internal-policy authorization, or explicit Codex approval for live orders.
-- It does not store broker or Slack credentials in Git.
-
-## Trading Modes and Kill Switch
-
-The default `.env` is deliberately safe:
-
-```env
-TRADING_MODE=research_only
-TRADING_ENABLED=false
-PAPER_TRADING_ENABLED=false
+```
+scripts/
+  auto_trade_weekday.bat     09:45 swing debate run
+  daytrade_engine.py         Autonomous long/short day-trade engine
+  daytrade_backtest.py       Intraday backtest engine (costs, slippage, borrow)
+  daytrade_scout.py          OR + VWAP + zone scout with Time Machine odds
+  intraday_loop.py           Continuous intraday scan loop (state machine)
+  options_pilot.py           Options entry execution
+  options_guard.py           Options exit guard (+2%/-25%/DTE/trail)
+  options_watch_trade.py     15:10 options watch loop
+  overnight_pilot.py         Overnight gap capture (NVDA only)
+  preflight.py               9-check system health
+  trading_state.py           /trading page state assembler
+  desk_metrics.py            Risk-adjusted metrics (Sharpe, Sortino, MDD, PF)
+  desk_report.py             Combined metrics + confidence report
+  portfolio_risk_check.py    CLI gate for central risk controller
+  settle_memory.py           Self-learning memory consolidation
+  zone_analysis.py           POC/VA/VWAP/EMA 9/21/supply-demand zones
+  flatten_daytrades.py       15:45 flatten safety net
+  ...
+robinhood_tools/
+  portfolio_risk.py          Central Portfolio Risk Controller (atomic, fail-closed)
+  trade_state.py             Trade state machine (SCANNING → ... → CLOSED)
+  confidence.py              Observational setup scoring + champion/challenger
+  alpaca_paper.py            Alpaca paper-only HTTP transport and backend
+  ...
+tests/
+  test_daytrade_engine.py    20 tests
+  test_daytrade_backtest.py  11 tests
+  test_trade_state.py        10 tests
+  ...                        358 total, all green
+web/agent-office/
+  trading.html               /trading dashboard (long/short, P/L, scorecard)
+  pipeline.html              /pipeline diagram
 ```
 
-`paper_auto` routes only to `https://paper-api.alpaca.markets`; an Alpaca live URL is rejected. It never falls
-back to Robinhood or the local simulator. When `PAPER_TRADING_ENABLED=true`, the paper autonomy policy may place
-an unchanged reviewed limit order without a human approval pause, using an internal policy authorization and a
-$500 order/symbol cap. `live_approval` routes only to Robinhood and retains the default-off live kill switch,
-broker review, transactional approval, matching explicit Codex approval, and unchanged parameters.
-`PaperTradingBackend` remains a connector-free test double for unit and failure testing only.
+---
 
-See [docs/alpaca_paper.md](docs/alpaca_paper.md) for paper-account setup and a read-only connection check.
+## Configuration
+
+Personal values live in the git-ignored `.env` file. Copy `.env.example` when setting up another machine:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your Alpaca paper keys, Slack webhook, NVIDIA NIM key, and other settings. Never put Robinhood account numbers, passwords, cookies, access tokens, recovery codes, or live-broker API keys in `.env`.
+
+Important settings include:
+
+- `TRADINGAGENTS_QUICK_THINK_LLM` / `TRADINGAGENTS_DEEP_THINK_LLM` → `nvidia/nemotron-3.5-lightning-30b-a3b` (no OpenAI)
+- `NVIDIA_API_KEY` — required for judgment
+- `FRED_API_KEY` — macro analyst data
+- `MAX_RISK_PCT_PER_TRADE` → 0.0025 (0.25% per trade)
+- `MIN_REWARD_TO_RISK` → 1.5
+- `MAX_DAY_TRADES` → 2
+- `MAX_TOTAL_NOTIONAL` → 5000
+
+---
 
 ## Safety Model
 
 A real order requires all of the following:
 
-1. The selected Robinhood account has `agentic_allowed=true`.
-2. A purchase is verified against S&P 500 membership data observed within the last 24 hours.
-3. Current market, news, fundamental, liquidity, volume, volatility, and event-risk information has been reviewed.
-4. Robinhood returns a broker review without placing the order.
-5. The exact reviewed order is stored under a unique approval ID.
-6. The user explicitly approves that ID in Codex before it expires.
-7. The account, symbol, side, size, prices, order type, time in force, and market-hours setting remain unchanged.
-8. The approval has not already been used.
+1. Pass the Central Portfolio Risk Controller (atomic, fail-closed).
+2. Pass the Time Machine odds gate (fail-closed on tool errors).
+3. Pass the zone gate (POC/VA/VWAP/EMA 9/21/supply-demand).
+4. Pass the regime gate (CHOP blocks new buys).
+5. Circuit breaker: if equity is down >2% from previous close, all buys blocked.
+6. Explicit approval for live orders; paper mode is the default.
 
-Any missing or changed requirement fails closed and requires a new broker review.
+Slack is notification-only. It never authorizes execution.
 
-Slack is a notification channel only. It never authorizes execution.
+Paper mode uses separate Alpaca paper credentials, storage, and simulated broker fills. Live mode never uses a configuration variable as execution authority — every live buy, trim, or sell still needs a fresh broker review and explicit matching approval.
 
-Paper mode uses separate Alpaca paper credentials, storage, and simulated broker fills. It still preserves the
-review, fingerprint, durable internal policy authorization, atomic reservation, and reconciliation workflow.
-Live mode never uses a configuration
-variable as execution authority: `TRADING_ENABLED=true` only opens the Robinhood kill switch. Every live buy,
-trim, or sell still needs a fresh broker review and explicit matching Codex approval. Slack `YES` requests
-sizing, `NO` rejects the pending idea, and an amount triggers a fresh review in the same symbol task.
+---
 
 ## One-Task Trade Lifecycle
 
-Each active symbol has one durable lifecycle whose task name is exactly the uppercase ticker (for example,
-`AAPL`). Duplicate lifecycle creation is blocked. The task progresses through research, buy approval, open
-position monitoring, sell approval, filled sale, realized-profit Slack notification, and learning checkpoints.
+Each active symbol has one durable lifecycle whose task name is exactly the uppercase ticker (for example, `NVDA`). Duplicate lifecycle creation is blocked. The task progresses through research, buy approval, open position monitoring, sell approval, filled sale, realized-profit Slack notification, and learning checkpoints.
 
-Profit alone is not a sell signal. The exit evaluator considers thesis status, valuation, concentration,
-target return, retracement from the peak, and upcoming binary events. Any resulting trim or sale is review-only
-until the broker preview and matching Codex approval are complete.
+Profit alone is not a sell signal. The exit evaluator considers thesis status, valuation, concentration, target return, retracement from the peak, and upcoming binary events. Any resulting trim or sale is review-only until the broker preview and matching Codex approval are complete.
+
+---
 
 ## Investment Policy
 
@@ -242,8 +249,6 @@ The workflow records:
 - Expected slippage
 - Whether volume confirms or contradicts the price move
 
-It also evaluates moving-average context, relative strength, RSI, realized volatility, ATR, drawdown, gap risk, upcoming earnings, filings, dividends, and other material events.
-
 These signals provide confirmation and risk context. They are not standalone instructions to buy or sell.
 
 ### Profitable positions
@@ -251,6 +256,8 @@ These signals provide confirmation and risk context. They are not standalone ins
 The full portfolio is reviewed using cost basis, unrealized return, holding period, tax impact, thesis status, valuation, concentration, and position-specific targets.
 
 A positive return triggers analysis—not an automatic sale. A trim or sale still requires broker review, a Slack notification, and explicit matching approval in Codex.
+
+---
 
 ## Approval Lifecycle
 
@@ -272,283 +279,71 @@ flowchart TD
 
 ## System Components
 
-- `MarketSnapshot` captures a reproducible, hashed set of quotes, volume, liquidity, trend, volatility, event risk, and sourced research.
-- `DecisionRecord` preserves immutable model, prompt, policy, snapshot, score, rationale, provider, effective-time, observation-time, and content-hash provenance without creating trading authority.
-- `ReplaySnapshot` rejects observations that were unavailable at decision time, providing a look-ahead-bias guard for historical replay.
-- `ResearchExperiment` records Qlib-style strategy hypotheses and paper runs with replay, dataset, artifact,
-  parameter, policy, and code provenance; acceptance requires at least ten observations and a human reviewer.
-- `TradeCandidate` fails closed when data is stale, critical signals are missing, source quality is inadequate, score is below the purchase hurdle, or reward/risk is insufficient.
-- `RiskLimits` enforces position, sector, cash-reserve, daily-capital, pending-approval, spread, and market-impact limits.
-- `CioWorkflow` connects validation, portfolio risk, broker review, approval persistence, Slack delivery, exit plans, audit events, and learning schedules.
-- `CioDatabase` uses SQLite transactions and `BEGIN IMMEDIATE` execution reservation to prevent concurrent duplicate placement.
-- `validate_policy_change` requires at least 10 comparable observations before a durable rule can be reconsidered.
-- Uncertain broker failures enter `reconciliation_required`; they are not retried blindly.
-- Structured JSON logs include correlation and approval IDs while excluding credential-like fields.
-- Host adapter protocols provide market data, portfolio data, Robinhood, and Slack access without moving connector credentials into this repository.
-- `operations-status` classifies database, reconciliation, drift, stale-run, delivery, health-route, learning, and emergency-stop state.
-- Daily-run keys prevent duplicate morning summaries and approvals for the same account/date.
-- Daily-run checkpoints allow stale interrupted screens to resume without rerunning a completed screen step.
-- A standalone launchd watchdog reads automation completion memory outside the Desktop privacy boundary and sends one deduplicated health alert after a missed run.
-- Broker-state drift checks block recommendations when positions, orders, fills, dividends, or corporate actions are not linked to durable lifecycle state.
-- Shadow-equity records capture at most one paper-only qualifying idea (or no action) per day without creating a broker review or approval.
-- Source-specific freshness manifests name missing or stale inputs, and settled-cash checks reserve unsettled funds plus pending-order commitments.
-- Tax-lot helpers surface long/short-term holding context and wash-sale warnings as estimates.
+- `PortfolioRiskController` — single gate between all strategies and Alpaca (atomic, fail-closed)
+- `TradeStateMachine` — persistent trade lifecycle with restart recovery
+- `SetupScorer` — observational setup scoring (0-100), per-strategy tracking, champion/challenger
+- `Time Machine` odds grader — 10,000-session Monte Carlo replay + historical setup firing, fail-closed on errors
+- `Zone scanner` — POC/VA/VWAP/EMA 9/21/supply-demand confluence
+- `CioDatabase` — SQLite transactions with `BEGIN IMMEDIATE` execution reservation
+- Structured JSON logs include correlation and approval IDs while excluding credential-like fields
 
-## Project Layout
-
-```text
-config/
-  approval_routes.json          Active routing and investment-policy settings
-  approval_routes.example.json  Example configuration
-docs/
-  alpaca_paper.md               Paper-account setup, isolation, and read-only health check
-  approval_automation.md        Daily CIO and approval workflow
-  operator_runbook.md           Startup, shutdown, emergency, recovery, and restore procedures
-  upstream_review.md            Primary-source comparison with similar open-source systems
-  robinhood_trading_tools.md    Robinhood adapter and safety details
-  slack_required_tools.md       Slack tool and destination requirements
-ROADMAP.md                      Evidence-based delivery and operating roadmap
-robinhood_tools/
-  alpaca_paper.py               Alpaca paper-only HTTP transport and equity backend
-  analysis.py                   Market snapshots, source controls, candidates, exit plans
-  approvals.py                  Durable approval ledger and order fingerprints
-  auth.py                       Connector authorization checks
-  database.py                   Transactional SQLite approval and audit database
-  governance.py                 Immutable decision provenance and content-addressed IDs
-  observability.py              Local operational status and severity checks
-  replay.py                     Point-in-time replay evidence validation
-  research.py                   Immutable experiment, run, metric, and promotion records
-  daily_controls.py             Freshness, broker drift, watchdog, daily changes, and notice rendering
-  health.py                     Fixed-route Slack health notifier for local operations
-  adapters.py                   Credential-free host integration boundaries and Slack retries
-  cli.py                        Safe maintenance and read-only command-line interface
-  journal.py                    Durable JSON-lines workflow journal
-  market_calendar.py            Authoritative exchange-session validation boundary
-  paper.py                      Connector-free simulated broker
-  portfolio.py                  Tax-lot ranking and wash-sale warnings
-  privacy.py                    Safe support-bundle creation
-  runtime.py                    Configuration factory and live kill switch
-  logging.py                    Redacted structured JSON logging
-  learning.py                   Outcome attribution and policy-change evidence gate
-  mcp_backend.py                Robinhood MCP argument/result adapter
-  models.py                     Accounts, requests, reviews, and orders
-  notifications.py              Slack delivery-attempt records
-  policy.py                     Account and order validation rules
-  risk.py                       Portfolio-level hard risk limits
-  service.py                    Main safety-gated trading service
-  universe.py                   Current S&P 500 membership validation
-  workflow.py                   End-to-end CIO workflow coordinator
-scripts/
-  encrypted_backup.sh            Encrypts database backups without committing them
-  check_required_tools.py       Checks configured Slack capabilities
-  dashboard.py                  Generates the read-only local dashboard
-  health_check.py               Non-posting route and access health check
-  restore_drill.py              Non-destructive database restore verification
-  install_watchdog.py           Installs the privacy-safe launchd watchdog and Keychain token
-  standalone_watchdog.py        Dependency-free missed-run checker used outside Desktop
-  render_approval_message.py    Produces complete approval-notification text
-  secret_scan.py                Rejects credential-like content in tracked files
-  update_journal.py             Appends schema-validated strategy observations
-tests/                           Unit and workflow safety tests
-mcp.json                        Robinhood MCP server configuration
-Makefile                        Common test and health commands
-pyproject.toml                  Python project metadata
-```
-
-## Configuration
-
-Personal values live in the git-ignored `.env` file. The shareable template is [`.env.example`](.env.example). Copy the template when setting up another machine or sharing the project:
-
-```bash
-cp .env.example .env
-```
-
-Then edit `.env` with the local timezone, Slack channel, account nickname, and non-secret investment context. The active policy configuration is [`config/approval_routes.json`](config/approval_routes.json); it contains `${VARIABLE_NAME}` references instead of personal values.
-
-Never put Robinhood account numbers, passwords, cookies, access tokens, recovery codes, or live-broker API keys
-in `.env`. Authentication remains inside the authorized Robinhood and Slack connectors. Alpaca paper keys may
-be injected through the process environment or a local secret manager. The ignored `.env` is supported for
-paper-only keys when restricted to the local user with `chmod 600 .env`; never commit, paste, or share it.
-
-Important settings include:
-
-- `approval_window_minutes`: how long a reviewed approval remains valid
-- `channels.slack.channel_id`: fixed Slack destination
-- `channels.slack.required_tools`: tools required in the same CIO task
-- `investment_policy.purchase_universe`: eligible purchase universe
-- `membership_max_age_hours`: maximum age of membership evidence
-- `minimum_independent_research_sources`: minimum source count
-- Volume, execution, trend, volatility, and event-analysis requirements
-- Learning checkpoints and minimum evidence before changing policy
-
-Do not put credentials, account numbers, or private tokens in this file.
-
-### Sharing safely
-
-Share the repository and `.env.example`, but never share `.env`. Before publishing or sending the project, confirm `.env` is ignored:
-
-```bash
-git check-ignore .env
-```
-
-The `.gitignore` also excludes approval ledgers, delivery logs, runtime outputs, virtual environments, and Python caches.
+---
 
 ## Running the Tests
 
 The test suite uses the Python standard library and does not contact Alpaca or Robinhood or place orders.
 
 ```bash
-make test
+python3 -m unittest discover -s tests
 ```
 
-Equivalent command:
+358 tests, all green. The suite covers account restrictions, broker-review requirements, approval expiry, order tampering, duplicate execution, S&P 500 purchase restrictions, Slack delivery records, message formatting, learning-journal fields, trade state machine transitions, position sizing, reward-to-risk validation, odds-gate fail-closed behavior, risk controller atomicity, backtest aggregation, and more.
 
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-The suite covers account restrictions, broker-review requirements, approval expiry, order tampering, duplicate execution, S&P 500 purchase restrictions, Slack delivery records, message formatting, and learning-journal fields.
-
-The production-hardening tests also cover paper fills, the live kill switch, database backup/integrity, duplicate daily-run blocking, Slack retry behavior, market-calendar failures, tax-lot ordering, wash-sale warnings, and privacy-safe exports.
+---
 
 ## CLI
 
 Install the project or use the module directly:
 
 ```bash
-python3 -m robinhood_tools.cli health
-python3 -m robinhood_tools.cli paper-broker-health
-python3 -m robinhood_tools.cli operations-status
-python3 -m robinhood_tools.cli daily-review --account-label Agentic
-python3 -m robinhood_tools.cli watchdog --account-label Agentic --database outputs/live/cio.db
-python3 -m robinhood_tools.cli recovery-plan
-python3 -m robinhood_tools.cli shadow-recommendations
-python3 -m robinhood_tools.cli lifecycles
-python3 -m robinhood_tools.cli research-experiments
-python3 -m robinhood_tools.cli approvals
-python3 -m robinhood_tools.cli dashboard
-python3 -m robinhood_tools.cli backup outputs/backups/cio.db
-python3 -m robinhood_tools.cli support-bundle outputs/support.zip
-python3 -m robinhood_tools.cli emergency-stop
-python3 -m robinhood_tools.cli emergency-resume
+python3 scripts/preflight.py                    # 9 system health checks
+python3 scripts/portfolio_risk_check.py --symbol NVDA --side buy --notional 500 --strategy overnight
+python3 scripts/portfolio_risk_check.py --engage-kill
+python3 scripts/portfolio_risk_check.py --clear-kill
+python3 scripts/portfolio_risk_check.py --status
+python3 scripts/desk_report.py                  # metrics + confidence + champion/challenger
+python3 scripts/daytrade_backtest.py            # intraday backtest engine
+python3 scripts/daytrade_engine.py --dry-run    # scan + judge, no orders
+python3 scripts/intraday_loop.py                # continuous scan loop
+python3 scripts/trading_state.py                # /trading page state
 ```
 
 There is intentionally no casual `buy` command.
 
-### Small-account safety profile
+---
 
-The checked-in live policy limits new orders and total symbol exposure to $25. Autonomous Alpaca paper mode
-permits up to $500 per order and $500 total exposure to one symbol. Both preserve at least $50 cash, permit one open position,
-stops new entries after $5 daily or $10 weekly realized loss, blocks entries within five days of earnings,
-and applies a five-trading-day cooldown after an invalidated loss. Risk-off markets require a higher candidate
-score, and all critical data inputs must be present and fresh.
+## Small-account safety profile
 
-`emergency-stop` durably blocks new reviews and placements. It does not cancel orders or liquidate positions.
-Only an explicit operator action may call `emergency-resume`. Paper and live modes use separate databases and
-dashboards under `outputs/paper/` and `outputs/live/`. Approval messages include a short immutable order
-fingerprint so changed parameters are visible.
+The checked-in live policy limits new orders and total symbol exposure to $25. Autonomous Alpaca paper mode permits up to $500 per order and $500 total exposure to one symbol. Both preserve at least $50 cash, permit one open position, stops new entries after $5 daily or $10 weekly realized loss, blocks entries within five days of earnings, and applies a five-trading-day cooldown after an invalidated loss. Risk-off markets require a higher candidate score, and all critical data inputs must be present and fresh.
 
-### Recovery and immutable audit
+`emergency-stop` durably blocks new reviews and placements. It does not cancel orders or liquidate positions. Only an explicit operator action may call `emergency-resume`. Paper and live modes use separate databases and dashboards under `outputs/paper/` and `outputs/live/`.
 
-Back up the database before every migration. Export approvals, research snapshots, fills, lifecycle events,
-and learning records with `export_audit_bundle`; the adjacent SHA-256 file detects changes. Encrypt backups
-using operating-system or organization-approved encrypted storage and never commit them.
+---
 
-Test recovery quarterly on a clean machine: install from the lockfile, restore the correct paper or live
-database, run `cio migrate`, verify integrity, resume unexpired Slack monitors, render the dashboard, and keep
-live trading disabled until every check passes.
+## Recovery and immutable audit
 
-Use `python3 -m scripts.restore_drill BACKUP.db` for a non-destructive first-line restore verification. It
-restores to a temporary location and checks integrity, schema, required tables, and source immutability. Follow
-the full startup, incident, encrypted-backup, and credential procedures in `docs/operator_runbook.md`.
+Back up the database before every migration. Export approvals, research snapshots, fills, lifecycle events, and learning records; the adjacent SHA-256 file detects changes. Encrypt backups using operating-system or organization-approved encrypted storage and never commit them.
 
-`daily-review` is safe without host adapters: it claims exactly one run per account/date, persists restart
-checkpoints, records a shadow no-action observation, and reports `No Action Recommended`. In the connected
-host, supply current freshness evidence, reconciled broker state, and screened ideas. A research-qualified
-candidate may be recorded in the shadow portfolio even when an execution gate blocks a live review; shadow
-activity never creates an approval or broker call. Qualified executable symbols resume or create their single
-ticker lifecycle. Broker and market credentials never enter the CLI or repository.
+Test recovery quarterly on a clean machine: install from the lockfile, restore the correct paper or live database, run integrity checks, verify schema and required tables, resume unexpired Slack monitors, render the dashboard, and keep live trading disabled until every check passes.
 
-### Operating modes
-
-- `research_only`: screen, research, journal, and notify; never create a broker service.
-- `paper_auto`: Alpaca paper account, reviews, and simulated fills; never Robinhood or Alpaca live.
-- `live_approval`: Robinhood live reviews and placements, with the kill switch plus matching Codex approval.
-
-Legacy `paper` and `live` values normalize to `paper_auto` and `live_approval`.
-
-Paper autonomous execution also requires `PAPER_TRADING_ENABLED=true`; new installations default it to false.
-It runs only during the configured regular-session window (10:15–15:30 ET), requires a DAY limit order at the
-reviewed intended price, blocks price chasing, and sends Slack after submission. It retains the exact fingerprint,
-internal policy authorization, atomic reservation, reconciliation, lifecycle, and learning checkpoints. A Slack
-failure is recorded but never causes an order retry.
-
-TradingView may be used as an optional chart cross-check when authenticated browser access is available. Primary
-inputs remain Alpaca quotes/bars, current S&P 500 membership, company/SEC material, earnings/event checks, and
-independent news. Community ideas and aggregate technical ratings never create execution authority. Structured
-TradingView observations can also be stored as learnable candle, indicator, and volume memory and summarized in
-Slack, but they remain secondary to broker data and independent research.
-
-The research layer also checks official House and Senate periodic transaction reports, SEC Form 4 insider
-transactions, and Form 13F filings from Berkshire Hathaway, Pershing Square Capital Management, and Akre Capital
-Management as a small, style-diverse professional-manager comparison set. These disclosures are delayed, incomplete,
-and sometimes report value ranges rather than exact sizes. They contribute zero points to the candidate score,
-must show the transaction date and filing/observation lag, and may only confirm or contradict a thesis already
-supported by current fundamentals, news, price, volume, and liquidity. The system never copy-trades a politician,
-insider, or manager and never assumes that an old disclosed position remains open.
-
-Panic-selling setups are not bought automatically. They require elevated relative volume, no material adverse
-news, a completed VWAP or opening-range reclaim, multiple stabilization bars, supportive market/sector context,
-and at least 2.5:1 reward/risk. Continued new lows, widening spreads, or conflicting charts block entry.
-
-Configuration is strict in runtime startup. Unknown, misspelled, missing, or stale keys fail closed, and the
-configured database schema version must match the code. This prevents a typo from silently disabling a safety
-setting. Broker routing is also fixed: `paper_broker=alpaca` and `live_broker=robinhood`.
-
-### Restart and fill safety
-
-Symbol leases prevent two workers from monitoring the same open lifecycle concurrently and expire so a
-replacement worker can recover after a crash. Broker fills are stored by `(order_id, fill_id)`, making repeated
-reconciliation idempotent. Partial fills use a weighted average price and accumulated fees. Realized profit uses
-allocated tax-lot cost basis, actual fill proceeds, and fees before Slack reports a final result.
-
-Run `cio recovery-plan` at startup. Recovery order is: resume unexpired Slack windows, reconcile uncertain
-broker approvals, then reclaim a stale daily run and reuse any completed screen checkpoint. Before a new
-recommendation, compare current positions, open orders, fills, dividends, and corporate actions with durable
-ticker lifecycle state. Any unexplained difference blocks the recommendation until reconciled.
-
-### Independent missed-run watchdog
-
-Install the separate weekday 09:05 ET watchdog with:
-
-```bash
-python3 scripts/install_watchdog.py
-```
-
-The installer copies a dependency-free checker to `~/Library/Application Support/OpenAI-AICIO-Watchdog`,
-stores the Slack bot token in the login Keychain, and loads `com.openai.ai-cio-watchdog`. The background job
-reads the automation memory under `$CODEX_HOME`, avoiding macOS background access restrictions on Desktop.
-It posts to `HEALTH_SLACK_CHANNEL_ID` only when the 08:45 review is still incomplete after the configured grace
-period, and deduplicates one alert per automation/date. This detects a missed run; it does not execute a trade.
-
-To verify the real Keychain and Slack route with one explicitly labeled, non-trading test message, run:
-
-```bash
-python3 scripts/install_watchdog.py --test-alert
-```
-
-The test does not create an approval, recommend a security, change missed-run deduplication state, or authorize
-broker activity.
+---
 
 ## CI and Quality
 
-GitHub Actions installs the exact top-level development tool versions and audited transitive security floors
-in `requirements-dev.lock`, then runs
-unit/integration tests, Ruff, mypy, coverage, configuration validation, dependency audit, and local secret
-scanning. Dependabot checks Python and GitHub Actions dependencies weekly. Run the dependency-free local subset with:
+GitHub Actions installs the exact top-level development tool versions and audited transitive security floors, then runs unit/integration tests, Ruff, mypy, coverage, configuration validation, dependency audit, and local secret scanning. Dependabot checks Python and GitHub Actions dependencies weekly. Run the dependency-free local subset with:
 
 ```bash
-make ci
+python3 -m unittest discover -s tests
 ```
 
 ## Health Check
@@ -559,133 +354,22 @@ For Alpaca paper mode, first run the read-only broker check:
 python3 -m robinhood_tools.cli paper-broker-health
 ```
 
-Authenticated paper-account access was verified with this command on 2026-07-14. That evidence proves only
-the configured environment's read-only account connection; it does not prove order placement or authorize a
-trade. The first smoke test also verified zero broker drift and that live-Alpaca, Robinhood-live, and option
-paths remain blocked in paper mode. Because the market was closed, the order stage correctly stopped before
-candidate review when five-minute quote, spread, and volume freshness could not be satisfied.
-
 For Robinhood live mode, after the host independently verifies Robinhood read access, run:
 
 ```bash
 make health
 ```
 
-This validates configuration and declared Slack capability without posting a Slack message.
-
 ## Local Dashboard
 
 Generate a read-only operational dashboard:
 
 ```bash
-make dashboard
+python3 scripts/trading_state.py
 ```
 
-The output defaults to `outputs/dashboard.html` and summarizes approval states and overdue learning checkpoints. The `outputs/` directory is ignored by Git.
-
-## Automated Reviews
-
-The operating setup includes an 08:45 ET read-only premarket review, a separate 10:15 ET autonomous Alpaca paper
-session, and a monthly performance report. These are Codex automations, not credential-bearing processes in this
-repository; recreate or inspect them in Codex when installing on another machine. A review can also be run
-manually in the current Codex task. Every run must check the official current U.S. exchange calendar and skip
-exchange holidays or special closures.
-
-The 08:45 review owns reconciliation, portfolio health, research, and the watchlist, but cannot place or cancel
-an order. The 10:15 paper session may start or resume one ticker lifecycle and autonomously place only an
-unchanged, policy-qualified Alpaca paper limit order. A live Robinhood lifecycle remains a manually active
-Codex task and still requires broker review plus matching explicit Codex approval. The monthly report summarizes
-realized and unrealized performance, benchmark-relative outcomes, execution quality, risk-limit events, and
-overdue learning checkpoints. No automation may weaken the live approval gate.
-
-On an open day it performs a read-only portfolio and market review, then sends one readable Slack summary with:
-
-- `ACTION`, `WHAT YOU SHOULD DO`, `WHY`, `NEXT REVIEW`, and live-trading status first
-- `CHANGED SINCE YESTERDAY` and source-specific `DATA AS OF` timestamps
-- Market status and portfolio-health verdict
-- Cash, concentration, and risk summary
-- Recommended actions or `No Action Recommended`
-- Key risks and source links
-- A structured broker-reviewed approval section only for a live trade that clears every hurdle
-- Any blocked candidates under `WATCHLIST ONLY — NOT A BUY RECOMMENDATION`
-
-The 08:45 review never places or cancels an order. The 10:15 paper session sends Slack only after its broker
-action; Slack remains notification-only and creates no execution authority.
-
-Trade approval messages also show current buying power, proposed cost, estimated buying power remaining, and the exact reviewed dollar/share sizing. If funds are insufficient, Slack receives a `No Approval Created` notice showing the shortfall. The user must return to Codex and specify a smaller exact dollar amount or share quantity for a fresh broker review; changing size in Slack is not accepted as execution approval.
-
-## Slack Notifications
-
-Slack is notification-only. The desk posts plain updates to the fixed `SLACK_CHANNEL_ID`; there is no reply
-monitor and no continuous Slack automation. It never reads, parses, or acts on replies, and Slack creates no
-execution authority. Approval, buy, sell, and other execution-like Slack messages are ignored, not executed.
-
-After a matching Codex-authorized placement, Slack may report `Trade successful` only when the selected broker
-returns a filled result. A queued or confirmed order must be described as submitted, not successful or filled.
-
-For the lower-level tool check:
-
-```bash
-python3 scripts/check_required_tools.py \
-  --available-tools slack._slack_send_message
-```
-
-## Rendering a Test Approval Message
-
-`scripts/render_approval_message.py` requires complete order, pricing, volume, execution, risk, and research information. It only prints text; it does not send a message or contact Robinhood.
-
-Run its help command to see all required fields:
-
-```bash
-python3 scripts/render_approval_message.py --help
-```
-
-Never substitute simulated values into a real approval request. Label test data clearly and use a non-executable approval ID.
-
-## Learning Journal
-
-The AI CIO journal records the original thesis and market conditions, then evaluates results after 1, 5, and 20 trading days.
-
-The separate shadow-equity table records at most one qualifying paper candidate or explicit no-action observation
-per daily run. It uses the same research, universe, earnings, freshness, and regime requirements, but it cannot
-create broker reviews, Slack approvals, or live orders. Shadow outcomes are measured against both the underlying
-equity decision and the S&P 500 so the one-position live cap does not stop evidence collection.
-
-Learning fields include:
-
-- Outcome and S&P 500 benchmark return
-- Excess return
-- Thesis accuracy
-- Volume and trend assumptions
-- Execution slippage
-- Lessons and error attribution
-
-Durable policy should not change after one winner or loser. The configured process requires at least 10 comparable observations and a repeated pattern before changing a scoring weight or rule.
-
-Strategy research is registered separately from trading. An experiment records its baseline, proposed version,
-Git commit, policy and parameter hashes, point-in-time replay digest, expected benefit, and rollback criteria.
-Only paper-status experiments accept runs. Each run must include dataset/artifact hashes and excess-return,
-drawdown, turnover, and slippage metrics. Research acceptance requires the configured observation minimum and
-a recorded human reviewer; it never changes live policy or creates broker authority automatically.
-
-Append a portable observation with `python3 scripts/update_journal.py outputs/learning.csv --symbol AAPL ...`. The helper enforces the complete documented CSV schema and refuses to append to an incompatible older header. When durable workflow behavior changes, update this README and the installed `ai-cio-portfolio-manager` skill in the same change, then validate both.
-
-## Live-Use Checklist
-
-Before a live CIO task:
-
-- Attach Robinhood and Slack to the same Codex task.
-- Confirm Robinhood read tools and Slack send are exposed.
-- Use only the explicitly selected agentic Robinhood account.
-- Refresh S&P 500 membership evidence and market data.
-- Review the full portfolio before recommending a transaction.
-- Run broker review before creating an approval request.
-- Confirm the Slack message contains the exact reviewed details.
-- Stop before execution and wait for matching explicit Codex approval.
-
-When evidence is incomplete or no idea clears the hurdle, the correct result is **No Action Recommended**.
+Or visit `http://localhost:8766/trading` when the office viewer is running.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE). Research software, provided as-is;
-see [SECURITY.md](SECURITY.md) for reporting security issues privately.
+Apache 2.0 — see [LICENSE](LICENSE). Research software, provided as-is; see [SECURITY.md](SECURITY.md) for reporting security issues privately.
