@@ -30,14 +30,35 @@ class Quote:
 
 
 def market_regime(spy_closes: list[float]) -> str:
-    """RISK_ON only when SPY holds its 50-day trend; CHOP otherwise.
+    """RISK_ON above the 50-day mean, RISK_OFF below it, CHOP when mixed.
 
-    Pure function (tested). UNKNOWN on short history — callers fail closed.
+    Pure function (tested): no network, no yfinance import. UNKNOWN on short
+    history — which includes an empty `_spy_closes()` after a failed fetch —
+    and callers fail closed on UNKNOWN rather than assuming RISK_ON.
+
+    Two other copies of this rule exist and are deliberately left alone:
+    `scripts/daytrade_backtest.py` (backtest-only) and
+    `scripts/overnight_pilot.py` (broken, tracked separately). Point them here
+    rather than adding a third.
     """
     if len(spy_closes) < 51:
         return "UNKNOWN"
     window = spy_closes[-51:-1]
-    return "RISK_ON" if spy_closes[-1] > sum(window) / len(window) else "CHOP"
+    mean = sum(window) / len(window)
+    if spy_closes[-1] > mean:
+        return "RISK_ON"
+    return "CHOP" if spy_closes[-1] == mean else "RISK_OFF"
+
+
+def _spy_closes() -> list[float]:
+    """SPY daily closes for the regime gate. [] on any failure (fails closed)."""
+    try:
+        import yfinance as yf  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        frame = yf.Ticker("SPY").history(period="1y", interval="1d")
+        return [float(c) for c in frame["Close"].dropna()]
+    except Exception:  # noqa: BLE001 - ImportError, network, empty frame
+        return []
 
 def _age_minutes(as_of: str, now: datetime) -> float:
     text = as_of.replace("Z", "+00:00")
