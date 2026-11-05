@@ -73,6 +73,13 @@ def _now_et() -> datetime:
     return datetime.now(ET)
 
 
+def _parse_time(s: str) -> datetime:
+    """Parse 'HH:MM' into today's ET datetime."""
+    h, m = s.split(":")
+    now = datetime.now(ET)
+    return now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+
+
 def _is_flatten_time(now: datetime | None = None) -> bool:
     """Return True if we should flatten all positions."""
     now = now or _now_et()
@@ -180,8 +187,10 @@ def _validate_setup(rec: dict, equity: Decimal, open_positions: dict | None = No
             is_short = True
 
     # ── Technical validation ────────────────────────────────────────
-    # Zone gate: fail-closed
-    if zone_verdict in ("long_blocked", "short_blocked"):
+    # Zone gate: fail-closed - only block in the relevant direction
+    if setup == "long_reclaim" and zone_verdict == "long_blocked":
+        return False, f"zone blocked: {zone_verdict}", {}
+    elif setup == "short_breakdown" and zone_verdict == "short_blocked":
         return False, f"zone blocked: {zone_verdict}", {}
 
     # Time Machine odds: fail-closed on error

@@ -122,15 +122,29 @@ def scout_one(ticker: str) -> dict:
     volume = bars["Volume"].astype(float)
     vwap = float((typical * volume).sum() / volume.sum()) if volume.sum() else None
     price = float(bars["Close"].iloc[-1])
+    
+    # Determine setup direction BEFORE zone gate so we can pass direction
+    # to zone analysis. The zone gate only blocks in the relevant direction.
+    price_above_vwap = vwap is not None and price > vwap
+    price_below_vwap = vwap is not None and price < vwap
+    price_above_or_high = price >= or_high
+    price_below_or_low = price <= or_low
+    
+    if price_above_vwap and price >= or_low:
+        direction = "long"
+    elif price_below_vwap and price <= or_high:
+        direction = "short"
+    else:
+        direction = "range"
+    
     base = {"ticker": ticker, "date": today, "price": round(price, 2),
             "vwap": round(vwap, 2) if vwap else None,
             "or_high": round(or_high, 2), "or_low": round(or_low, 2),
             "bars": len(bars)}
-
+    
     try:
         from scripts.zone_analysis import analyze
-
-        zone = analyze(ticker)
+        zone = analyze(ticker, direction=direction)
         base["zone_verdict"] = zone.get("verdict", {}).get("verdict", "neutral")
         base["zone_reasons"] = zone.get("verdict", {}).get("reasons", [])
         prof = zone.get("profile") or {}
@@ -139,7 +153,7 @@ def scout_one(ticker: str) -> dict:
     except Exception:  # noqa: BLE001 - the scout itself never crashes
         base["zone_verdict"] = "neutral"
         base["zone_reasons"] = ["zone analysis unavailable"]
-
+    
     thin = len(bars) < MIN_BARS
     if thin:
         base.update({"setup": "range",
@@ -148,11 +162,11 @@ def scout_one(ticker: str) -> dict:
     if vwap is None:
         base.update({"setup": "range", "reason": "no volume for VWAP"})
         return base
-    if price > vwap and price >= or_low and base["zone_verdict"] != "long_blocked":
+    if direction == "long":
         base.update({"setup": "long_reclaim",
                      "reason": f"price {price:.2f} above VWAP {vwap:.2f}, holding "
                                f"opening-range low {or_low:.2f}"})
-    elif price < vwap and price <= or_high and base["zone_verdict"] != "short_blocked":
+    elif direction == "short":
         base.update({"setup": "short_breakdown",
                      "reason": f"price {price:.2f} below VWAP {vwap:.2f}, under "
                                f"opening-range high {or_high:.2f}"})

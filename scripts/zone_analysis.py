@@ -155,8 +155,12 @@ def _nearest(nodes: list[dict], price: float, side: str):
     return min(candidates, key=lambda lvl: abs(lvl - price)) if candidates else None
 
 
-def confluence(price: float, profile: dict, prior: dict | None) -> dict:
-    """Confirm/block verdict from zone structure. Never decides the trade."""
+def confluence(price: float, profile: dict, prior: dict | None,
+               direction: str = "long") -> dict:
+    """Confirm/block verdict from zone structure. Never decides the trade.
+
+    direction: "long" or "short" - only checks blocking in this direction.
+    """
     reasons: list[str] = []
     if not profile:
         return {"verdict": "neutral", "reasons": ["no session profile yet"]}
@@ -171,7 +175,7 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
     ema_bearish = (ema_fast is not None and ema_slow is not None
                    and price < ema_fast and price < ema_slow)
 
-    def block_long():
+    if direction == "long":
         blocker = None
         ceiling = _nearest(profile["supply_nodes"], price, "supply")
         if ceiling is not None and _dist(price, ceiling) <= PIN_DISTANCE:
@@ -187,10 +191,9 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
             blocker = blocker or (f"EMA bearish alignment: price below both "
                                   f"9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
         if blocker:
-            return f"LONG blocked: {blocker}"
-        return None
-
-    def block_short():
+            reasons.append(blocker)
+            return {"verdict": "long_blocked", "reasons": reasons}
+    else:
         blocker = None
         floor_node = _nearest(profile["demand_nodes"], price, "demand")
         if floor_node is not None and _dist(price, floor_node) <= PIN_DISTANCE:
@@ -206,16 +209,9 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
             blocker = blocker or (f"EMA bullish alignment: price above both "
                                   f"9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
         if blocker:
-            return f"SHORT blocked: {blocker}"
-        return None
+            reasons.append(blocker)
+            return {"verdict": "short_blocked", "reasons": reasons}
 
-    long_block, short_block = block_long(), block_short()
-    if long_block:
-        reasons.append(long_block)
-        return {"verdict": "long_blocked", "reasons": reasons}
-    if short_block:
-        reasons.append(short_block)
-        return {"verdict": "short_blocked", "reasons": reasons}
     where = ("above value area" if price > vah else
              "below value area" if price < val else "inside value area")
     reasons.append(f"POC {poc:.2f} / VA {val:.2f}-{vah:.2f} / price {where}")
@@ -226,10 +222,11 @@ def confluence(price: float, profile: dict, prior: dict | None) -> dict:
             reasons.append(f"EMA bearish: price below 9/21 EMA ({ema_fast:.2f}/{ema_slow:.2f})")
         else:
             reasons.append(f"EMA mixed: 9/21 EMA {ema_fast:.2f}/{ema_slow:.2f}")
-    return {"verdict": "long_ok", "reasons": reasons}
+    return {"verdict": "long_ok" if direction == "long" else "short_ok", "reasons": reasons}
 
 
-def analyze(ticker: str, date: str | None = None, sessions: int = 5) -> dict:
+def analyze(ticker: str, date: str | None = None, sessions: int = 5,
+            direction: str = "long") -> dict:
     import yfinance as yf
 
     bars = yf.Ticker(ticker).history(period=f"{sessions}d", interval="5m")
@@ -252,7 +249,7 @@ def analyze(ticker: str, date: str | None = None, sessions: int = 5) -> dict:
         "generated_at": datetime.now(ET).isoformat(),
     }
     if price:
-        report["verdict"] = confluence(price, profile, prior)
+        report["verdict"] = confluence(price, profile, prior, direction)
     return report
 
 
