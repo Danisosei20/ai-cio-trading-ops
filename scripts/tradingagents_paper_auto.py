@@ -120,8 +120,14 @@ def parse_args(argv=None):
     p.add_argument("--analysts", default="market,news")
     p.add_argument("--max-tool-rounds", type=int, default=10,
                    help="cap tool rounds per analyst (default 10)")
-    p.add_argument("--ticker-timeout", type=int, default=600,
-                   help="per-ticker research timeout in seconds (default 600)")
+    p.add_argument("--ticker-timeout", type=int, default=300,
+                   help="per-ticker research timeout in seconds (default 300)")
+    p.add_argument("--llm-timeout", type=float, default=90.0,
+                   help="per-request LLM timeout in seconds (default 90; the SDK "
+                        "default is 600 and a single stalled call can eat the "
+                        "whole ticker budget)")
+    p.add_argument("--llm-max-retries", type=int, default=2,
+                   help="SDK retries per LLM request (default 2)")
     p.add_argument("--max-notional", type=Decimal, default=Decimal("500"),
                    help="max notional per order (default 500)")
     p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.08"),
@@ -188,6 +194,11 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     config["max_risk_discuss_rounds"] = 1
     if config.get("llm_max_retries") is None:
         config["llm_max_retries"] = 6
+    # Bound each provider call. Without an explicit timeout the OpenAI SDK
+    # waits 600s (read) per request, so one stalled NIM call burns the whole
+    # per-ticker research budget (observed on APP/CPAY/HD/TPR/ZTS 2026-11-05).
+    config["timeout"] = args.llm_timeout
+    config["llm_max_retries"] = args.llm_max_retries
     if config.get("max_tool_rounds", 20) > args.max_tool_rounds:
         config["max_tool_rounds"] = args.max_tool_rounds
     selected = [a.strip() for a in args.analysts.split(",") if a.strip()]
@@ -502,6 +513,11 @@ def main(argv=None) -> int:
         pass
 
     results = []
+    # Per-order notional cap for sizing AND for the risk gate. Defined once
+    # before the loop: referencing it earlier inside the loop made it an
+    # unbound local on the first ticker (MAA 2026-11-05).
+    cap = min(args.max_notional, settings.risk_limits.max_order_value)
+    _ctrl = None
     for ticker in tickers:
         rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": ""}
         if args.day_trade:
@@ -623,8 +639,10 @@ def main(argv=None) -> int:
                             rec["reason"] = f"time machine unavailable (fail-closed): {odds.get('reason', 'unknown')}"
                             set_stage(ticker, "skip", rec["reason"])
                             log_line(f"[{ticker}] TIME MACHINE FAILED - blocking (fail-closed): {odds.get('reason', '')}")
-                        if not rec.get("reason"):
-                            # Central portfolio risk gate (atomic, fail-closed)
+                        if not rec.get("reason") and sig in BUY_SIGNALS:
+                            # Central portfolio risk gate for NEW risk (atomic,
+                            # fail-closed). Exits are never gated here: closing
+                            # a position must always be allowed.
                             try:
                                 from robinhood_tools.portfolio_risk import PortfolioRiskController
                                 _ctrl = PortfolioRiskController(settings, env)
@@ -636,8 +654,6 @@ def main(argv=None) -> int:
                                     rec["reason"] = f"portfolio risk: {_verdict.reason}"
                                     set_stage(ticker, "skip", rec["reason"])
                                     log_line(f"[{ticker}] PORTFOLIO RISK BLOCKED: {_verdict.reason}")
-                                else:
-                                    _ctrl.record_order(ticker, "buy", rec.get("trade_style", "swing"), cap)
                             except Exception as _exc:  # noqa: BLE001
                                 rec["reason"] = f"portfolio risk check failed: {type(_exc).__name__}"
                                 set_stage(ticker, "skip", rec["reason"])
@@ -647,7 +663,6 @@ def main(argv=None) -> int:
                             rec["price"] = str(price)
                             rec["price_source"] = price_source
                             rec["price_as_of"] = price_as_of
-                            cap = min(args.max_notional, settings.risk_limits.max_order_value)
                             if sig in BUY_SIGNALS:
                                 earnings = lookup_earnings_date(ticker)
                                 qty = int((cap // price)) if price > 0 else 0
@@ -683,6 +698,14 @@ def main(argv=None) -> int:
                                                 "order_id": result["order_id"], "status": result["status"],
                                                 "approval_id": result["approval_id"]})
                                     log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
+                                    # Track exposure only after the order actually
+                                    # reached the broker (never for a rejected order).
+                                    if _ctrl is not None:
+                                        try:
+                                            _ctrl.record_order(ticker, "buy",
+                                                               rec.get("trade_style", "swing"), cap)
+                                        except Exception as _rec_exc:  # noqa: BLE001
+                                            log_line(f"[{ticker}] risk record failed: {_rec_exc}")
                                     _post_buy_rationale(
                                         rec, f"*BUY {ticker}* {qty} @ ${limit} "
                                              f"(day trade, flat by 15:45 ET)"
@@ -703,6 +726,13 @@ def main(argv=None) -> int:
                                         env_path=args.env_file)
                                     rec.update({"action": "sell_placed", "qty": str(held),
                                             "order_id": result["order_id"], "status": result["status"]})
+                                    # Release tracked exposure for the closed position.
+                                    try:
+                                        from robinhood_tools.portfolio_risk import PortfolioRiskController as _PRC
+                                        _PRC(settings, env).record_order(ticker, "sell",
+                                                                        rec.get("trade_style", "swing"), 0)
+                                    except Exception as _rel_exc:  # noqa: BLE001
+                                        log_line(f"[{ticker}] risk release failed: {_rel_exc}")
         except PolicyViolation as exc:
             rec["reason"] = f"gate blocked: {exc}"
         except InvalidOperation as exc:

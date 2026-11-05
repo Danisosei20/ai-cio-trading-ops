@@ -5,436 +5,353 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#050a12">
 <title>Trading Desk — Live</title>
+<link rel="icon" href="data:,">
+
 <link rel="stylesheet" href="/office.css">
 <style>
-  :root {
-    --bg: #050a12;
-    --bg-card: #0b1220;
-    --bg-card-hover: #121c31;
-    --border: #1f2a44;
-    --border-focus: #3b82f6;
-    --text: #e2e8f0;
-    --text-muted: #64748b;
-    --accent: #3b82f6;
-    --accent-hover: #60a5fa;
-    --green: #22c55e;
-    --green-dark: #15803d;
-    --red: #ef4444;
-    --red-dark: #b91c1c;
-    --amber: #f59e0b;
-    --purple: #a855f7;
-    --font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  html { font-size: 13px; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: var(--font);
-    min-height: 100vh;
-    overflow-x: hidden;
-  }
-  /* Hide scrollbar for cleaner look */
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: #0b1220; }
-  ::-webkit-scrollbar-thumb { background: #1e2a44; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #334155; }
-
-  header.top {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    display: flex;
-    align-items: center; gap: 16px;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border);
-    background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
-    backdrop-filter: blur(8px);
-  }
-  header.top h1 {
-    font-size: 14px; margin: 0; letter-spacing: .06em; font-weight: 700;
-    display: flex; align-items: center; gap: 8px;
-  }
-  header.top h1 .live-dot {
-    width: 8px; height: 8px; background: var(--green);
-    border-radius: 50%; box-shadow: 0 0 8px var(--green);
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-  header.top a {
-    color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 600;
-  }
-  header.top a:hover { color: var(--accent-hover); text-decoration: underline; }
+  body { margin: 0; background: #050a12; color: #dce8f0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-height: 100vh; }
+  header.top { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid #1b2a3f; background: #071120; }
+  header.top h1 { font-size: 14px; margin: 0; letter-spacing: .04em; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  header.top h1 .live-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 8px #22c55e; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+  header.top a { color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 600; }
+  header.top a:hover { color: #60a5fa; text-decoration: underline; }
   header.top .spacer { flex: 1; }
-  header.top .clock {
-    font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums;
-    font-family: ui-monospace;
-  }
-  header.top .status {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 12px; font-family: ui-monospace;
-  }
-  header.top .status .dot {
-    width: 6px; height: 6px; border-radius: 50%; background: var(--green);
-    box-shadow: 0 0 6px var(--green);
-  }
+  header.top .clock { font-size: 12px; color: #94a3b8; }
+  header.top .status { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  header.top .status .dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; }
 
-  .wrap {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 16px;
-    padding: 16px 24px 32px;
-    max-width: 1600px;
-    margin: 0 auto;
-  }
+  #api-error { display: none; margin: 12px 22px 0; padding: 10px 14px; border: 1px solid #b91c1c; background: rgba(239,68,68,.1); color: #ff9a9a; border-radius: 8px; font-size: 12px; }
+  #api-error.show { display: block; }
 
-  /* ============ Cards ============ */
-  .card {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px;
-    display: flex; flex-direction: column;
-    transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
-  }
-  .card:hover { border-color: var(--border-focus); transform: translateY(-2px); }
-  .card h2 {
-    margin: 0 0 14px; font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.12em; color: var(--text-muted); font-weight: 600;
-    display: flex; justify-content: space-between; align-items: baseline;
-  }
-  .card h2 .refresh {
-    font-size: 10px; font-weight: 400; color: var(--text-muted);
-    opacity: 0.6;
-  }
+  .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; padding: 16px 22px 24px; max-width: 1440px; margin: 0 auto; }
+  .card { background: #0d1626; border: 1px solid #1b2a3f; border-radius: 10px; padding: 14px 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; font-weight: 700; color: #7fa8d8; letter-spacing: .09em; }
+  .big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0; }
+  .pace { font-size: 12px; color: #f59e0b; margin-top: 6px; }
+  .dim { color: #94a3b8; font-size: 12px; margin-top: 6px; }
+  .pos { color: #4fd08a; }
+  .neg { color: #ff7a7a; }
 
-  /* Big number cards */
-  .big-card {
-    display: flex; flex-direction: column;
-  }
-  .big {
-    font-size: 28px; font-weight: 700; letter-spacing: -0.02em;
-    margin: 2px 0 2px;
-  }
-  .big .unit {
-    font-size: 14px; font-weight: 500; color: var(--text-muted); margin-left: 4px;
-  }
-  .sub {
-    font-size: 12px; color: var(--text-muted); margin: 4px 0 0;
-  }
-  .sub small { font-size: 11px; color: var(--text-muted); }
-
-  /* Stat row */
-  .stat-row {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 8px; margin-top: 12px;
-  }
-  .stat-item {
-    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 12px;
-  }
-  .stat-item .label {
-    font-size: 11px; color: var(--text-muted); text-transform: uppercase;
-    letter-spacing: 0.05em; margin-bottom: 3px;
-  }
-  .stat-item .value {
-    font-size: 15px; font-weight: 700; font-family: ui-monospace;
-  }
-
-  /* Tables */
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th {
-    text-align: left; color: var(--text-muted); font-weight: 600;
-    padding: 6px 8px; font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  td {
-    padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
-    vertical-align: middle;
-  }
+  th { text-align: left; color: #94a3b8; font-weight: 500; padding: 5px 6px; border-bottom: 1px solid #1b2a3f; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+  td { padding: 4px 6px; border-bottom: 1px solid #14202f; vertical-align: top; }
   tr:last-child td { border-bottom: none; }
-  tr:hover td { background: rgba(255,255,255,0.03); }
 
-  /* Tags */
-  .tag {
-    display: inline-block; padding: 2px 8px; border-radius: 999px;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
-  }
-  .tag.ok { color: var(--green); border: 1px solid rgba(74,222,128,0.3); background: rgba(74,222,128,0.08); }
-  .tag.block { color: var(--amber); border: 1px solid rgba(245,158,11,0.3); background: rgba(245,158,11,0.08); }
-  .tag.err { color: var(--red); border: 1px solid rgba(239,68,68,0.3); background: rgba(239,68,68,0.08); }
-  .tag.long { color: var(--green); border: 1px solid var(--green); background: rgba(74,222,128,0.1); }
-  .tag.short { color: var(--red); border: 1px solid var(--red); background: rgba(239,68,68,0.1); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 10px; font-weight: 700; border: 1px solid; }
+  .tag.ok { color: #4fd08a; border-color: #2b5f43; background: rgba(34,222,128,.1); }
+  .tag.block { color: #ffce6a; border-color: #d97706; background: rgba(245,158,11,.1); }
+  .tag.err { color: #ff7a7a; border-color: #b91c1c; background: rgba(239,68,68,.1); }
+  .tag.long { color: #4fd08a; border-color: #22c55e; background: rgba(34,197,54,.1); }
+  .tag.short { color: #ef4444; border-color: #ef4444; background: rgba(239,68,68,.1); }
 
-  .reason {
-    color: var(--text-muted); font-size: 10.5px; max-width: 240px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
+  .split { display: flex; gap: 10px; margin-bottom: 10px; }
+  .split .side { flex: 1; border: 1px solid #1b2a3f; border-radius: 8px; padding: 8px 10px; }
+  .split .side .k { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; }
+  .split .side .v { font-size: 16px; font-weight: 700; margin-top: 2px; }
 
-  /* Empty states */
-  .empty {
-    display: flex; flex-direction: column; align-items: center;
-    padding: 40px 20px; color: var(--text-muted);
-  }
-  .empty .icon {
-    font-size: 32px; margin-bottom: 8px; opacity: 0.5;
-  }
+  .metric { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #14202f; font-size: 12.5px; }
+  .metric:last-child { border-bottom: none; }
+  .metric .label { color: #94a3b8; }
+  .metric .value { font-weight: 700; }
 
-  /* Banner alerts */
-  .alert-banner {
-    padding: 10px 14px; border-radius: 8px; margin-bottom: 16px;
-    font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 10px;
-  }
-  .alert-banner.warn {
-    background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.25);
-    color: var(--amber);
-  }
-  .alert-banner.err {
-    background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25);
-    color: var(--red);
-  }
+  .reason { color: #94a3b8; font-size: 10.5px; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { display: flex; flex-direction: column; align-items: center; padding: 34px 20px; color: #94a3b8; font-size: 12px; }
+  .empty .icon { font-size: 28px; margin-bottom: 8px; opacity: .45; }
 
-  /* Refresh badge */
-  .refresh-badge {
-    font-size: 10px; color: var(--text-muted); font-family: ui-monospace;
-    margin-left: 8px; opacity: 0.6;
-  }
-
-  footer {
-    padding: 12px 24px; color: var(--muted); font-size: 11px;
-    border-top: 1px solid var(--border); display: flex;
-    justify-content: space-between; align-items: center;
-  }
+  footer { padding: 12px 22px; color: #94a3b8; font-size: 11px; border-top: 1px solid #1b2a3f; display: flex; gap: 14px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
 <header class="top">
-  <h1>
-    <span class="live-dot"></span>
-    TRADING DESK — LIVE
-  </h1>
-  <a href="/pipeline">pipeline</a>
-  <a href="/">office</a>
-  <div class="spacer"></div>
-  <div class="status">
-    <div class="dot"></div>
-    <span>LIVE</span>
-  </div>
-  <div class="clock" id="clock">–</div>
+<h1><span class="live-dot"></span>TRADING DESK — LIVE</h1>
+<a href="/pipeline">pipeline</a>
+<a href="/">office</a>
+<div class="spacer"></div>
+<div class="status"><div class="dot"></div>LIVE</div>
+<div class="clock" id="clock">–</div>
 </header>
 
+<div id="api-error"></div>
+
 <div class="wrap">
-  <!-- Weekly Objective -->
-  <section class="card big-card">
-    <h2>Weekly Objective<span class="refresh-badge" id="obj-refresh">—</span></h2>
-    <div class="big" id="obj-big">–</div>
-    <div class="pace" id="obj-pace"></div>
-    <div class="dim" id="obj-sub" style="font-size:12px;margin-top:6px"></div>
-    <div id="obj-today" style="font-size:13px;margin-top:6px"></div>
-  </section>
+<section class="card" id="weekly-objective">
+<h2>Weekly Objective</h2>
+<div class="big" id="obj-big">–</div>
+<div class="pace" id="obj-pace"></div>
+<div class="dim" id="obj-sub"></div>
+<div id="obj-today" style="font-size:13px;margin-top:8px"></div>
+</section>
 
-  <!-- Positions by Direction -->
-  <section class="card">
-    <h2>Positions<span class="refresh-badge" id="pos-refresh">—</span></h2>
-    <div id="positions-dir"></div>
-    <div id="positions"></div>
-  </section>
+<section class="card">
+<h2>Positions</h2>
+<div class="split" id="positions-dir"></div>
+<div id="positions"></div>
+</section>
 
-  <!-- Scorecard -->
-  <section class="card">
-    <h2>Scorecard<span class="refresh-badge" id="score-refresh">—</span></h2>
-    <div id="scorecard"></div>
-  </section>
+<section class="card">
+<h2>Today's Decisions</h2>
+<div id="today"></div>
+</section>
 
-  <!-- Today's Decisions -->
-  <section class="card">
-    <h2>Today's Decisions<span class="refresh-badge" id="dec-refresh">—</span></h2>
-    <div id="today"></div>
-  </section>
+<section class="card">
+<h2>Strategy Performance</h2>
+<div id="strategy-perf"></div>
+</section>
 
-  <!-- Strategy Performance -->
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>Strategy Performance<span class="refresh-badge" id="strat-refresh">—</span></h2>
-    <div id="strategy-perf"></div>
-  </section>
+<section class="card">
+<h2>Scorecard</h2>
+<div id="scorecard"></div>
+</section>
 
-  <!-- Shadow Log -->
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>Recent Decisions &amp; Blocks<span class="refresh-badge" id="shadow-refresh">—</span></h2>
-    <div id="shadows"></div>
-  </section>
+<section class="card" style="grid-column: 1 / -1;">
+<h2>Recent Decisions &amp; Blocks</h2>
+<div id="shadows"></div>
+</section>
 </div>
 
 <footer>
-  <div>Paper trading only — research software, not financial advice.</div>
-  <div>Auto-refreshes every 30s &nbsp;|&nbsp; Last updated: <span id="last-updated">–</span></div>
+<span>Paper trading only — research software, not financial advice.</span>
+<span id="last-updated">Last updated: –</span>
+<span>Auto-refresh 30s</span>
 </footer>
 
 <script>
-const fmt$ = (n) => {
-  const abs = Math.abs(n);
-  return (n < 0 ? "-$" : "$") + abs.toLocaleString(undefined, {maximumFractionDigits: 0});
-};
-const pct = (n) => (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
-const sign = (n) => (n >= 0 ? "pos" : "neg");
-const fmtNum = (n) => n.toLocaleString(undefined, {maximumFractionDigits: 2});
+(function () {
+  "use strict";
 
-let lastData = null;
+  var REFRESH_MS = 30000;
 
-async function refresh() {
-  let d;
-  try {
-    const r = await fetch("/api/trading", {cache: "no-store"});
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    d = await r.json();
-  } catch (e) {
-    document.getElementById("alert-banner").innerHTML =
-      '<div class="alert-banner err">⚠ Site unreachable — ' +
-      (e.message || e) + '</div>';
-    document.getElementById("alert-banner").style.display = "flex";
-    return;
+  function byId(id) { return document.getElementById(id); }
+
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
   }
-  document.getElementById("alert-banner").style.display = "none";
-  document.getElementById("clock").textContent = d.generated_at || "";
-  document.getElementById("last-updated").textContent =
-    "Last updated: " + (d.generated_at || "–");
 
-  const now = new Date();
-  document.querySelectorAll("[id$='-refresh']").forEach(el => {
-    el.textContent = now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-  });
+  function num(v) {
+    var n = parseFloat(v);
+    return isFinite(n) ? n : 0;
+  }
 
-  renderObjective(d.objective || {});
-  renderPositions(d.positions || [], d.positions_by_direction || {});
-  renderScorecard(d.scorecard || {});
-  renderDecisions(d.today || [], d.option_entries || []);
-  renderStrategyPerf(d.scorecard || {});
-  renderShadows(d.recent_shadows || []);
+  function money(v) {
+    var n = num(v);
+    return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
 
-  lastData = d;
-}
+  function money2(v) {
+    var n = num(v);
+    return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
 
-function renderObjective(o) {
-  const pnl = o.week_pnl_usd ?? 0;
-  const big = document.getElementById("obj-big");
-  big.innerHTML = `<span class="${sign(pnl)}">${fmt$(pnl)}</span>`;
-  big.innerHTML += ` <span class="dim" style="font-size:15px">of $10,000 this week (${pct(o.week_pct ?? 0)})</span>`;
+  function pct(v, digits) {
+    var n = num(v);
+    return (n >= 0 ? "+" : "") + n.toFixed(digits == null ? 1 : digits) + "%";
+  }
 
-  document.getElementById("obj-pace").textContent =
-    o.sessions_left
-      ? `${o.sessions_left} session(s) left → ${fmt$((10000 - pnl) / o.sessions_left)}/session pace`
+  function cls(v) { return num(v) >= 0 ? "pos" : "neg"; }
+
+  function emptyBox(text) {
+    return "<div class='empty'><div class='icon'>▭</div><div>" + esc(text) + "</div></div>";
+  }
+
+  function showError(msg) {
+    var el = byId("api-error");
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add("show");
+  }
+
+  function clearError() {
+    var el = byId("api-error");
+    if (!el) return;
+    el.classList.remove("show");
+    el.textContent = "";
+  }
+
+  function renderObjective(o) {
+    o = o || {};
+    var target = num(o.target_pnl_usd) || 10000;
+    var week = num(o.week_pnl_usd);
+    var weekPct = o.week_pct != null ? num(o.week_pct) : (target ? (week / target) * 100 : 0);
+
+    byId("obj-big").innerHTML =
+      "<span class='" + cls(week) + "'>" + money2(week) + "</span>" +
+      " <span class='dim' style='font-size:14px'>of " + money(target) + " this week (" + pct(weekPct) + ")</span>";
+
+    var left = o.sessions_left != null ? num(o.sessions_left) : null;
+    byId("obj-pace").textContent = left && left > 0
+      ? left + " session(s) left → " + money((target - week) / left) + "/session pace"
       : "";
 
-  const sub = [];
-  if (o.equity != null) sub.push(`equity ${fmt$(o.equity)}`);
-  if (o.all_time_pnl_usd != null) sub.push(`all-time ${fmt$(o.all_time_pnl_usd)}`);
-  if (o.today_pnl_usd != null) sub.push(`today ${fmt$(o.today_pnl_usd)}`);
-  document.getElementById("obj-sub").textContent = sub.join("  |  ");
-}
+    var sub = [];
+    if (o.equity != null) sub.push("equity " + money2(o.equity));
+    if (o.all_time_pnl_usd != null) sub.push("all-time " + money2(o.all_time_pnl_usd));
+    if (o.week_of) sub.push("week of " + o.week_of);
+    byId("obj-sub").textContent = sub.join("  |  ");
 
-function renderPositions(positions, obj) {
-  const pd = obj || {};
-  const longPnl = (pd.long && pd.long.unrealized_pl != null) ? pd.long.unrealized_pl : 0;
-  const shortPnl = (pd.short && pd.short.unrealized_pl != null) ? pd.short.unrealized_pl : 0;
-  const total = (pd.total_unrealized_pl != null) ? pd.total_unrealized_pl : longPnl + shortPnl;
-
-  const pdEl = document.getElementById("positions-dir");
-  pdEl.innerHTML = `
-    <div class="metric">
-      <span class="label">Long positions</span>
-      <span class="value tag long">${pd && pd.long ? pd.long.count : 0}</span>
-    </div>
-    <div class="metric"><span class="label">Long P/L</span><span class="value ${sign(longPnl)}">${fmt$(longPnl)}</span></div>
-    <div class="metric"><span class="label">Short positions</span><span class="value tag short">${pd && pd.short ? pd.short.count : 0}</span></div>
-    <div class="metric"><span class="label">Short P/L</span><span class="value ${sign(shortPnl)}">${fmt$(shortPnl)}</span></div>
-    <div class="metric"><span class="label">Total unrealized</span><span class="value ${sign(total)}">${fmt$(total)}</span></div>
-  `;
-
-  const posEl = document.getElementById("positions");
-  if (!positions || positions.length === 0) {
-    posEl.innerHTML = `<div class="empty"><div class="icon">▭</div><div style="margin-top:8px">No open positions</div></div>`;
-    return;
+    var today = byId("obj-today");
+    if (o.today_pnl_usd != null) {
+      today.innerHTML = "Today <span class='" + cls(o.today_pnl_usd) + "'>" + money2(o.today_pnl_usd) + "</span>";
+    } else {
+      today.textContent = "";
+    }
   }
-  posEl.innerHTML = `<table><tr><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Now</th><th>P/L</th><th>%</th></tr>` +
-    positions.map(p => {
-      const pl = parseFloat(p.unrealized_pl || 0);
-      const plpc = parseFloat(p.unrealized_plpc || 0) * 100;
-      return `<tr>
-        <td>${p.symbol}</td>
-        <td><span class="tag ${p.direction}">${p.direction}</span></td>
-        <td>${p.qty}</td>
-        <td>${p.avg_entry_price}</td>
-        <td>${p.current_price}</td>
-        <td class="${sign(pl)}">${fmt$(pl)}</td>
-        <td class="${sign(plpc)}">${plpc.toFixed(1)}%</td>
-      </tr>`;
-    }).join("") + "</table>";
-}
 
-function renderScorecard(s) {
-  const el = document.getElementById("scorecard");
-  if (!s || s.graded == null) {
-    el.innerHTML = "<div class='empty'><div class='icon'>▭</div><div style=\"margin-top:8px\">No graded decisions yet</div></div>";
-    return;
+  function renderDirectionSplit(split) {
+    split = split || {};
+    var l = split.long || { count: 0, unrealized_pl: 0 };
+    var s = split.short || { count: 0, unrealized_pl: 0 };
+    byId("positions-dir").innerHTML =
+      "<div class='side'><div class='k'>Long · " + num(l.count) + "</div>" +
+      "<div class='v " + cls(l.unrealized_pl) + "'>" + money2(l.unrealized_pl) + "</div></div>" +
+      "<div class='side'><div class='k'>Short · " + num(s.count) + "</div>" +
+      "<div class='v " + cls(s.unrealized_pl) + "'>" + money2(s.unrealized_pl) + "</div></div>";
   }
-  const winRate = s.graded ? ((s.thesis_right / s.graded) * 100).toFixed(1) : 0;
-  el.innerHTML = `
-    <div class="metric"><span class="label">Graded decisions</span><span class="value">${s.graded}</span></div>
-    <div class="metric"><span class="label">Thesis right</span><span class="value pos">${s.thesis_right ?? 0}</span></div>
-    <div class="metric"><span class="label">Thesis wrong</span><span class="value neg">${s.thesis_wrong ?? 0}</span></div>
-    <div class="metric"><span class="label">Win rate</span><span class="value">${winRate}%</span></div>
-    <div class="metric"><span class="label">Avg excess vs S&P</span><span class="value ${sign(s.avg_excess_pct || 0)}">${(s.avg_excess_pct ?? 0).toFixed(2)}%</span></div>
-    <div class="metric"><span class="label">Shadow rows</span><span class="value">${s.shadow_rows ?? 0}</span></div>
-  `;
-}
 
-function renderDecisions(today, optionEntries) {
-  const t = document.getElementById("today");
-  if (!today || today.length === 0) {
-    t.innerHTML = "<div class='empty'><div class='icon'>▭</div><div style=\"margin-top:8px\">No decisions recorded today</div></div>";
-    return;
+  function renderPositions(positions) {
+    var el = byId("positions");
+    if (!positions || !positions.length) {
+      el.innerHTML = emptyBox("No open positions — desk is in cash");
+      return;
+    }
+    var rows = positions.map(function (p) {
+      var pl = num(p.unrealized_pl);
+      var plpc = num(p.unrealized_plpc) * 100;
+      var dir = (p.direction === "short" || num(p.qty) < 0) ? "short" : "long";
+      return "<tr>" +
+        "<td>" + esc(p.symbol) + "</td>" +
+        "<td><span class='tag " + dir + "'>" + dir + "</span></td>" +
+        "<td>" + esc(p.qty) + "</td>" +
+        "<td>" + esc(p.avg_entry_price) + "</td>" +
+        "<td>" + esc(p.current_price) + "</td>" +
+        "<td class='" + cls(pl) + "'>" + money2(pl) + "</td>" +
+        "<td class='" + cls(plpc) + "'>" + pct(plpc) + "</td>" +
+        "</tr>";
+    }).join("");
+    el.innerHTML =
+      "<table><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Now</th><th>P/L</th><th>%</th></tr>" +
+      rows + "</table>";
   }
-  t.innerHTML = `<table><tr><th>Ticker</th><th>Decision</th><th>Outcome</th></tr>` +
-    today.map(r => {
-      const placed = String(r.action || "").endsWith("_placed");
-      const cls = placed ? "ok" :
-        (String(r.action) === "error" || String(r.reason || "").startsWith("error") ? "err" : "block");
-      return `<tr><td>${r.ticker}</td><td>${r.decision || "-"}</td>` +
-        `<td><span class="tag ${cls}">${r.action}</span><div class="reason">${(r.reason || "").slice(0, 90)}</div></td></tr>`;
-    }).join("") + "</table>" +
-    (optionEntries && optionEntries.length
-      ? `<div class="metric"><span class="label">Options entries today</span><span class="value">${optionEntries.join(" · ")}</span></div>` : "");
-}
 
-function renderStrategyPerf(s) {
-  const el = document.getElementById("strategy-perf");
-  if (!s || s.graded == null) {
-    el.innerHTML = "<div class='empty'><div class='icon'>▭</div><div style=\"margin-top:8px\">No strategy data yet</div></div>";
-    return;
+  function renderToday(records, options) {
+    var el = byId("today");
+    var parts = [];
+    if (records && records.length) {
+      parts.push("<table><tr><th>Ticker</th><th>Decision</th><th>Action</th><th>Reason</th></tr>" +
+        records.map(function (r) {
+          var decision = r.decision || "-";
+          var tag = decision === "skip" || decision === "blocked" ? "block" : (decision === "error" ? "err" : "ok");
+          return "<tr>" +
+            "<td>" + esc(r.ticker || r.symbol) + "</td>" +
+            "<td><span class='tag " + tag + "'>" + esc(decision) + "</span></td>" +
+            "<td>" + esc(r.action || "-") + "</td>" +
+            "<td class='reason' title='" + esc(r.reason) + "'>" + esc(r.reason || "-") + "</td>" +
+            "</tr>";
+        }).join("") + "</table>");
+    } else {
+      parts.push(emptyBox("No decisions recorded today"));
+    }
+    if (options && options.length) {
+      parts.push("<div class='dim' style='margin-top:10px'>Options entries placed</div>" +
+        "<div style='font-size:11.5px;color:#94a3b8;margin-top:4px'>" +
+        options.map(function (line) { return "<div>" + esc(line) + "</div>"; }).join("") + "</div>");
+    }
+    el.innerHTML = parts.join("");
   }
-  const winRate = s.graded ? ((s.thesis_right / s.graded) * 100).toFixed(1) : 0;
-  el.innerHTML = `
-    <div class="metric"><span class="label">Graded decisions</span><span class="value">${s.graded}</span></div>
-    <div class="metric"><span class="label">Thesis right</span><span class="value pos">${s.thesis_right ?? 0}</span></div>
-    <div class="metric"><span class="label">Thesis wrong</span><span class="value neg">${s.thesis_wrong ?? 0}</span></div>
-    <div class="metric"><span class="label">Win rate</span><span class="value">${winRate}%</span></div>
-    <div class="metric"><span class="label">Avg excess vs S&P</span><span class="value ${sign(s.avg_excess_pct || 0)}">${(s.avg_excess_pct ?? 0).toFixed(2)}%</span></div>
-    <div class="metric"><span class="label">Shadow rows</span><span class="value">${s.shadow_rows ?? 0}</span></div>
-  `;
-}
 
-function renderShadows(shadows) {
-  const sh = document.getElementById("shadows");
-  if (!shadows || shadows.length === 0) {
-    sh.innerHTML = "<div class='empty'><div class='icon'>▭</div><div style=\"margin-top:8px\">Nothing recorded yet</div></div>";
-    return;
+  function renderStrategyPerf(sp) {
+    sp = sp || {};
+    var states = sp.states || {};
+    var stateRows = Object.keys(states).map(function (k) {
+      return "<div class='metric'><span class='label'>" + esc(k) + "</span><span class='value'>" + esc(states[k]) + "</span></div>";
+    }).join("");
+    byId("strategy-perf").innerHTML =
+      "<div class='metric'><span class='label'>Total trades</span><span class='value'>" + num(sp.total_trades) + "</span></div>" +
+      "<div class='metric'><span class='label'>Open</span><span class='value'>" + num(sp.open) + "</span></div>" +
+      "<div class='metric'><span class='label'>Closed</span><span class='value'>" + num(sp.closed) + "</span></div>" +
+      "<div class='metric'><span class='label'>Realized P/L</span><span class='value " + cls(sp.total_realized_pnl) + "'>" + money2(sp.total_realized_pnl) + "</span></div>" +
+      stateRows;
   }
-  sh.innerHTML = `<table><tr><th>Date</th><th>Symbol</th><th>Action</th><th>Regime</th><th>Decision</th><th>Reason</th></tr>` +
-    shadows.map(r => `<tr>
-      <td>${r.date}</td><td>${r.symbol}</td>
-      <td>${r.action}</td><td>${r.regime}</td><td>${r.decision || "-"}</td>
-      <td class="reason">${r.reason}</td></tr>`).join("") + "</table>";
-}
 
-refresh();
-setInterval(refresh, 30000);
+  function renderScorecard(s) {
+    var el = byId("scorecard");
+    if (!s || s.graded == null) {
+      el.innerHTML = emptyBox("No graded decisions yet");
+      return;
+    }
+    var graded = num(s.graded);
+    var right = num(s.thesis_right);
+    var wrong = num(s.thesis_wrong);
+    var winRate = graded ? (right / graded) * 100 : 0;
+    var excess = s.avg_excess_pct;
+    el.innerHTML =
+      "<div class='big'>" + graded + "</div><div class='dim' style='margin-top:0'>graded decisions</div>" +
+      "<div class='metric'><span class='label'>Thesis right</span><span class='value pos'>" + right + "</span></div>" +
+      "<div class='metric'><span class='label'>Thesis wrong</span><span class='value neg'>" + wrong + "</span></div>" +
+      "<div class='metric'><span class='label'>Win rate</span><span class='value'>" + winRate.toFixed(1) + "%</span></div>" +
+      "<div class='metric'><span class='label'>Avg excess vs S&amp;P</span><span class='value " + (excess == null ? "" : cls(excess)) + "'>" +
+        (excess == null ? "–" : pct(excess, 2)) + "</span></div>" +
+      "<div class='metric'><span class='label'>Shadow rows</span><span class='value'>" + num(s.shadow_rows) + "</span></div>";
+  }
+
+  function renderShadows(rows) {
+    var el = byId("shadows");
+    if (!rows || !rows.length) {
+      el.innerHTML = emptyBox("Nothing recorded yet");
+      return;
+    }
+    el.innerHTML = "<table><tr><th>Date</th><th>Symbol</th><th>Action</th><th>Regime</th><th>Decision</th><th>Reason</th></tr>" +
+      rows.map(function (r) {
+        return "<tr>" +
+          "<td>" + esc(r.date) + "</td>" +
+          "<td>" + esc(r.symbol) + "</td>" +
+          "<td>" + esc(r.action) + "</td>" +
+          "<td>" + esc(r.regime) + "</td>" +
+          "<td>" + esc(r.decision || "-") + "</td>" +
+          "<td class='reason' title='" + esc(r.reason) + "'>" + esc(r.reason || "-") + "</td>" +
+          "</tr>";
+      }).join("") + "</table>";
+  }
+
+  function safe(name, fn, arg) {
+    try { fn(arg); }
+    catch (exc) {
+      showError(name + " render failed: " + (exc && exc.message ? exc.message : String(exc)));
+    }
+  }
+
+  async function refresh() {
+    var data;
+    try {
+      var res = await fetch("/api/trading", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      data = await res.json();
+    } catch (exc) {
+      showError("API error: " + (exc && exc.message ? exc.message : String(exc)));
+      return;
+    }
+    clearError();
+    safe("objective", renderObjective, data.objective);
+    safe("positions", function () {
+      renderDirectionSplit(data.positions_by_direction);
+      renderPositions(data.positions);
+    });
+    safe("today", function () { renderToday(data.today, data.option_entries); });
+    safe("strategy", renderStrategyPerf, data.strategy_performance);
+    safe("scorecard", renderScorecard, data.scorecard);
+    safe("shadows", renderShadows, data.recent_shadows);
+    safe("clock", function () {
+      var stamp = data.generated_at || new Date().toISOString();
+      byId("clock").textContent = stamp.replace("T", " ").slice(0, 19);
+      byId("last-updated").textContent = "Last updated: " + stamp.replace("T", " ").slice(0, 19);
+    });
+  }
+
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+})();
 </script>
 </body>
 </html>
