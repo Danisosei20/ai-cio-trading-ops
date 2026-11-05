@@ -6,7 +6,7 @@ Paper-only. Never touches Robinhood live or Alpaca live.
 - Session gate enforced by the paper service execution guard
   (10:15-15:45 ET weekdays + Alpaca market clock open). Outside the
   window it researches and exits with a skip reason, no order.
-- Per ticker: TradingAgents (default nvidia/kimi-k3, proven working) ->
+- Per ticker: TradingAgents (default nvidia/nemotron-3.5-lightning-30b-a3b) ->
   Buy/Overweight => buy, Sell/Underweight => sell held position, else hold.
 - Gates per buy: S&P500 member (<24h Wikipedia snapshot), earnings >5d
   away (yfinance, fail-closed), $500 order/symbol cap, buying-power check,
@@ -115,8 +115,11 @@ def parse_args(argv=None):
                    help="how many screened tickers to trade (bounds LLM cost)")
     p.add_argument("--date", default=None, help="analysis date YYYY-MM-DD, default today ET")
     p.add_argument("--provider", default="nvidia")
-    p.add_argument("--quick-model", default="moonshotai/kimi-k3")
-    p.add_argument("--deep-model", default="moonshotai/kimi-k3")
+    # Judgment tier per the desk's model policy. moonshotai/kimi-k3 was the old
+    # default but hit end of life on 2026-10-15 and now returns HTTP 410, so
+    # any run relying on the default failed outright.
+    p.add_argument("--quick-model", default="nvidia/nemotron-3.5-lightning-30b-a3b")
+    p.add_argument("--deep-model", default="nvidia/nemotron-3.5-lightning-30b-a3b")
     p.add_argument("--analysts", default="market,news")
     p.add_argument("--max-tool-rounds", type=int, default=10,
                    help="cap tool rounds per analyst (default 10)")

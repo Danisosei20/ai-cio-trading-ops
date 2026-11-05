@@ -21,7 +21,7 @@ signal (TradingAgents debate / webhook alert / backtest promotion)
 # research only, no orders
 ../TradingAgents/.venv/bin/python scripts/tradingagents_research.py \
   --ticker NVDA --date 2026-10-06 --provider nvidia \
-  --quick-model moonshotai/kimi-k3 --deep-model moonshotai/kimi-k3
+  --quick-model nvidia/nemotron-3.5-lightning-30b-a3b --deep-model nvidia/nemotron-3.5-lightning-30b-a3b
 
 # autonomous paper trader (gated; --dry-run to preview)
 ../TradingAgents/.venv/bin/python scripts/tradingagents_paper_auto.py --tickers NVDA

@@ -71,6 +71,104 @@ class AutoTraderGuardTests(unittest.TestCase):
         self.assertIn('config["llm_max_retries"] = args.llm_max_retries',
                       self.source)
 
+    def test_default_models_are_not_end_of_life(self):
+        """The argparse defaults must not point at a retired NVIDIA NIM model.
+
+        2026-11-05: moonshotai/kimi-k3 (the old default) returned HTTP 410
+        "reached its end of life on 2026-10-15", so every run that relied on
+        the defaults failed before research could start. meta/llama-3.3-70b
+        is retired as well.
+        """
+        eol = ("moonshotai/kimi-k3", "meta/llama-3.3-70b-instruct")
+        for flag in ("--quick-model", "--deep-model"):
+            node = next(
+                (n for n in ast.walk(self.tree)
+                 if isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", "") == "add_argument"
+                 and n.args and isinstance(n.args[0], ast.Constant)
+                 and n.args[0].value == flag),
+                None,
+            )
+            self.assertIsNotNone(node, f"{flag} is not declared")
+            default = next(
+                (kw.value for kw in node.keywords if kw.arg == "default"), None
+            )
+            self.assertIsInstance(default, ast.Constant, f"{flag} has no literal default")
+            self.assertNotIn(default.value, eol,
+                             f"{flag} defaults to an end-of-life model")
+
+    def test_default_provider_is_nvidia(self):
+        """No OpenAI path: the desk runs on NVIDIA NIM."""
+        node = next(
+            (n for n in ast.walk(self.tree)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", "") == "add_argument"
+             and n.args and isinstance(n.args[0], ast.Constant)
+             and n.args[0].value == "--provider"),
+            None,
+        )
+        self.assertIsNotNone(node)
+        default = next(kw.value for kw in node.keywords if kw.arg == "default")
+        self.assertEqual(default.value, "nvidia")
+
+
+class OrderTimeoutGuardTests(unittest.TestCase):
+    """The order timeout must bound wall-clock time, not just the future wait.
+
+    2026-11-05: `_place_order_with_timeout` wrapped the worker in a
+    `ThreadPoolExecutor` context manager. `future.result(timeout=...)` raised on
+    time, but the `with` block's `__exit__` then called `shutdown(wait=True)`
+    and blocked until the worker finished anyway - a 1s timeout still took the
+    full 5s of the hung call. A hung research request would have stalled the
+    whole intraday cycle while reporting a timeout.
+    """
+
+    def test_timeout_returns_without_waiting_for_the_worker(self):
+        import time
+
+        from scripts import daytrade_engine as de
+
+        saved_place, saved_log = de._place_order, de._log
+
+        def _hang(plan):
+            time.sleep(5)
+            return True, "late fill", "late-id"
+
+        try:
+            de._place_order = _hang
+            de._log = lambda msg: None
+
+            started = time.monotonic()
+            ok, reason, order_id = de._place_order_with_timeout(
+                {"ticker": "GUARDT"}, timeout_sec=1)
+            elapsed = time.monotonic() - started
+        finally:
+            de._place_order, de._log = saved_place, saved_log
+
+        self.assertFalse(ok, "a timed-out placement must not be reported as filled")
+        self.assertIsNone(order_id)
+        self.assertIn("timeout", reason)
+        self.assertIn("unconfirmed", reason,
+                      "the caller must know the order may still reach the broker")
+        self.assertLess(elapsed, 2.5,
+                        f"timeout did not bound wall clock: {elapsed:.1f}s for a 1s bound")
+
+    def test_completed_worker_result_is_returned(self):
+        from scripts import daytrade_engine as de
+
+        saved_place, saved_log = de._place_order, de._log
+        try:
+            de._place_order = lambda plan: (True, "accepted", "order-42")
+            de._log = lambda msg: None
+            ok, reason, order_id = de._place_order_with_timeout(
+                {"ticker": "GUARDO"}, timeout_sec=5)
+        finally:
+            de._place_order, de._log = saved_place, saved_log
+
+        self.assertTrue(ok)
+        self.assertEqual(order_id, "order-42")
+        self.assertEqual(reason, "accepted")
+
 
 if __name__ == "__main__":
     unittest.main()

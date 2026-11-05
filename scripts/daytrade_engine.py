@@ -374,19 +374,43 @@ def _place_order(plan: dict) -> tuple[bool, str, str | None]:
 
 
 def _place_order_with_timeout(plan: dict, timeout_sec: int = 30) -> tuple[bool, str, str | None]:
-    """Place order with timeout to prevent hanging on slow LLM research.
+    """Place an order with a hard wall-clock bound.
 
-    The LLM research call inside place_signal_order can hang indefinitely
-    on slow NIM endpoints. This wrapper ensures we never block the pipeline
-    for more than timeout_sec seconds.
+    The LLM research call inside place_signal_order can hang indefinitely on
+    slow NIM endpoints, so the caller must never block longer than timeout_sec.
+
+    A ThreadPoolExecutor context manager cannot provide that bound: its
+    __exit__ calls shutdown(wait=True), which blocks until the worker finishes
+    even after future.result(timeout=...) has already raised. The worker
+    therefore runs on a daemon thread and the caller returns the moment
+    join(timeout_sec) expires.
+
+    A timed-out worker is NOT cancelled - it may still reach the broker after
+    we return. That order is unconfirmed, so it is logged as needing
+    reconciliation rather than being silently assumed absent.
     """
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_place_order, plan)
+    import threading
+
+    box: dict = {}
+
+    def _run() -> None:
         try:
-            return future.result(timeout=timeout_sec)
-        except concurrent.futures.TimeoutError:
-            return False, f"research timeout after {timeout_sec}s", None
+            box["result"] = _place_order(plan)
+        except BaseException as exc:  # noqa: BLE001 - surfaced to caller
+            box["error"] = f"{type(exc).__name__}: {exc}"
+
+    worker = threading.Thread(target=_run, name="place-order", daemon=True)
+    worker.start()
+    worker.join(timeout_sec)
+
+    if worker.is_alive():
+        ticker = plan.get("ticker", "?")
+        _log(f"ORDER TIMEOUT {ticker} after {timeout_sec}s - "
+             f"unconfirmed, reconcile against broker before next entry")
+        return False, f"research timeout after {timeout_sec}s (order unconfirmed)", None
+    if "error" in box:
+        return False, f"order error: {box['error']}", None
+    return box.get("result", (False, "order error: no result", None))
 
 
 def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:

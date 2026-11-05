@@ -11,7 +11,7 @@ async function tick(){
    row('Kill switch',!h.killed,h.killed?'ENGAGED — no new trades':'off')+
    row('Market clock',true,h.market_open?'open':'closed')+
    row('Trading mode',true,h.mode+(h.live_enabled?' — LIVE ENABLED':' — live off'))+
-   row('LLM research',true,'on demand (kimi-k3 via NVIDIA NIM)')+
+   row('LLM research',true,'on demand (nemotron via NVIDIA NIM)')+
    row('Scheduler',true,'trader 10:20 ET weekdays · guard every 15 min');
  }catch(e){showError('health',e);}
 }
