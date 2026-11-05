@@ -14,11 +14,12 @@ Checks:
   5. TradingAgents venv python exists and imports tradingagents
   6. Alpaca paper account readable (read-only network check)
   7. Office viewer answering on 127.0.0.1:8766 (WARN - cosmetic only)
-  --full additionally runs the unit test suite (slow).
+  --full additionally runs the unit test suite and the offline execution
+  certification harness (slow).
 
 Usage:
   python scripts/preflight.py          # full checks
-  python scripts/preflight.py --full   # + unit tests
+  python scripts/preflight.py --full   # + unit tests + execution certification
 """
 from __future__ import annotations
 
@@ -191,6 +192,32 @@ def run_tests() -> None:
         record("FAIL", "unit tests", tail[0] if tail else "failures")
 
 
+def run_certification() -> None:
+    """Prove the execution paths behave, not just that they import.
+
+    Unit tests assert units in isolation; this asserts the end-to-end path a
+    live signal takes - entry gating, the odds fail-closed rule, direction-aware
+    zone blocks, options exit policy, the central risk controller, and the
+    order timeout bound. It runs with --no-broker here because preflight
+    already checks broker reachability read-only, and the offline harness is
+    hermetic (temp risk ledger, stubbed placement - it cannot send an order).
+    """
+    proc = subprocess.run(
+        [sys.executable, "scripts/paper_certification.py", "--no-broker"],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=600)
+    summary = next(
+        (ln.strip() for ln in (proc.stdout or "").splitlines()
+         if " PASS," in ln or ln.startswith("FAIL:")),
+        "",
+    )
+    if proc.returncode == 0:
+        record("PASS", "execution cert", summary or "all checks passed")
+    else:
+        fails = [ln for ln in (proc.stdout or "").splitlines() if ln.startswith("[FAIL]")]
+        first = fails[0][7:].strip() if fails else (summary or "certification failed")
+        record("FAIL", "execution cert", f"{len(fails)} failing: {first[:110]}")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Desk preflight readiness checks.")
     p.add_argument("--full", action="store_true", help="also run the unit test suite")
@@ -206,6 +233,7 @@ def main(argv=None) -> int:
     check_office()
     if args.full:
         run_tests()
+        run_certification()
 
     fails = 0
     for status, name, detail in results:
