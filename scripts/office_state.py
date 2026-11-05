@@ -42,7 +42,7 @@ def snapshot(root):
             if pid > 0:
                 os.kill(pid, 0)
                 alive = True
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, SystemError):
             pass
         live = alive and time.time() - data.get("updated", 0) < 15 and not data.get("finished")
         tasks = {name: data["tasks"].get(name, "idle") for name in NAMES}

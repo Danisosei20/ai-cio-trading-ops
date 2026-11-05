@@ -166,21 +166,12 @@ def _score_setup(ticker: str, direction: str, entry: float, stop: float,
     }
 
 
-def plan_qty(entry: float, stop: float, equity: Decimal) -> Decimal:
-    """Position size: 0.25% of equity / risk distance."""
-    risk_amount = equity * MAX_RISK_PCT_PER_TRADE
-    risk_distance = abs(entry - stop)
-    if risk_distance <= 0:
-        return Decimal("0")
-    shares = risk_amount / Decimal(str(risk_distance))
-    return shares.quantize(Decimal("0.01"))
-
-
-def _calc_position_size(equity: Decimal, entry: float, stop: float,
-                        direction: str) -> Decimal:
+def plan_qty(entry: float, stop: float, equity: Decimal,
+             direction: str = "long") -> Decimal:
     """Position size: 0.25% of equity / risk distance.
 
-    Accepts (equity, entry, stop, direction) signature for backward compat.
+    Accepts (entry, stop, equity, direction) signature.
+    Direction: "long" needs stop < entry; "short" needs stop > entry.
     """
     risk_amount = equity * MAX_RISK_PCT_PER_TRADE
     risk_distance = abs(entry - stop)
@@ -194,6 +185,15 @@ def _calc_position_size(equity: Decimal, entry: float, stop: float,
         return Decimal("0")
     shares = risk_amount / Decimal(str(risk_distance))
     return shares.quantize(Decimal("0.01"))
+
+
+def _calc_position_size(equity: Decimal, entry: float, stop: float,
+                        direction: str) -> Decimal:
+    """Position size: 0.25% of equity / risk distance.
+
+    Accepts (equity, entry, stop, direction) signature for backward compat.
+    """
+    return plan_qty(entry, stop, equity, direction)
 
 
 def _calc_reward_to_risk(entry: float, stop: float, target: float,
@@ -254,7 +254,7 @@ def _validate_setup(rec: dict, equity: Decimal,
     if risk_distance <= 0:
         return False, "no risk distance", {}
 
-    qty = plan_qty(entry, stop, equity)
+    qty = plan_qty(entry, stop, equity, direction)
     if qty <= 0:
         return False, "position size too small", {}
 
