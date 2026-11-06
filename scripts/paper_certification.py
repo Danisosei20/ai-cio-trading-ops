@@ -14,15 +14,23 @@ Scenario groups map to the owner's certification checklist:
 
   1. entry   - bullish long, bearish short, bearish-on-existing-long exit
   2. gates   - odds fail-closed, odds-against, direction-aware zone gate,
-               missing quote / no risk distance
+               missing quote / no risk distance, a zero-priced short names
+               its quote cause, RISK_OFF offers puts / UNKNOWN fails closed
   3. exits   - options guard STOP / TARGET / TRAIL / EXPIRE / STALE,
                day-trade flatten at 15:45
-  4. risk    - kill switch, duplicate, exposure cap, position cap,
-               daily drawdown, stale data, exposure release on sell
+  4. risk    - kill switch, duplicate, per-book exposure cap (long and short
+               counted separately), position cap, daily drawdown, stale
+               data, exposure release on sell
   5. safety  - order timeout returns a block (never hangs), quote error is
                mapped to a clean block, broker is paper-only
   6. truth   - broker reconciliation (orphan exposure) and dashboard P/L
                versus broker P/L
+
+Every check that can reach the risk ledger runs inside `isolated_risk()` --
+and that is every *short* scenario, because a short's sizing reads the short
+book's remaining budget. A short check left outside it reads the real ledger:
+it passes only while the desk happens to be flat, and false-FAILs the moment
+the short book is in use.
 
 Usage:
   python scripts/paper_certification.py            # full run
@@ -35,11 +43,12 @@ Paper only. Never places an order.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 import tempfile
 import types
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -203,6 +212,88 @@ def fake_order_path(raise_on_place: Exception | None = None):
                 sys.modules[name] = original
 
 
+@contextmanager
+def patched_attrs(module, **values):
+    """Temporarily replace attributes on a live module; restored on exit."""
+    saved = {name: getattr(module, name, None) for name in values}
+    for name, value in values.items():
+        setattr(module, name, value)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(module, name, value)
+
+
+@contextmanager
+def fake_zone_analysis():
+    """Stub the watch's zone confluence gate so no symbol reaches yfinance.
+
+    `main()` calls `zone_analysis.analyze(symbol)` per surviving candidate and
+    that function fetches bars, which the offline harness must not do. It is
+    fail-open by construction (the caller wraps it in `except Exception:
+    pass`), so a neutral verdict keeps the run hermetic without changing
+    which candidates are *offered* -- the regime routing under test happens
+    before this gate.
+    """
+    fake = types.ModuleType("scripts.zone_analysis")
+    fake.analyze = lambda symbol, *a, **k: {"verdict": {"verdict": "neutral"}}
+    saved = sys.modules.get("scripts.zone_analysis")
+    sys.modules["scripts.zone_analysis"] = fake
+    try:
+        yield
+    finally:
+        if saved is None:
+            sys.modules.pop("scripts.zone_analysis", None)
+        else:
+            sys.modules["scripts.zone_analysis"] = saved
+
+
+def _watch_entries(regime: str, *, weak: list[dict], ranked: list[dict],
+                   held: set[str]) -> str:
+    """Drive the 15:10 watch's entry selection offline; return its stdout.
+
+    `main()` is called rather than the pure helpers because the behaviour
+    worth certifying is the wiring: the regime has to choose the feed, pin
+    the side, and keep the held / RSI gates on the way. Every network edge
+    is closed on the way in -- `run` (the subprocess that would reach
+    options_pilot) returns the pilot's dry-run payload and nothing else,
+    `held_underliers` never touches the broker, `_regime` never fetches SPY,
+    and the zone gate is stubbed above.
+    """
+    import scripts.options_watch_trade as owt
+
+    def _dry_run_pilot(cmd):
+        # The payload options_pilot.py prints in --dry-run. It is data, not a
+        # broker call: this harness never places an order.
+        return 0, json.dumps({"ticker": "CERTPUT", "action": "dry_run_buy"}), ""
+
+    out = io.StringIO()
+    with tempfile.TemporaryDirectory(prefix="paper-cert-watch-") as d:
+        weak_path = Path(d) / "weak.json"
+        weak_path.write_text(json.dumps({"date": "2026-11-05", "weak": weak}),
+                             encoding="utf-8")
+        screen_path = Path(d) / "latest.json"
+        screen_path.write_text(json.dumps({"date": "2026-11-05",
+                                           "ranked": ranked}),
+                               encoding="utf-8")
+        argv = ["--no-exits", "--no-notify",
+                "--screen", str(screen_path), "--weak-screen", str(weak_path)]
+        with fake_zone_analysis(), \
+                patched_attrs(owt, run=_dry_run_pilot,
+                              held_underliers=lambda env_file: held,
+                              _regime=lambda: regime), \
+                redirect_stdout(out):
+            owt.main(argv)
+    return out.getvalue()
+
+
+def _watch_entry_line(stdout: str) -> str:
+    """The watch's `[entry] ... candidates=[...]` line, for exact assertions."""
+    return next((ln for ln in stdout.splitlines()
+                 if ln.startswith("[entry]")), "")
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Scenario groups
 # ────────────────────────────────────────────────────────────────────────────
@@ -251,27 +342,40 @@ def group_entries(rec: Recorder) -> None:
         plan=plan,
     )
 
-    ok, reason, plan = _validate_setup(_short_rec(), EQUITY)
-    rec.check(
-        "entry", "bearish short entry approved",
-        ok and plan.get("direction") == "short"
-        and plan["stop"] > plan["entry"] > plan["target"]
-        and plan["qty"] > 0,
-        f"{reason} | {plan.get('direction')} entry={plan.get('entry')} "
-        f"stop={plan.get('stop')} target={plan.get('target')} qty={plan.get('qty')}",
-        plan=plan,
-    )
+    # A long needs no budget, so it cannot reach the ledger. A short does:
+    # _validate_setup builds a PortfolioRiskController() to size the entry
+    # against the short book's remaining budget. Left outside isolated_risk()
+    # that controller reads the *real* ledger, so this check passes only while
+    # the desk is flat -- under live short exposure it is rejected for
+    # "short notional budget exhausted" and the certification false-FAILs
+    # exactly when the short book is doing its job.
+    with isolated_risk():
+        ok, reason, plan = _validate_setup(_short_rec(), EQUITY)
+        rec.check(
+            "entry", "bearish short entry approved",
+            ok and plan.get("direction") == "short"
+            and plan["stop"] > plan["entry"] > plan["target"]
+            and plan["qty"] > 0,
+            f"{reason} | {plan.get('direction')} entry={plan.get('entry')} "
+            f"stop={plan.get('stop')} target={plan.get('target')} qty={plan.get('qty')}",
+            plan=plan,
+        )
 
-    ok, reason, plan = _validate_setup(
-        _short_rec(), EQUITY, open_positions={"CERTS": {"qty": 10, "direction": "long"}}
-    )
-    rec.check(
-        "entry", "bearish signal on existing long routes to sell-to-close",
-        ok and plan.get("direction") == "sell" and plan.get("qty") == 10
-        and plan.get("stop") is None,
-        f"{reason} | direction={plan.get('direction')} qty={plan.get('qty')}",
-        plan=plan,
-    )
+    # sell-to-close returns before the budget read, but it is a _short_rec
+    # scenario: keep it inside the same isolation so a reordering inside
+    # _validate_setup cannot silently re-open the hole above.
+    with isolated_risk():
+        ok, reason, plan = _validate_setup(
+            _short_rec(), EQUITY,
+            open_positions={"CERTS": {"qty": 10, "direction": "long"}}
+        )
+        rec.check(
+            "entry", "bearish signal on existing long routes to sell-to-close",
+            ok and plan.get("direction") == "sell" and plan.get("qty") == 10
+            and plan.get("stop") is None,
+            f"{reason} | direction={plan.get('direction')} qty={plan.get('qty')}",
+            plan=plan,
+        )
 
 
 def group_gates(rec: Recorder) -> None:
@@ -309,17 +413,25 @@ def group_gates(rec: Recorder) -> None:
     rec.check("gates", "short_blocked does not block a long (direction-aware)",
               ok, reason)
 
-    ok, reason, _ = _validate_setup(
-        _short_rec(zone_verdict="short_blocked"), EQUITY
-    )
-    rec.check("gates", "short_blocked blocks a short",
-              not ok and "zone blocked" in reason, reason)
+    # The two short scenarios below build a PortfolioRiskController() to read
+    # the short book's budget, so they touch the ledger and must be isolated:
+    # under live short exposure an un-isolated check reports "short notional
+    # budget exhausted" -- a budget reason -- instead of the gate reason it
+    # exists to prove, and the certification false-FAILs while the desk is
+    # simply short.
+    with isolated_risk():
+        ok, reason, _ = _validate_setup(
+            _short_rec(zone_verdict="short_blocked"), EQUITY
+        )
+        rec.check("gates", "short_blocked blocks a short",
+                  not ok and "zone blocked" in reason, reason)
 
-    ok, reason, _ = _validate_setup(
-        _short_rec(zone_verdict="long_blocked"), EQUITY
-    )
-    rec.check("gates", "long_blocked does not block a short (direction-aware)",
-              ok, reason)
+    with isolated_risk():
+        ok, reason, _ = _validate_setup(
+            _short_rec(zone_verdict="long_blocked"), EQUITY
+        )
+        rec.check("gates", "long_blocked does not block a short (direction-aware)",
+                  ok, reason)
 
     ok, reason, _ = _validate_setup(
         _long_rec(price=0.0, or_low=0.0, or_high=0.0, vwap=0.0), EQUITY
@@ -327,9 +439,92 @@ def group_gates(rec: Recorder) -> None:
     rec.check("gates", "missing/zero quote is blocked (no risk distance)",
               not ok and "risk distance" in reason, reason)
 
+    # Task 4's cause distinction, beside the zero-quote check: a short whose
+    # entry is zero has *no quote*, which triages to the data feed, not to the
+    # ledger. Both fail closed, but "budget exhausted" sends an operator to
+    # chase exposure for a bad price.
+    with isolated_risk():
+        ok, reason, _ = _validate_setup(
+            _short_rec(price=0.0, or_high=1.0), EQUITY
+        )
+        rec.check("gates", "a zero-priced short reports a quote cause, not a budget cause",
+                  not ok and "short entry price invalid" in reason
+                  and "budget" not in reason, reason)
+
     ok, reason, _ = _validate_setup(_long_rec(setup="no_such_setup"), EQUITY)
     rec.check("gates", "unknown setup is rejected",
               not ok and "not a tradeable setup" in reason, reason)
+
+    # ── Task 5: the 15:10 watch is put-aware under RISK_OFF ──────────────
+    # Driving main() rather than the pure helpers, because what matters is the
+    # wiring: the regime has to pick the weak feed, pin the side, and still run
+    # the held filter and the RSI cap on the way through.
+    WEAK_TAIL = [{"symbol": "WEAK1", "mom20": -0.30, "rsi": 40.0}]
+    RANKED = [{"symbol": "STRONG1", "mom20": 0.20, "rsi": 50.0}]
+
+    out = _watch_entries("RISK_OFF", weak=WEAK_TAIL, ranked=RANKED, held=set())
+    line = _watch_entry_line(out)
+    rec.check("gates", "RISK_OFF offers a put from the weak screen",
+              "regime=RISK_OFF" in line and "feed=weak" in line
+              and "candidates=[('WEAK1', 'put')]" in line
+              and "would place WEAK1 put (dry-run)" in out,
+              line or "no [entry] line")
+
+    out = _watch_entries(
+        "RISK_OFF",
+        weak=[{"symbol": "WEAK1", "mom20": -0.30, "rsi": 40.0},
+              {"symbol": "WEAK2", "mom20": -0.20, "rsi": 90.0},
+              {"symbol": "WEAK3", "mom20": -0.10, "rsi": 45.0}],
+        ranked=RANKED, held={"WEAK1"})
+    line = _watch_entry_line(out)
+    # WEAK1 is held (no doubling a name) and WEAK2 is over the RSI cap; only
+    # the clean survivor is offered. The held set is echoed in the same line,
+    # so the filter demonstrably had something to drop.
+    rec.check("gates", "RISK_OFF still applies the held filter and the RSI cap",
+              "candidates=[('WEAK3', 'put')]" in line
+              and "held=['WEAK1']" in line,
+              line or "no [entry] line")
+
+    # Missing evidence is not permission: UNKNOWN must not manufacture put
+    # candidates. It falls back to the ranked feed, which is strength, so the
+    # weak tail's WEAK1 is never offered.
+    out = _watch_entries("UNKNOWN", weak=WEAK_TAIL, ranked=RANKED, held=set())
+    line = _watch_entry_line(out)
+    rec.check("gates", "UNKNOWN regime fails closed (no put candidate; ranked feed used)",
+              "regime=UNKNOWN" in line and "feed=ranked" in line
+              and "candidates=[('STRONG1', 'call')]" in line
+              and "WEAK1" not in line,
+              line or "no [entry] line")
+
+    out = _watch_entries(
+        "RISK_ON",
+        weak=WEAK_TAIL,
+        ranked=[{"symbol": "UP1", "mom20": 0.20, "rsi": 40.0},
+                {"symbol": "DN1", "mom20": -0.20, "rsi": 40.0}],
+        held=set())
+    line = _watch_entry_line(out)
+    rec.check("gates", "RISK_ON leaves the per-row direction rule untouched",
+              "regime=RISK_ON" in line and "feed=ranked" in line
+              and "candidates=[('UP1', 'call'), ('DN1', 'put')]" in line,
+              line or "no [entry] line")
+
+    # A provider that cannot be imported must read UNKNOWN, never a silent
+    # RISK_ON default: that is how a down tape keeps buying calls.
+    import scripts.options_watch_trade as owt
+
+    saved_yf = sys.modules.get("yfinance")
+    sys.modules["yfinance"] = None  # makes `import yfinance` raise ImportError
+    try:
+        closes = owt._spy_closes()
+        regime = owt._regime()
+    finally:
+        if saved_yf is None:
+            sys.modules.pop("yfinance", None)
+        else:
+            sys.modules["yfinance"] = saved_yf
+    rec.check("gates", "a missing quote provider fails closed (never RISK_ON)",
+              closes == [] and regime == "UNKNOWN",
+              f"_spy_closes()={closes} _regime()={regime}")
 
 
 def group_exits(rec: Recorder) -> None:
@@ -426,6 +621,75 @@ def group_risk(rec: Recorder) -> None:
         v = ctrl.check("CERTBIG", "buy", Decimal("6000"), "intraday")
         rec.check("risk", "notional above the $5,000 exposure cap is blocked",
                   not v.approved and "exposure" in v.reason, v.reason)
+
+    # Task 4 sizes a short against the short book's remaining budget, so the
+    # per-book cap is the gate a short actually dies at. The first three prove
+    # the cap is real and charged to the long book; the rest prove the two
+    # books are separate ledgers rather than one shared $5,000.
+    with isolated_risk() as (pr, _tmp):
+        ctrl = pr.PortfolioRiskController()
+        v = ctrl.check("CERTL5K", "buy", Decimal("5000"), "intraday")
+        rec.check("risk", "clean $5,000 long is approved", v.approved, v.reason,
+                  checks=v.checks)
+
+    with isolated_risk() as (pr, _tmp):
+        ctrl = pr.PortfolioRiskController()
+        v = ctrl.check("CERTL5K", "buy", Decimal("5001"), "intraday")
+        rec.check("risk", "$5,001 long is blocked (per-book cap reached)",
+                  not v.approved and "exposure" in v.reason, v.reason,
+                  checks=v.checks)
+
+    with isolated_risk() as (pr, _tmp):
+        ctrl = pr.PortfolioRiskController()
+        ctrl.record_order("CERTHELD", "buy", "intraday", Decimal("5000"))
+        v = ctrl.check("CERTL5K", "sell", Decimal("5000"), "intraday", short=True)
+        # One $5,000 long fills the long book without touching the 5-position
+        # limit, so nothing but a shared cap could reject this short.
+        rec.check("risk", "a $5,000 short is approved while a $5,000 long is "
+                  "already open (books are independent)",
+                  v.approved, v.reason, checks=v.checks)
+
+    with isolated_risk() as (pr, _tmp):
+        ctrl = pr.PortfolioRiskController()
+        ctrl.record_order("CERTHELD", "buy", "intraday", Decimal("5000"))
+        ctrl.record_order("CERTSHORT", "sell", "intraday", Decimal("5000"),
+                          short=True)
+        v = ctrl.check("CERTL5K", "sell", Decimal("5001"), "intraday", short=True)
+        rec.check("risk", "$5,001 short is blocked by the short cap while the "
+                  "long book is full",
+                  not v.approved and "short exposure" in v.reason, v.reason,
+                  checks=v.checks)
+
+    with isolated_risk() as (pr, _tmp):
+        ctrl = pr.PortfolioRiskController()
+        ctrl.record_order("CERTBOOK", "sell", "intraday", Decimal("2500"),
+                          short=True)
+        book = ctrl.state.book
+        # A short `sell` that lands in the long book would release exposure it
+        # never held and leave the short book reading zero while short.
+        rec.check("risk", "a short entry lands in book['short'] and leaves "
+                  "book['long'] empty",
+                  "CERTBOOK" in book["short"] and not book["long"],
+                  f"long={sorted(book['long'])} short={sorted(book['short'])}",
+                  long=sorted(book["long"]), short=sorted(book["short"]))
+
+    with isolated_risk() as (pr, tmp):
+        # A ledger written before direction was tracked has no `book` key and
+        # its rows carry no `direction`; it must still load and still count as
+        # long exposure, or an upgrade mid-session silently re-opens risk.
+        (tmp / "state.json").write_text(json.dumps({
+            "open_positions": {
+                "CERTLEG": {"strategy": "intraday", "notional": "1000",
+                            "entered_at": "x"}
+            }}), encoding="utf-8")
+        ctrl = pr.PortfolioRiskController()
+        v = ctrl.check("CERTL5K", "sell", Decimal("4000"), "intraday", short=True)
+        rec.check("risk", "a legacy state file with no 'book' key loads and "
+                  "still tracks the long",
+                  v.approved and "CERTLEG" in ctrl.state.book["long"]
+                  and not ctrl.state.book["short"],
+                  f"long={sorted(ctrl.state.book['long'])} "
+                  f"short={sorted(ctrl.state.book['short'])}")
 
     with isolated_risk() as (pr, _tmp):
         ctrl = pr.PortfolioRiskController()

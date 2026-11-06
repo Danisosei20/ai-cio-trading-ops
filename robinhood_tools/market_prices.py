@@ -30,16 +30,17 @@ class Quote:
 
 
 def market_regime(spy_closes: list[float]) -> str:
-    """RISK_ON above the 50-day mean, RISK_OFF below it, CHOP when mixed.
+    """RISK_ON above the 50-day mean, RISK_OFF below it, CHOP exactly on it.
 
     Pure function (tested): no network, no yfinance import. UNKNOWN on short
-    history — which includes an empty `_spy_closes()` after a failed fetch —
+    history -- which includes an empty `_spy_closes()` after a failed fetch --
     and callers fail closed on UNKNOWN rather than assuming RISK_ON.
 
-    Two other copies of this rule exist and are deliberately left alone:
-    `scripts/daytrade_backtest.py` (backtest-only) and
-    `scripts/overnight_pilot.py` (broken, tracked separately). Point them here
-    rather than adding a third.
+    Three other copies of this rule exist and are deliberately left alone:
+    `scripts/daytrade_backtest.py:84` (backtest-only),
+    `scripts/overnight_pilot.py:501` (broken, tracked separately), and the
+    live inline copy at `scripts/tradingagents_paper_auto.py:493-498`. Point
+    them here rather than adding a fourth.
     """
     if len(spy_closes) < 51:
         return "UNKNOWN"
