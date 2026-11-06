@@ -44,6 +44,11 @@ def parse_args(argv=None):
     p.add_argument("--override-window", default="",
                    help="extend session as HH:MM-HH:MM for an owner-directed order "
                         "(reason = explicit CLI invocation; logged in audit)")
+    p.add_argument("--min-volume", type=int, default=0,
+                   help="owner-directed liquidity override: allow chains whose "
+                        "volume is below the desk default (100). 0 = keep the "
+                        "default. The spread, DTE, delta and OI gates are NOT "
+                        "relaxed - only the volume floor.")
     p.add_argument("--close", default="", help="OCC symbol to sell-to-close")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
@@ -94,9 +99,23 @@ def main(argv=None) -> int:
                              as_of=datetime.now(timezone.utc).isoformat(),
                              source_url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
 
+    filters = None
+    if args.min_volume > 0:
+        from robinhood_tools.options import OptionSelectionFilters
+
+        # Deliberate, scoped, and auditable: the spread/DTE/delta/OI gates stay
+        # exactly as they are. Only the volume floor moves, and only for this
+        # explicit invocation - the desk default of 100 is unchanged for every
+        # other path. The cost is real: a thin chain means the exit sells into
+        # whatever bid exists.
+        filters = OptionSelectionFilters(min_option_volume=args.min_volume)
+        print(f"[filters] owner-directed min_option_volume={args.min_volume} "
+              f"(desk default 100); spread/DTE/delta/OI gates unchanged")
+
     quote, rejected = pick_long_option(
         data=data, underlying=ticker, spot=spot,
-        direction="bullish" if args.direction == "call" else "bearish", today=today)
+        direction="bullish" if args.direction == "call" else "bearish",
+        today=today, filters=filters)
     auto_qty = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
     contracts = args.qty if args.qty > 0 else auto_qty
     if args.qty > 0 and quote.ask * contracts * 100 > args.premium_cap:

@@ -535,6 +535,81 @@ class OptionsWatchTradeTest(unittest.TestCase):
             [])
 
 
+class MinVolumeOverrideTest(unittest.TestCase):
+    """The owner-directed liquidity override, pinned.
+
+    2026-11-06: the desk's own gates refused to re-buy ACN because its option
+    chain is thin (most strikes 1-47 contracts against a 100 minimum). Rather
+    than lowering the desk default for every path, the pilot takes a scoped
+    --min-volume that relaxes ONLY the volume floor - the spread, DTE, delta
+    and OI gates are untouched, so a wide spread still blocks.
+    """
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, ".")
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "options_pilot", Path("scripts/options_pilot.py"))
+        self.pilot = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.pilot)
+
+    def test_default_keeps_the_desk_volume_floor(self):
+        argv = self.pilot.parse_args(["--ticker", "ACN"])
+        self.assertEqual(argv.min_volume, 0)
+
+    def test_override_relaxes_only_volume(self):
+        from robinhood_tools.options import OptionSelectionFilters
+
+        argv = self.pilot.parse_args(
+            ["--ticker", "ACN", "--min-volume", "5"])
+        self.assertEqual(argv.min_volume, 5)
+        filters = OptionSelectionFilters(min_option_volume=argv.min_volume)
+        # Volume moved...
+        self.assertEqual(filters.min_option_volume, 5)
+        # ...and the gates that protect against a bad fill did not.
+        self.assertEqual(filters.max_spread_pct, Decimal("0.10"))
+        self.assertEqual(filters.min_delta, Decimal("0.30"))
+        self.assertEqual(filters.max_delta, Decimal("0.60"))
+        self.assertEqual(filters.min_dte, 7)
+        self.assertEqual(filters.max_dte, 60)
+
+    def test_spread_gate_still_blocks_under_the_override(self):
+        """A thin chain with a wide spread must stay un-buyable."""
+        from robinhood_tools.options import OptionContract, OptionQuote, select_long_option
+        from datetime import date
+
+        def q(strike, ask, bid, delta, vol):
+            sym = f"ACN261218C{int(round(float(strike) * 1000)):08d}"
+            c = OptionContract("ACN", "2026-12-18", Decimal(str(strike)),
+                               "call", sym)
+            oq = OptionQuote(contract=c, bid=Decimal(str(bid)), ask=Decimal(str(ask)),
+                             underlying_price=Decimal("260"),
+                             quoted_at="2026-11-06T16:00:00-05:00",
+                             delta=Decimal(str(delta)), volume=vol, open_interest=None)
+            return oq
+
+        # The real ACN Dec-18 K260: delta in band, volume 6, spread 7.3%.
+        # Under the desk default it is rejected on volume alone...
+        ok = q(260, "18.86", "17.50", "0.5451", 6)
+        with self.assertRaises(Exception):
+            select_long_option([ok], direction="bullish",
+                               today="2026-11-06")
+        # ...and with the override's volume floor it is selected.
+        from robinhood_tools.options import OptionSelectionFilters
+        f = OptionSelectionFilters(min_option_volume=5)
+        selected, rejected = select_long_option(
+            [ok], direction="bullish", today="2026-11-06", filters=f)
+        self.assertEqual(selected.contract.strike, Decimal("260"))
+
+        # But a wide spread is still rejected even with volume relaxed.
+        wide = q(260, "25.00", "17.50", "0.5451", 500)
+        with self.assertRaises(Exception):
+            select_long_option([wide], direction="bullish",
+                               today="2026-11-06", filters=f)
+
+
 class TestLiquidSignalFilter(unittest.TestCase):
     def _write_signals(self, root, data):
         d = Path(root) / "outputs" / "liquid"
