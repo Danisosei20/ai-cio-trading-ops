@@ -218,6 +218,21 @@ class ShortBudgetSizingTests(unittest.TestCase):
                                      remaining_notional=Decimal("5000"))
         self.assertEqual(qty, 0)
 
+    def test_zero_size_reason_names_the_actual_cause(self):
+        # A zero size has three causes, and blaming the budget for all of
+        # them sends the operator to the ledger to chase a quote problem.
+        bad_quote = de._zero_short_size_reason(Decimal("0"), Decimal("5000"))
+        self.assertEqual(bad_quote, "short entry price invalid")
+        self.assertNotIn("budget", bad_quote)
+        self.assertEqual(
+            de._zero_short_size_reason(Decimal("100"), Decimal("0")),
+            "short notional budget exhausted")
+        fractional = de._zero_short_size_reason(Decimal("100"),
+                                                Decimal("0.001"))
+        self.assertIn("cannot hold one share", fractional)
+        self.assertIn("0.001", fractional)
+        self.assertNotIn("exhausted", fractional)
+
 
 class ShortReachesRiskControllerTests(unittest.TestCase):
     """A short must reach the controller as a short, not as a long-side call
@@ -358,6 +373,25 @@ class ShortBudgetValidateSetupTests(unittest.TestCase):
             self.SHORT_REC, Decimal("100000"))
         self.assertFalse(approved)
         self.assertEqual(reason, "short notional budget exhausted")
+
+    def test_zero_price_short_does_not_blame_the_budget(self):
+        # The ledger is empty here, so the budget is wide open: a $0 quote
+        # is missing evidence and must not be reported as a budget block.
+        rec = dict(self.SHORT_REC, price=0.0)
+        approved, reason, _ = de._validate_setup(
+            rec, Decimal("100000"))
+        self.assertFalse(approved)
+        self.assertEqual(reason, "short entry price invalid")
+
+    def test_fractional_budget_reports_the_shortfall_not_exhaustion(self):
+        # $0.001 left is not an exhausted budget: it cannot hold one share,
+        # and saying "exhausted" would misdescribe what actually happened.
+        self._occupy_short_book(4999.999)
+        approved, reason, _ = de._validate_setup(
+            self.SHORT_REC, Decimal("100000"))
+        self.assertFalse(approved)
+        self.assertIn("cannot hold one share", reason)
+        self.assertNotIn("exhausted", reason)
 
     def test_budget_read_failure_fails_closed(self):
         # Missing evidence is not permission to trade.

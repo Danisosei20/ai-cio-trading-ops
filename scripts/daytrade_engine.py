@@ -158,6 +158,25 @@ def _calc_position_size(equity: Decimal, entry: float, stop: float,
     return shares.quantize(Decimal("0.01"))
 
 
+def _zero_short_size_reason(entry: float, remaining_notional: Decimal) -> str:
+    """Name the cause of a zero-sized short, for the block reason.
+
+    A zero size has three causes and they triage to different places: a
+    non-positive entry is a bad quote (missing evidence), a budget at or
+    below zero is genuinely exhausted, and a positive budget that still
+    cannot hold a single share is short by a fraction of a share. Reporting
+    the budget for all three sends an operator to the ledger to chase a
+    quote problem. `_calc_position_size` returns a plain `Decimal("0")` in
+    every case, so the cause is derived here from the inputs it already had.
+    """
+    if entry <= 0:
+        return "short entry price invalid"
+    if remaining_notional <= 0:
+        return "short notional budget exhausted"
+    return (f"short notional budget cannot hold one share "
+            f"({remaining_notional} remaining)")
+
+
 def _calc_reward_to_risk(entry: float, stop: float, target: float,
                          direction: str) -> Decimal:
     """Calculate reward-to-risk ratio."""
@@ -279,7 +298,8 @@ def _validate_setup(rec: dict, equity: Decimal, open_positions: dict | None = No
                               remaining_notional=remaining_notional)
     if qty <= 0:
         if direction == "short":
-            return False, "short notional budget exhausted", {}
+            return False, _zero_short_size_reason(entry,
+                                                  remaining_notional), {}
         return False, "position size too small", {}
 
     # Risk amount
