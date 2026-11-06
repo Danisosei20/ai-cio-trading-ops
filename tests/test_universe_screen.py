@@ -77,6 +77,27 @@ class ScreenTest(unittest.TestCase):
         rows = [{"symbol": "A", "mom20": 0.1, "relvol": 1.0, "dist52w": 0.0}]
         self.assertEqual(len(rank_weak(rows, 5)), 1)
 
+    def test_rank_weak_scores_match_rank(self):
+        # One symbol, one score, whichever book reads it (Task 5 reads "score"
+        # out of weak.json). rank_weak delegates scoring to rank; this pins the
+        # contract from the callers' side, so a second copy of the weights
+        # re-introduced here fails instead of silently disagreeing.
+        closes, volumes = uptrend()
+        rows = []
+        for i, mom in enumerate([0.05, 0.30, 0.12, -0.08]):
+            feat = dict(SCR.features(closes, volumes))
+            feat["symbol"] = f"T{i}"
+            feat["mom20"] = mom
+            rows.append(feat)
+        weak = rank_weak(rows, len(rows))
+        self.assertEqual({r["symbol"]: r["score"] for r in weak},
+                         {r["symbol"]: r["score"] for r in SCR.rank(rows, len(rows))})
+        # the documented 0.5/0.3/0.2 formula on real inputs, not just "a
+        # score key exists": relvol and dist52w are constant across these
+        # rows, so their z-scores are 0 and the score is 0.5*z(mom20).
+        self.assertEqual([r["symbol"] for r in weak], ["T3", "T0", "T2", "T1"])
+        self.assertEqual([r["score"] for r in weak], [-0.647, -0.173, 0.082, 0.738])
+
     def test_screener_payload_weak_key_is_opt_in(self):
         # pins the one constraint that matters most: latest.json keeps exactly
         # today's four keys, and only weak.json grows a "weak" tail.

@@ -6,9 +6,9 @@ Long-only momentum screen with documented scoring (no black box):
 Filters: price>$10, dollar volume>=$10M/day, RSI<80, >=60 bars.
 Earnings are NOT screened here (checked per-trade at gate time).
 
-rank() leads with that score for the long book. rank_weak() scores the same
-way but sorts the other way, so a RISK_OFF tape can read weak names off disk
-instead of refetching the universe.
+rank() leads with that score for the long book. rank_weak() scores through
+rank() and sorts the other way, so a RISK_OFF tape can read weak names off
+disk instead of refetching the universe.
 
   ../TradingAgents/.venv/bin/python scripts/universe_screen.py \
     --top 20 --out outputs/screener/latest.json
@@ -104,26 +104,17 @@ def rank(rows: list[dict], top: int) -> list[dict]:
 def rank_weak(rows: list[dict], top: int) -> list[dict]:
     """Bear-book tail: same score as rank, weakest momentum first.
 
-    Scores every row exactly as rank does (same weights, same z-score
-    denominator guard) so a symbol carries one score whichever book reads
-    it, then sorts ascending by mom20 and truncates to top. Pure function,
-    unit-tested.
+    Scoring is delegated -- rank(rows, len(rows)) scores every row, then a
+    stable ascending-mom20 re-sort picks the tail -- so a symbol carries one
+    score whichever book reads it and there is no second copy of the weights
+    left to drift. rank() builds fresh dicts, so the re-sort mutates nothing
+    the caller holds. Pure function, unit-tested.
 
-    A single row cannot divide by zero: pstdev is 0 there and the existing
+    A single row cannot divide by zero: pstdev is 0 there and rank's
     "or 1e-9" guard keeps the z-scores finite. features() always sets a
     float mom20, so no None guard is needed.
     """
-    import statistics
-
-    def z(key: str) -> list[float]:
-        vals = [r[key] for r in rows]
-        mu = statistics.fmean(vals)
-        sd = statistics.pstdev(vals) or 1e-9
-        return [(v - mu) / sd for v in vals]
-
-    z_mom, z_rv, z_52 = z("mom20"), z("relvol"), z("dist52w")
-    scored = [{**r, "score": round(0.5 * a + 0.3 * b + 0.2 * c, 3)}
-              for r, a, b, c in zip(rows, z_mom, z_rv, z_52)]
+    scored = rank(rows, len(rows))
     scored.sort(key=lambda r: r["mom20"])
     return scored[:top]
 
