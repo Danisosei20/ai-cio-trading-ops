@@ -15,12 +15,13 @@ Entry gate (all deterministic, mirror of the trading-playbook):
   - RSI <= --max-rsi (default 73; playbook: <=~70 usable, avoid >75-77)
   - underlier not already held (no doubling a name)
   - direction follows 20d momentum (mom20 >= 0 -> call, else put)
-  - regime: SPY below its 50-day mean (RISK_OFF) with --direction auto swaps
-    the feed to the screener's weak-momentum tail (weak.json) and pins puts,
+  - regime: SPY below its 50-day mean (RISK_OFF) with --direction auto adds
+    the screener's weak-momentum tail (weak.json) as puts to the ranked top,
     because a one-day slide cannot flip a 20-day lookback and the ranked
-    top-N only ever surfaces strength. Every other regime -- including
-    UNKNOWN, which fails closed -- and an explicit --direction call/put keep
-    the ranked feed unchanged.
+    top-N only ever surfaces strength. Both feeds go through the same gate
+    (held + RSI + top), so the bear tape is offered both directions rather
+    than one. Every other regime -- including UNKNOWN, which fails closed --
+    and an explicit --direction call/put keep the ranked feed unchanged.
   - S&P 500 constituent or ETF allowlist, premium <= cap, <=5 options,
     <=5 contracts, earnings blackout, session window -- all enforced
     downstream by options_pilot -> place_long_option. We never bypass.
@@ -82,8 +83,10 @@ def parse_args(argv=None):
     p.add_argument("--max-contracts", type=int, default=5,
                    help="owner rule 2026-10-17: raised from 3 to 5")
     p.add_argument("--max-positions", type=int, default=5)
-    p.add_argument("--max-tries", type=int, default=4,
-                   help="candidates to attempt before giving up this run")
+    p.add_argument("--max-tries", type=int, default=10,
+                   help="candidates to attempt before giving up this run "
+                        "(default 10: with the RISK_OFF tape offering both "
+                        "feeds, 4 starved the calls behind the puts)")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--no-exits", action="store_true")
     p.add_argument("--no-notify", action="store_true")
@@ -240,6 +243,17 @@ def _tail(text: str, n: int = 160) -> str:
     return (text or "").strip().replace("\n", " ")[-n:]
 
 
+def _ranked_rows(path: str | Path) -> list:
+    """The long book's ranked rows, for the reason log and the bear feed's
+    long half. Same shape `gated_candidates` reads when `rows` is not given."""
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        rows = doc.get("ranked") or doc.get("rows") or []
+    except (OSError, ValueError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
 def _record_why(why: dict, rows: list, feed: str,
                 forced_side: str | None = None) -> None:
     """Record *why* a candidate is on the list, so a purchase is auditable.
@@ -247,6 +261,9 @@ def _record_why(why: dict, rows: list, feed: str,
     A log line that says only "PLACED LITE put" is not a reason. This writes
     the screen row that produced the candidate: which feed, the momentum, RSI
     and price, and the side chosen - the same numbers the gates were given.
+
+    First writer wins, so a name carried by both feeds keeps the reason for
+    the side it was actually offered as.
     """
     for row in rows or []:
         symbol = str(row.get("symbol") or row.get("ticker") or "").strip().upper()
@@ -260,7 +277,8 @@ def _record_why(why: dict, rows: list, feed: str,
             price = float(row.get("price") or 0.0)
         except (TypeError, ValueError):
             continue
-        why[symbol] = (f"{feed} feed side={side} mom20={mom:+.1%} "
+        why.setdefault(symbol,
+                       f"{feed} feed side={side} mom20={mom:+.1%} "
                        f"rsi={rsi:.0f} ${price:,.2f}")
 
 
@@ -301,20 +319,32 @@ def main(argv=None) -> int:
     else:
         regime = _regime()
         weak = weak_rows(args.weak_screen)
+        ranked = _ranked_rows(args.screen)
         if args.direction == "auto" and regime == "RISK_OFF":
-            # Down tape: the ranked top-N is all strength, so one bad day
-            # never surfaces. Read the weakest-momentum tail as puts instead,
-            # through the same gate below (held + RSI + top).
-            feed = "weak"
-            candidates = gated_candidates(None, args.screen_top, args.max_rsi,
-                                          held, args.direction,
-                                          rows=weak, force_side="put")
+            # Down tape: the ranked top-N is all strength, so one bad day never
+            # surfaces, and the weak tail is all weakness. Offer both - the
+            # weakest momentum as puts, the ranked top by its own momentum as
+            # calls - through the SAME gate (held + RSI + top) for each feed,
+            # so a down tape that still contains a strong name is not filtered
+            # out by the regime it happens to sit in.
+            feed = "weak+ranked"
+            puts = gated_candidates(None, args.screen_top, args.max_rsi, held,
+                                    args.direction, rows=weak, force_side="put")
+            calls = gated_candidates(args.screen, args.screen_top, args.max_rsi,
+                                     held, args.direction)
+            # Dedup by symbol, not by (symbol, side): a name carried by both
+            # feeds must be offered once. The weak feed wins, so a down tape
+            # prefers the put reading rather than accidentally buying a
+            # straddle on the same underlying.
+            offered = {symbol for symbol, _ in puts}
+            candidates = puts + [c for c in calls if c[0] not in offered]
             _record_why(why, weak, "weak", "put")
+            _record_why(why, ranked, "ranked", None)
         else:
             feed = "ranked"
             candidates = gated_candidates(args.screen, args.screen_top,
                                           args.max_rsi, held, args.direction)
-            _record_why(why, weak, "weak", None)
+            _record_why(why, ranked, "ranked", None)
         print(f"[entry] screen {screen_date} held={sorted(held)} "
               f"regime={regime} feed={feed} "
               f"candidates={candidates[:args.max_tries]}")

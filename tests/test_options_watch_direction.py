@@ -143,16 +143,50 @@ class MainRoutingTest(unittest.TestCase):
         self.screen = str(screen)
         return screen, weak
 
-    def _main(self, argv, *, regime, held):
+    def _main(self, argv, *, regime, held, rows=None, ranked=None):
         def spy_run(cmd):
-            raise AssertionError(f"no subprocess expected: {cmd}")
+            # A pilot that always dry-runs: the loop breaks on the first
+            # candidate, so the test observes the choice, not an order.
+            return 0, '{"action": "dry_run_buy", "ticker": "stub"}', ""
+
+        def spy_analyze(ticker, **kw):
+            return {"verdict": {"verdict": "neutral", "reasons": ["stub"]}}
 
         def spy_gated(screen_path, top, max_rsi, held_set, direction, **kw):
+            """Faithful stand-in: applies the same held/RSI/top filtering the
+            real `gated_candidates` does, so tests can observe which
+            candidates a feed actually yields."""
             self.calls.append({"screen": screen_path, "top": top,
                                "max_rsi": max_rsi, "held": held_set,
                                "direction": direction, **kw})
-            return []
+            rows = kw.get("rows")
+            if rows is None:
+                with open(screen_path, encoding="utf-8") as fh:
+                    rows = json.load(fh).get("ranked") or []
+            picked: list[tuple[str, str]] = []
+            for row in rows:
+                symbol = str(row.get("symbol") or "").strip().upper()
+                symbol = symbol.replace(".", "-")
+                if not symbol or symbol in held_set:
+                    continue
+                rsi = row.get("rsi")
+                if rsi is not None and float(rsi) > max_rsi:
+                    continue
+                if kw.get("force_side"):
+                    side = kw["force_side"]
+                elif direction != "auto":
+                    side = direction
+                else:
+                    side = "call" if float(row.get("mom20") or 0) >= 0 else "put"
+                picked.append((symbol, side))
+                if len(picked) >= top:
+                    break
+            return picked
 
+        if rows is not None:
+            self.rows = rows
+        if ranked is not None:
+            self.ranked = ranked
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as d:
             screen, weak = self._screens(d)
@@ -163,21 +197,40 @@ class MainRoutingTest(unittest.TestCase):
                                       lambda env_file: held), \
                     mock.patch.object(SCR, "_regime", lambda: regime), \
                     mock.patch.object(SCR, "gated_candidates", spy_gated), \
+                    mock.patch.object(SCR, "liquid_signal_filter",
+                                      lambda *a, **k: (True, "stub ok")), \
+                    mock.patch("scripts.zone_analysis.analyze", spy_analyze), \
                     redirect_stdout(out):
                 rc = SCR.main(argv)
         return rc, out.getvalue()
 
-    def test_risk_off_auto_uses_the_weak_feed_as_puts(self):
+    def test_risk_off_auto_offers_both_feeds(self):
+        # A down tape gets the weak tail as puts AND the ranked top by its own
+        # momentum, because a regime that only ever offers one direction
+        # filters out names the tape happens to be sitting in.
         rc, out = self._main([], regime="RISK_OFF", held=set())
         self.assertEqual(rc, 0)
-        self.assertEqual(len(self.calls), 1)
-        call = self.calls[0]
-        self.assertIsNone(call["screen"])          # weak.json, not latest.json
-        self.assertEqual(call["rows"], self.rows)
-        self.assertEqual(call["force_side"], "put")
-        self.assertEqual(call["direction"], "auto")
+        self.assertEqual(len(self.calls), 2)
+        puts, calls = self.calls
+        self.assertIsNone(puts["screen"])          # weak.json, not latest.json
+        self.assertEqual(puts["rows"], self.rows)
+        self.assertEqual(puts["force_side"], "put")
+        self.assertEqual(puts["direction"], "auto")
+        self.assertEqual(calls["screen"], self.screen)
+        self.assertNotIn("force_side", calls)
         self.assertIn("regime=RISK_OFF", out)
-        self.assertIn("feed=weak", out)
+        self.assertIn("feed=weak+ranked", out)
+
+    def test_risk_off_does_not_duplicate_a_name_in_both_feeds(self):
+        rc, out = self._main([], regime="RISK_OFF", held=set(),
+                             rows=[{"symbol": "BOTH", "mom20": -0.2,
+                                    "rsi": 40.0, "price": 10.0}],
+                             ranked=[{"symbol": "BOTH", "mom20": 0.2,
+                                      "rsi": 40.0, "price": 10.0}])
+        self.assertEqual(rc, 0)
+        # The put (weak feed, first) wins; the ranked copy is not added twice
+        self.assertIn("[('BOTH', 'put')]", out)
+        self.assertNotIn("('BOTH', 'call')", out)
 
     def test_risk_on_keeps_the_ranked_feed(self):
         rc, out = self._main([], regime="RISK_ON", held=set())

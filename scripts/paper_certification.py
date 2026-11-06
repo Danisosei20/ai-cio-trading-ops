@@ -554,18 +554,19 @@ def group_gates(rec: Recorder) -> None:
     rec.check("gates", "unknown setup is rejected",
               not ok and "not a tradeable setup" in reason, reason)
 
-    # ── Task 5: the 15:10 watch is put-aware under RISK_OFF ──────────────
+    # ── Task 5: the 15:10 watch offers puts and calls under RISK_OFF ──────
     # Driving main() rather than the pure helpers, because what matters is the
-    # wiring: the regime has to pick the weak feed, pin the side, and still run
-    # the held filter and the RSI cap on the way through.
+    # wiring: the regime has to add the weak feed as puts, keep the ranked feed
+    # as its own momentum, and still run the held filter and the RSI cap on the
+    # way through.
     WEAK_TAIL = [{"symbol": "WEAK1", "mom20": -0.30, "rsi": 40.0}]
     RANKED = [{"symbol": "STRONG1", "mom20": 0.20, "rsi": 50.0}]
 
     out = _watch_entries("RISK_OFF", weak=WEAK_TAIL, ranked=RANKED, held=set())
     line = _watch_entry_line(out)
-    rec.check("gates", "RISK_OFF offers a put from the weak screen",
-              "regime=RISK_OFF" in line and "feed=weak" in line
-              and "candidates=[('WEAK1', 'put')]" in line
+    rec.check("gates", "RISK_OFF offers the weak tail as puts and the ranked feed as calls",
+              "regime=RISK_OFF" in line and "feed=weak+ranked" in line
+              and "candidates=[('WEAK1', 'put'), ('STRONG1', 'call')]" in line
               and "would place WEAK1 put (dry-run)" in out,
               line or "no [entry] line")
 
@@ -577,10 +578,11 @@ def group_gates(rec: Recorder) -> None:
         ranked=RANKED, held={"WEAK1"})
     line = _watch_entry_line(out)
     # WEAK1 is held (no doubling a name) and WEAK2 is over the RSI cap; only
-    # the clean survivor is offered. The held set is echoed in the same line,
-    # so the filter demonstrably had something to drop.
+    # the clean survivor is offered - and it is offered from BOTH feeds, so
+    # neither feed bypasses the filters. The held set is echoed in the same
+    # line, so the filter demonstrably had something to drop.
     rec.check("gates", "RISK_OFF still applies the held filter and the RSI cap",
-              "candidates=[('WEAK3', 'put')]" in line
+              "candidates=[('WEAK3', 'put'), ('STRONG1', 'call')]" in line
               and "held=['WEAK1']" in line,
               line or "no [entry] line")
 
