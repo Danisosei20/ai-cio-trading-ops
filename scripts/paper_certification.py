@@ -661,10 +661,28 @@ def group_exits(rec: Recorder) -> None:
     rec.check("exits", "options flat + max hold triggers STALE", action == "STALE",
               f"{action}: {reason}")
 
+    # Owner decision 2026-11-06: take profit at +2%. An ordinary winner (peak
+    # under the +25% trail arm) is closed by the default target.
+    action, reason = decide(D("1.00"), D("1.03"), dte=30, hold_days=1,
+                            target_pct=D("0.02"), stop_pct=D("0.15"),
+                            max_dte=5, max_hold_days=10)
+    rec.check("exits", "options +3% with the +2% default triggers TARGET",
+              action == "TARGET", f"{action}: {reason}")
+
+    # ...but a home run past the +25% arm is NOT sold at +2%: the ratcheting
+    # floor protects it. A flat target would have closed the ACN call at +110%.
     action, reason = decide(D("1.00"), D("1.60"), dte=30, hold_days=1,
                             target_pct=D("0.50"), stop_pct=D("0.15"),
                             max_dte=5, max_hold_days=10)
-    rec.check("exits", "options +60% with +50% target triggers TARGET",
+    rec.check("exits", "options +60% past the trail arm rides the floor, not the target",
+              action == "HOLD" and "trail armed" in reason,
+              f"{action}: {reason}")
+
+    # The boundary is the arm, not the size of the profit.
+    action, reason = decide(D("1.00"), D("1.20"), dte=30, hold_days=1,
+                            target_pct=D("0.02"), stop_pct=D("0.15"),
+                            max_dte=5, max_hold_days=10)
+    rec.check("exits", "options +20% (below the arm) with +50% target triggers TARGET",
               action == "TARGET", f"{action}: {reason}")
 
     from scripts.daytrade_engine import _is_flatten_time

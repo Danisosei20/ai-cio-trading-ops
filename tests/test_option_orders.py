@@ -255,6 +255,11 @@ class OptionGuardTest(unittest.TestCase):
         self.guard = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.guard)
 
+    def guard_default_target(self):
+        """The take-profit the guard actually ships with (not a test constant)."""
+        argv = self.guard.parse_args([])
+        return argv.target_pct
+
     def test_expire_target_stop_stale_hold(self):
         decide = self.guard.decide
         self.assertEqual(decide(Decimal("1000"), Decimal("900"), 2, 1,
@@ -273,17 +278,20 @@ class OptionGuardTest(unittest.TestCase):
                    Decimal("0.5"), Decimal("0.5"), 2, 5)
 
     def test_winners_run_never_closed_by_time(self):
-        """2026-10-17 owner reset: profit is unlimited.
+        """With the target explicitly disabled, a winner is not closed by the
+        old 2% target or the STALE time exit -- only downside (STOP) and
+        expiry (EXPIRE) close it.
 
-        A winning position must survive both the old 2% target and the STALE
-        time exit -- only downside (STOP) and expiry (EXPIRE) close it.
+        Superseded as the *default* by the 2026-11-06 owner decision to take
+        profit at +2%; this pins that an explicit target_pct=0 still means
+        unlimited, and that a winner past the +25% arm rides the trail.
         """
         decide = self.guard.decide
         # +180% held 9 days: no target, so no TARGET; in profit, so no STALE.
         act, why = decide(Decimal("1000"), Decimal("2800"), 10, 9,
                           Decimal("0"), Decimal("0.15"), 2, 5)
         self.assertEqual(act, "HOLD")
-        self.assertIn("winners run", why)
+        self.assertIn("trail armed", why)
         # Small winner on day 1 also holds -- nothing closes it early.
         self.assertEqual(decide(Decimal("1000"), Decimal("1030"), 30, 1,
                                 Decimal("0"), Decimal("0.15"), 2, 5)[0], "HOLD")
@@ -315,6 +323,40 @@ class OptionGuardTest(unittest.TestCase):
         # A +30% peak arms the trail at a +12% floor.
         self.assertEqual(decide(D("1000"), D("1100"), 30, 2,
                                 D("0"), D("0.15"), 2, 5, peak_ret=D("0.30"))[0], "TRAIL")
+
+    def test_two_percent_target_takes_ordinary_winners(self):
+        """Owner 2026-11-06: take the trade even at +2%.
+
+        The default target-pct is +2% again, so a small winner is closed
+        rather than held forever waiting for the +25% trail.
+        """
+        decide = self.guard.decide
+        act, why = decide(Decimal("1000"), Decimal("1030"), 30, 1,
+                          self.guard_default_target(), Decimal("0.15"), 2, 5)
+        self.assertEqual(act, "TARGET")
+        self.assertIn("3%", why)
+
+    def test_two_percent_target_does_not_close_a_home_run(self):
+        """A winner past the +25% trail arm rides the ratcheting floor.
+
+        The ACN call sits above +100%; a flat +2% target would sell it the
+        moment it crossed +2%, which is not what "take the 2%" means.
+        """
+        decide = self.guard.decide
+        act, why = decide(Decimal("1000"), Decimal("2200"), 30, 3,
+                          self.guard_default_target(), Decimal("0.15"), 2, 5,
+                          peak_ret=Decimal("1.2"))
+        self.assertEqual(act, "HOLD")
+        self.assertIn("trail armed", why)
+        # ...and it still exits if it falls back below the locked floor.
+        act, why = decide(Decimal("1000"), Decimal("500"), 30, 3,
+                          self.guard_default_target(), Decimal("0.15"), 2, 5,
+                          peak_ret=Decimal("1.2"))
+        self.assertEqual(act, "TRAIL")
+        self.assertIn("floor", why)
+
+    def test_guard_default_target_is_two_percent(self):
+        self.assertEqual(self.guard_default_target(), Decimal("0.02"))
 
     def test_market_clock_closed_blocks_execution(self):
         """Execution guard must refuse when the Alpaca market clock is closed."""

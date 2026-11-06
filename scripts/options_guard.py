@@ -4,15 +4,18 @@
 Evaluates every open OCC position each run:
   EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
   STOP    premium down <= --stop-pct (default 0.15 = -15%)
-  TARGET  premium up >= --target-pct (default 0 = disabled, profit unlimited)
+  TARGET  premium up >= --target-pct (default 0.02 = +2%)
   STALE   held >= --max-hold-days (default 5) while NOT in profit
   TRAIL   if peak >= 25%: floor = peak * (1 - stop_pct/trail_arm)
           (trail_arm=0.25, so floor = peak * 0.40). Exit if current <= floor.
-Owners run: winners are never closed by a fixed target or by time.
 Exits sell-to-close through review + ledger + session guard. Paper only.
 
-ACTUAL POLICY (reconciled 2026-11-04):
-  - Take-profit: DISABLED by default (target_pct=0). Winners run unlimited.
+ACTUAL POLICY (reconciled 2026-11-06):
+  - Take-profit: +2% by default. Owner decision 2026-11-06 ("take trade at
+    any time even if the profit is 2%") re-enabled it, superseding the
+    earlier choice to leave it disabled and let winners run. Above +25% the
+    trail takes over: the ratcheting floor protects the winner rather than
+    closing it at +2%.
   - Stop loss: -15% from entry (not -25%; the -25% in prior docs was the
     equity guard's stop, not the options guard's).
   - Trailing: activates at +25% peak. Floor = peak * 0.40 (i.e., a +100%
@@ -20,12 +23,11 @@ ACTUAL POLICY (reconciled 2026-11-04):
   - Gap risk: a -15% (or -25%) stop is NOT a guaranteed max loss. Options
     can gap past the stop during illiquid or overnight sessions. Market
     orders on illiquid contracts may fill far from the intended price.
-    The pilot's small $250 notional limits exposure to this risk.
+    The pilot's small notional limits exposure to this risk.
 
-Defaults mirror the desk owner plan (+2% take / -25% stop) for the EQUITY
-guard (paper_position_guard.py, +2%/-1%). The OPTIONS guard uses -15% stop
-and unlimited profit because options have asymmetric payoff (limited risk,
-unlimited upside) — the trail protects winners while letting them run.
+The +2% target matches the desk owner plan already used by the EQUITY guard
+(paper_position_guard.py, +2%/-1%), so both guards now take profit at the
+same threshold.
 
   python3 scripts/options_guard.py --check
   python3 scripts/options_guard.py --execute
@@ -54,8 +56,10 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Exit guard for long option positions.")
     p.add_argument("--check", action="store_true")
     p.add_argument("--execute", action="store_true")
-    p.add_argument("--target-pct", type=Decimal, default=Decimal("0"),
-                   help="0 = unlimited profit (default); >0 re-enables a take-profit exit")
+    p.add_argument("--target-pct", type=Decimal, default=Decimal("0.02"),
+                   help="take-profit threshold (default 0.02 = +2%); the desk "
+                        "owner plan (+2% take) re-enabled 2026-11-06 after the "
+                        "target had been disabled in favour of a +25% trail")
     p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.15"))
     p.add_argument("--max-dte", type=int, default=2)
     p.add_argument("--max-hold-days", type=int, default=5)
@@ -70,10 +74,12 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
            peak_ret: Decimal | None = None) -> tuple[str, str]:
     """Pure exit decision. Returns (action, reason).
 
-    Owner policy 2026-10-17: profit is unlimited, but winners protect
-    themselves. Once a position has peaked above --trail-arm (default +25%),
-    the -15% stop ratchets up to trail from the peak instead of the entry,
-    so a +200% winner can never ride back below its locked-in floor.
+    Owner policy 2026-11-06 ("take trade at any time even if the profit is
+    2%"): an ordinary winner is closed at +2%. Once a position has peaked
+    above --trail-arm (default +25%) that no longer applies - the -15% stop
+    ratchets up to trail from the peak instead of the entry, so a +200%
+    winner can never ride back below its locked-in floor and is not sold at
+    +2%.
     """
     if entry_cost <= 0:
         raise PolicyViolation("Entry cost must be positive.")
@@ -84,12 +90,22 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
     peak = peak_ret if peak_ret is not None else ret
     if peak >= trail_arm:
         floor = peak * (1 - stop_pct / trail_arm)
-        if floor > 0 and ret <= floor:
-            return "TRAIL", f"peak +{peak:.0%} -> floor +{floor:.0%}, now {ret:.0%}"
+        if floor > 0:
+            if ret <= floor:
+                return "TRAIL", f"peak +{peak:.0%} -> floor +{floor:.0%}, now {ret:.0%}"
+            # Past the trail arm, the ratcheting floor is the protection and
+            # the position keeps riding. Without this boundary the +2%
+            # take-profit would close a home run the moment it crossed +2% -
+            # the ACN call sits above +100% and a flat target would sell it.
+            return ("HOLD",
+                    f"peak +{peak:.0%} -> trail armed, floor +{floor:.0%}, "
+                    f"now +{ret:.0%}")
+        # A degenerate config (stop_pct >= trail_arm) leaves no valid floor;
+        # fall through to the ordinary rules rather than inventing one.
     if ret <= -stop_pct:
         return "STOP", f"premium {ret:.0%} <= -{stop_pct:.0%}"
     if target_pct > 0 and ret >= target_pct:
-        return "TARGET", f"premium {ret:.0%} >= {target_pct:.0%}"
+        return "TARGET", f"premium +{ret:.0%} >= +{target_pct:.0%}"
     if ret > 0:
         return "HOLD", f"profit {ret:.0%} — winners run (trail armed at +{trail_arm:.0%})"
     if hold_days >= max_hold_days:

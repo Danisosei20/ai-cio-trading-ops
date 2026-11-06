@@ -13,9 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -33,10 +34,21 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
-def format_watchlist(rows: list[dict], today: str) -> str:
-    """Pure formatter (tested). Compact, scannable, mobile-friendly."""
-    lines = [f"*Options watch — {today} close*",
-             "_Calls above, puts below. Premium per 1 contract. Desk decides at 15:45._"]
+def format_watchlist(rows: list[dict], today: str,
+                     generated_at: str | None = None) -> str:
+    """Pure formatter (tested). Compact, scannable, mobile-friendly.
+
+    The header used to read "{today} close" and "Desk decides at 15:45",
+    which was written for the single 15:10 run. The all-day loop sends this
+    on every placement, so it now says when it was produced and that the
+    decision has already been acted on - a stale header made a mid-session
+    placement look like a pending end-of-day watch.
+    """
+    stamp = f" at {generated_at}" if generated_at else ""
+    lines = [f"*Options watch — {today}{stamp}*",
+             "_Calls above, puts below. Premium per 1 contract. "
+             "Entries are placed by the gated flow as watchlists fire; "
+             "exits are managed by the options guard._"]
     for r in rows:
         if "spot" not in r:
             lines.append(f"\n*{r['ticker']}* — skipped ({r.get('error', 'no data')})")
@@ -108,7 +120,8 @@ def main(argv=None) -> int:
         rows.append(row)
         print(json.dumps(row, default=str))
 
-    message = format_watchlist(rows, today.isoformat())
+    generated = datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M ET")
+    message = format_watchlist(rows, today.isoformat(), generated)
     if args.send:
         sys.path.insert(0, ".")
         from scripts.notify import send
