@@ -313,6 +313,24 @@ class MainRoutingTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertNotIn("[loop]", out)
 
+    def test_pilot_action_finds_json_after_stdout_noise(self):
+        # yfinance prints deprecation warnings to stdout during the quote
+        # fetch, so the pilot's JSON is rarely on a clean line. Requiring the
+        # line to start with "{" made this report "no-json" for a purchase
+        # the pilot had confirmed.
+        from scripts.options_watch_trade import _pilot_action
+
+        noisy = ("C:\\...\\utils.py:568: Pandas4Warning: ...\n"
+                 "  quotes.sort_index(inplace=True)\n"
+                 "See https://pandas.pydata.org/docs/...\n"
+                 '{"ticker": "INTC", "action": "buy_placed", "qty": 5}\n')
+        self.assertEqual(_pilot_action(noisy), "buy_placed")
+
+    def test_pilot_action_reports_no_json_when_there_is_none(self):
+        from scripts.options_watch_trade import _pilot_action
+        self.assertEqual(_pilot_action("spot 56.0 (yfinance-1m)"), "no-json")
+        self.assertEqual(_pilot_action(""), "no-json")
+
     def test_loop_notifies_only_when_a_cycle_placed_something(self):
         # A cycle that places nothing must not Slack the operator.
         notified: list = []

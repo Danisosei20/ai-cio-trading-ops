@@ -300,14 +300,23 @@ def _record_why(why: dict, rows: list, feed: str,
 
 
 def _pilot_action(pilot_out: str) -> str:
-    """The pilot's own verdict, for the log. Plain text, never a guess."""
-    try:
-        for chunk in (pilot_out or "").splitlines():
-            chunk = chunk.strip()
-            if chunk.startswith("{"):
-                return str(json.loads(chunk).get("action", "unknown"))
-    except (ValueError, AttributeError):
-        pass
+    """The pilot's own verdict, for the log. Plain text, never a guess.
+
+    Scans for the JSON object rather than requiring a line to start with `{`:
+    yfinance prints deprecation warnings to stdout during the quote fetch, so
+    the JSON is rarely the first thing on the line - which made this report
+    "no-json" for a purchase the pilot had actually confirmed.
+    """
+    for chunk in (pilot_out or "").splitlines():
+        start = chunk.find("{")
+        if start < 0:
+            continue
+        try:
+            obj = json.loads(chunk[start:])
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and "action" in obj:
+            return str(obj["action"])
     return "no-json"
 
 
