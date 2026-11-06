@@ -6,114 +6,273 @@
 <meta name="theme-color" content="#050a12">
 <title>Trading Desk — Live</title>
 <link rel="icon" href="data:,">
-
 <link rel="stylesheet" href="/office.css">
 <style>
-  body { margin: 0; background: #050a12; color: #dce8f0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-height: 100vh; }
-  header.top { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid #1b2a3f; background: #071120; }
-  header.top h1 { font-size: 14px; margin: 0; letter-spacing: .04em; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-  header.top h1 .live-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 8px #22c55e; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-  header.top a { color: #3b82f6; text-decoration: none; font-size: 13px; font-weight: 600; }
-  header.top a:hover { color: #60a5fa; text-decoration: underline; }
+  :root {
+    --ink: #dce8f0;
+    --muted: #94a3b8;
+    --panel: #0d1626;
+    --border: #1b2a3f;
+    --accent: #3b82f6;
+    --long: #4fd08a;
+    --short: #f87171;
+    --good: #4fd08a;
+    --bad: #f87171;
+    --warn: #f59e0b;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #050a12;
+    color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    min-height: 100vh;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  a { color: #60a5fa; text-decoration: none; }
+  a:hover { color: #93c5fd; }
+
+  /* ---------- Header ---------- */
+  header.top {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 22px;
+    border-bottom: 1px solid var(--border);
+    background: #071120;
+  }
+  header.top h1 {
+    font-size: 13px; margin: 0; letter-spacing: .05em;
+    font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  header.top h1 .live-dot {
+    width: 8px; height: 8px; background: #22c55e;
+    border-radius: 50%; box-shadow: 0 0 10px #22c55e;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+  header.top a { color: #60a5fa; font-size: 12px; font-weight: 600; }
+  header.top a:hover { color: #93c5fd; }
   header.top .spacer { flex: 1; }
-  header.top .clock { font-size: 12px; color: #94a3b8; }
-  header.top .status { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  header.top .status .dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+  header.top .clock {
+    font-size: 11px; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  header.top .status {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--muted);
+  }
+  header.top .status .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #22c55e; box-shadow: 0 0 6px #22c55e;
+  }
 
-  #api-error { display: none; margin: 12px 22px 0; padding: 10px 14px; border: 1px solid #b91c1c; background: rgba(239,68,68,.1); color: #ff9a9a; border-radius: 8px; font-size: 12px; }
-  #api-error.show { display: block; }
+  /* ---------- Layout ---------- */
+  .wrap {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 14px;
+    padding: 16px 22px 26px;
+    max-width: 1500px;
+    margin: 0 auto;
+  }
 
-  .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; padding: 16px 22px 24px; max-width: 1440px; margin: 0 auto; }
-  .card { background: #0d1626; border: 1px solid #1b2a3f; border-radius: 10px; padding: 14px 16px; }
-  .card h2 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; font-weight: 700; color: #7fa8d8; letter-spacing: .09em; }
-  .big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0; }
-  .pace { font-size: 12px; color: #f59e0b; margin-top: 6px; }
-  .dim { color: #94a3b8; font-size: 12px; margin-top: 6px; }
-  .pos { color: #4fd08a; }
-  .neg { color: #ff7a7a; }
+  /* ---------- Cards ---------- */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex; flex-direction: column;
+  }
+  .card h2 {
+    margin: 0 0 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: #7fa8d8;
+    letter-spacing: .08em;
+  }
+  .card.full { grid-column: 1 / -1; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; color: #94a3b8; font-weight: 500; padding: 5px 6px; border-bottom: 1px solid #1b2a3f; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
-  td { padding: 4px 6px; border-bottom: 1px solid #14202f; vertical-align: top; }
+  /* Typography helpers */
+  .big {
+    font-size: 26px; font-weight: 700;
+    letter-spacing: -.02em; margin: 2px 0;
+  }
+  .big .unit {
+    font-size: 14px; font-weight: 400; color: var(--muted);
+  }
+  .pace {
+    font-size: 11px; color: var(--warn);
+    margin-top: 6px; font-variant-numeric: tabular-nums;
+  }
+  .dim {
+    color: var(--muted); font-size: 11px;
+    margin-top: 4px; line-height: 1.4;
+  }
+  .pos { color: var(--good); }
+  .neg { color: var(--bad); }
+
+  /* Tables */
+  table {
+    width: 100%; border-collapse: collapse;
+    font-size: 11.5px;
+  }
+  th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 600;
+    padding: 4px 6px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  td {
+    padding: 3px 6px;
+    border-bottom: 1px solid #14202f;
+    vertical-align: top;
+  }
   tr:last-child td { border-bottom: none; }
 
-  .tag { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 10px; font-weight: 700; border: 1px solid; }
-  .tag.ok { color: #4fd08a; border-color: #2b5f43; background: rgba(34,222,128,.1); }
-  .tag.block { color: #ffce6a; border-color: #d97706; background: rgba(245,158,11,.1); }
-  .tag.err { color: #ff7a7a; border-color: #b91c1c; background: rgba(239,68,68,.1); }
-  .tag.long { color: #4fd08a; border-color: #22c55e; background: rgba(34,197,54,.1); }
-  .tag.short { color: #ef4444; border-color: #ef4444; background: rgba(239,68,68,.1); }
+  /* Tags */
+  .tag {
+    display: inline-block; padding: 1px 7px;
+    border-radius: 10px; font-size: 9px;
+    font-weight: 700; border: 1px solid;
+  }
+  .tag.ok   { color: var(--good); border-color: #2b5f43; background: rgba(34,222,128,.1); }
+  .tag.block{ color: var(--warn); border-color: #d97706; background: rgba(245,158,11,.1); }
+  .tag.err  { color: var(--bad); border-color: #b91c1c; background: rgba(239,68,68,.1); }
+  .tag.long { color: var(--long); border-color: #2b5f43; background: rgba(34,197,54,.1); }
+  .tag.short{ color: var(--short); border-color: #f87171; background: rgba(239,68,68,.1); }
 
-  .split { display: flex; gap: 10px; margin-bottom: 10px; }
-  .split .side { flex: 1; border: 1px solid #1b2a3f; border-radius: 8px; padding: 8px 10px; }
-  .split .side .k { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; }
-  .split .side .v { font-size: 16px; font-weight: 700; margin-top: 2px; }
+  /* Split views (long/short) */
+  .split {
+    display: flex; gap: 10px; margin-bottom: 10px;
+  }
+  .split .side {
+    flex: 1; border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px;
+  }
+  .split .side .k {
+    font-size: 10px; text-transform: uppercase;
+    color: var(--muted); letter-spacing: .06em;
+  }
+  .split .side .v {
+    font-size: 15px; font-weight: 700; margin-top: 3px;
+  }
 
-  .metric { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #14202f; font-size: 12.5px; }
+  /* Metric rows */
+  .metric {
+    display: flex; justify-content: space-between;
+    gap: 12px; padding: 3px 0;
+    border-bottom: 1px solid #14202f;
+    font-size: 12.5px;
+  }
   .metric:last-child { border-bottom: none; }
-  .metric .label { color: #94a3b8; }
-  .metric .value { font-weight: 700; }
+  .metric .label { color: var(--muted); font-size: 10px; }
+  .metric .value { font-weight: 700; font-variant-numeric: tabular-nums; }
 
-  .reason { color: #94a3b8; font-size: 10.5px; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .empty { display: flex; flex-direction: column; align-items: center; padding: 34px 20px; color: #94a3b8; font-size: 12px; }
-  .empty .icon { font-size: 28px; margin-bottom: 8px; opacity: .45; }
+  /* Reason chips */
+  .reason {
+    color: var(--muted); font-size: 10px;
+    max-width: 220px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
 
-  footer { padding: 12px 22px; color: #94a3b8; font-size: 11px; border-top: 1px solid #1b2a3f; display: flex; gap: 14px; flex-wrap: wrap; }
+  /* Empty states */
+  .empty {
+    display: flex; flex-direction: column;
+    align-items: center; padding: 28px 16px;
+    color: var(--muted); font-size: 11px;
+  }
+  .empty .icon {
+    font-size: 24px; margin-bottom: 6px; opacity: .45;
+  }
+
+  /* Footer */
+  footer {
+    padding: 10px 22px; color: var(--muted);
+    font-size: 10px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  footer a {
+    color: var(--muted); text-decoration: underline; font-size: 10px;
+  }
+  footer a:hover { color: #dce8f0; }
+
+  /* Mobile */
+  @media (max-width: 640px) {
+    .wrap { padding: 12px 12px 20px; grid-template-columns: 1fr; }
+    .card.full { grid-column: span 1; }
+    table { font-size: 10.5px; }
+    th, td { padding: 3px 5px; }
+  }
 </style>
 </head>
 <body>
 <header class="top">
-<h1><span class="live-dot"></span>TRADING DESK — LIVE</h1>
-<a href="/pipeline">pipeline</a>
-<a href="/">office</a>
-<div class="spacer"></div>
-<div class="status"><div class="dot"></div>LIVE</div>
-<div class="clock" id="clock">–</div>
+  <h1><span class="live-dot"></span>TRADING DESK — LIVE</h1>
+  <a href="/pipeline">pipeline</a>
+  <a href="/">office</a>
+  <div class="spacer"></div>
+  <div class="clock" id="clock">--:--:--</div>
+  <div class="status">
+    <div class="dot"></div>
+    <span id="regime" class="dim">REGIME: —</span>
+  </div>
 </header>
 
 <div id="api-error"></div>
 
 <div class="wrap">
-<section class="card" id="weekly-objective">
-<h2>Weekly Objective</h2>
-<div class="big" id="obj-big">–</div>
-<div class="pace" id="obj-pace"></div>
-<div class="dim" id="obj-sub"></div>
-<div id="obj-today" style="font-size:13px;margin-top:8px"></div>
-</section>
+  <section class="card full">
+    <h2>Weekly Objective</h2>
+    <div class="big" id="obj-big">$0.00</div>
+    <div class="pace" id="obj-pace"></div>
+    <div class="dim" id="obj-sub"></div>
+    <div class="dim" id="obj-today" style="margin-top:6px"></div>
+  </section>
 
-<section class="card">
-<h2>Positions</h2>
-<div class="split" id="positions-dir"></div>
-<div id="positions"></div>
-</section>
+  <section class="card">
+    <h2>Positions</h2>
+    <div class="split" id="positions-dir"></div>
+    <div id="positions"></div>
+  </section>
 
-<section class="card">
-<h2>Today's Decisions</h2>
-<div id="today"></div>
-</section>
+  <section class="card">
+    <h2>Today's Decisions</h2>
+    <div id="today"></div>
+  </section>
 
-<section class="card">
-<h2>Strategy Performance</h2>
-<div id="strategy-perf"></div>
-</section>
+  <section class="card">
+    <h2>Working Orders</h2>
+    <div id="open-orders"></div>
+  </section>
 
-<section class="card">
-<h2>Scorecard</h2>
-<div id="scorecard"></div>
-</section>
+  <section class="card full">
+    <h2>Strategy Performance</h2>
+    <div id="strategy-perf"></div>
+  </section>
 
-<section class="card" style="grid-column: 1 / -1;">
-<h2>Recent Decisions &amp; Blocks</h2>
-<div id="shadows"></div>
-</section>
+  <section class="card full">
+    <h2>Scorecard</h2>
+    <div id="scorecard"></div>
+  </section>
+
+  <section class="card full">
+    <h2>Recent Decisions</h2>
+    <div id="shadows"></div>
+  </section>
 </div>
 
 <footer>
-<span>Paper trading only — research software, not financial advice.</span>
-<span id="last-updated">Last updated: –</span>
-<span>Auto-refresh 30s</span>
+  <span>Paper trading only — research software, not financial advice.</span>
+  <span id="last-updated">Last updated: –</span>
 </footer>
 
 <script>
@@ -131,8 +290,7 @@
   }
 
   function num(v) {
-    var n = parseFloat(v);
-    return isFinite(n) ? n : 0;
+    var n = parseFloat(v); return isFinite(n) ? n : 0;
   }
 
   function money(v) {
@@ -162,14 +320,13 @@
     el.textContent = msg;
     el.classList.add("show");
   }
-
   function clearError() {
     var el = byId("api-error");
     if (!el) return;
-    el.classList.remove("show");
-    el.textContent = "";
+    el.classList.remove("show"); el.textContent = "";
   }
 
+  /* ---------- Objective ---------- */
   function renderObjective(o) {
     o = o || {};
     var target = num(o.target_pnl_usd) || 10000;
@@ -194,22 +351,24 @@
     var today = byId("obj-today");
     if (o.today_pnl_usd != null) {
       today.innerHTML = "Today <span class='" + cls(o.today_pnl_usd) + "'>" + money2(o.today_pnl_usd) + "</span>";
-    } else {
-      today.textContent = "";
-    }
+    } else { today.textContent = ""; }
   }
 
-  function renderDirectionSplit(split) {
-    split = split || {};
-    var l = split.long || { count: 0, unrealized_pl: 0 };
+  /* ---------- Direction split (long/short pills) ---------- */
+  function renderDirectionSplit(rec) {
+    split = rec.positions_by_direction || {};
+    var l = split.long  || { count: 0, unrealized_pl: 0 };
     var s = split.short || { count: 0, unrealized_pl: 0 };
     byId("positions-dir").innerHTML =
-      "<div class='side'><div class='k'>Long · " + num(l.count) + "</div>" +
-      "<div class='v " + cls(l.unrealized_pl) + "'>" + money2(l.unrealized_pl) + "</div></div>" +
-      "<div class='side'><div class='k'>Short · " + num(s.count) + "</div>" +
+      "<div class='side'>" +
+        "<div class='k'>LONG " + num(l.count) + "</div>" +
+        "<div class='v " + cls(l.unrealized_pl) + "'>" + money2(l.unrealized_pl) + "</div>" +
+      "</div>" +
+      "<div class='side'><div class='k'>SHORT " + num(s.count) + "</div>" +
       "<div class='v " + cls(s.unrealized_pl) + "'>" + money2(s.unrealized_pl) + "</div></div>";
   }
 
+  /* ---------- Positions table ---------- */
   function renderPositions(positions) {
     var el = byId("positions");
     if (!positions || !positions.length) {
@@ -224,7 +383,7 @@
         "<td>" + esc(p.symbol) + "</td>" +
         "<td><span class='tag " + dir + "'>" + dir + "</span></td>" +
         "<td>" + esc(p.qty) + "</td>" +
-        "<td>" + esc(p.avg_entry_price) + "</td>" +
+        "<td>" + esc(p.entry_price) + "</td>" +
         "<td>" + esc(p.current_price) + "</td>" +
         "<td class='" + cls(pl) + "'>" + money2(pl) + "</td>" +
         "<td class='" + cls(plpc) + "'>" + pct(plpc) + "</td>" +
@@ -235,56 +394,85 @@
       rows + "</table>";
   }
 
-  function renderToday(records, options, openOrders) {
+  /* ---------- Today's decisions ---------- */
+  function renderToday(recs) {
     var el = byId("today");
-    var parts = [];
-    if (records && records.length) {
-      parts.push("<table><tr><th>Ticker</th><th>Decision</th><th>Action</th><th>Reason</th></tr>" +
-        records.map(function (r) {
-          var decision = r.decision || "-";
-          var tag = decision === "skip" || decision === "blocked" ? "block" : (decision === "error" ? "err" : "ok");
-          return "<tr>" +
-            "<td>" + esc(r.ticker || r.symbol) + "</td>" +
-            "<td><span class='tag " + tag + "'>" + esc(decision) + "</span></td>" +
-            "<td>" + esc(r.action || "-") + "</td>" +
-            "<td class='reason' title='" + esc(r.reason) + "'>" + esc(r.reason || "-") + "</td>" +
-            "</tr>";
-        }).join("") + "</table>");
-    } else {
-      parts.push(emptyBox("No decisions recorded today"));
+    if (!recs || !recs.length) {
+      el.innerHTML = emptyBox("No decisions today");
+      return;
     }
-    if (openOrders && openOrders.length) {
-      parts.push("<div class='dim' style='margin-top:10px'>Working orders (unfilled)</div>" +
-        "<table style='margin-top:6px'><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Status</th></tr>" +
-        openOrders.map(function (o) {
-          return "<tr><td>" + esc(o.symbol) + "</td><td>" + esc(o.side) + "</td>" +
-            "<td>" + esc(o.qty) + "</td><td>" + esc(o.limit_price) + "</td>" +
-            "<td><span class='tag amber'>" + esc(o.status) + "</span></td></tr>";
-        }).join("") + "</table>" +
-        "<div class='dim' style='margin-top:4px'>Unfilled limits are not positions, so they do not appear above; they expire at the close if they never cross.</div>");
-    }
-    if (options && options.length) {
-      parts.push("<div class='dim' style='margin-top:10px'>Options entries placed</div>" +
-        "<div style='font-size:11.5px;color:#94a3b8;margin-top:4px'>" +
-        options.map(function (line) { return "<div>" + esc(line) + "</div>"; }).join("") + "</div>");
-    }
-    el.innerHTML = parts.join("");
+    var rows = recs.map(function (r) {
+      var sig = r.decision || r.action || "-";
+      var tag = sig === "skip" ? "block" : (sig === "error" || sig.indexOf("error") >= 0 ? "err" : "ok");
+      return "<tr>" +
+        "<td>" + esc(r.ticker) + "</td>" +
+        "<td><span class='tag " + tag + "'>" + esc(sig) + "</span></td>" +
+        "<td class='reason' title='" + esc(r.reason) + "'>" + esc(r.reason || "-") + "</td>" +
+        "</tr>";
+    }).join("");
+    el.innerHTML =
+      "<table><tr><th>Symbol</th><th>Signal</th><th>Reason</th></tr>" +
+      rows + "</table>";
   }
 
+  /* ---------- Working orders ---------- */
+  function renderOpenOrders(orders) {
+    var el = byId("open-orders");
+    if (!orders || !orders.length) {
+      el.innerHTML = emptyBox("No open orders");
+      return;
+    }
+    el.innerHTML =
+      "<table><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Status</th></tr>" +
+      orders.map(function (o) {
+        return "<tr>" +
+          "<td>" + esc(o.symbol) + "</td>" +
+          "<td>" + esc(o.side) + "</td>" +
+          "<td>" + esc(o.qty) + "</td>" +
+          "<td>" + esc(o.limit_price) + "</td>" +
+          "<td><span class='tag block'>" + esc(o.status) + "</span></td>" +
+          "</tr>";
+      }).join("") + "</table>";
+  }
+
+  /* ---------- Option entries ---------- */
+  function renderOptionEntries(list) {
+    var el = byId("options");
+    if (!list || !list.length) {
+      el.innerHTML = emptyBox("No option entries today");
+      return;
+    }
+    el.innerHTML =
+      "<table><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Regime</th><th>Liquid</th><th>Pilot</th></tr>" +
+      list.map(function (r) {
+        var sym = r.ticker || r.symbol || "—";
+        var side = r.side || (r.direction === "short" ? "put" : "call");
+        var entry = r.entry || r.entry_price || "—";
+        var regime = r.regime || "—";
+        var liq = r.liquid !== undefined ? (r.liquid_ok ? "ok" : "skip") : "—";
+        var pilot = (r.action || "").toUpperCase();
+        return "<tr>" +
+          "<td>" + esc(symbol) + "</td>" +
+          "<td><span class='tag " + side + "'>" + side + "</span></td>" +
+          "<td>" + esc(entry) + "</td>" +
+          "<td>" + esc(regime) + "</td>" +
+          "<td><span class='tag " + (liq === "ok" ? "ok" : "block") + "'>" + esc(liq) + "</span></td>" +
+          "<td>" + esc(pilot) + "</td>" +
+          "</tr>";
+      }).join("") + "</table>";
+  }
+
+  /* ---------- Strategy performance ---------- */
   function renderStrategyPerf(sp) {
     sp = sp || {};
-    var states = sp.states || {};
-    var stateRows = Object.keys(states).map(function (k) {
-      return "<div class='metric'><span class='label'>" + esc(k) + "</span><span class='value'>" + esc(states[k]) + "</span></div>";
-    }).join("");
     byId("strategy-perf").innerHTML =
       "<div class='metric'><span class='label'>Total trades</span><span class='value'>" + num(sp.total_trades) + "</span></div>" +
       "<div class='metric'><span class='label'>Open</span><span class='value'>" + num(sp.open) + "</span></div>" +
       "<div class='metric'><span class='label'>Closed</span><span class='value'>" + num(sp.closed) + "</span></div>" +
-      "<div class='metric'><span class='label'>Realized P/L</span><span class='value " + cls(sp.total_realized_pnl) + "'>" + money2(sp.total_realized_pnl) + "</span></div>" +
-      stateRows;
+      "<div class='metric'><span class='label'>Realized P/L</span><span class='value " + cls(sp.total_realized_pnl) + "'>" + money2(sp.total_realized_pnl) + "</span></div>";
   }
 
+  /* ---------- Scorecard ---------- */
   function renderScorecard(s) {
     var el = byId("scorecard");
     if (!s || s.graded == null) {
@@ -301,18 +489,20 @@
       "<div class='metric'><span class='label'>Thesis right</span><span class='value pos'>" + right + "</span></div>" +
       "<div class='metric'><span class='label'>Thesis wrong</span><span class='value neg'>" + wrong + "</span></div>" +
       "<div class='metric'><span class='label'>Win rate</span><span class='value'>" + winRate.toFixed(1) + "%</span></div>" +
-      "<div class='metric'><span class='label'>Avg excess vs S&amp;P</span><span class='value " + (excess == null ? "" : cls(excess)) + "'>" +
-        (excess == null ? "–" : pct(excess, 2)) + "</span></div>" +
+      "<div class='metric'><span class='label'>Avg excess vs SPY</span><span class='value " + (excess == null ? "" : cls(excess)) + "'>" +
+      (excess == null ? "–" : pct(excess, 2)) + "</span></div>" +
       "<div class='metric'><span class='label'>Shadow rows</span><span class='value'>" + num(s.shadow_rows) + "</span></div>";
   }
 
+  /* ---------- Recent shadows ---------- */
   function renderShadows(rows) {
     var el = byId("shadows");
     if (!rows || !rows.length) {
-      el.innerHTML = emptyBox("Nothing recorded yet");
+      el.innerHTML = emptyBox("No shadow records yet");
       return;
     }
-    el.innerHTML = "<table><tr><th>Date</th><th>Symbol</th><th>Action</th><th>Regime</th><th>Decision</th><th>Reason</th></tr>" +
+    el.innerHTML =
+      "<table><tr><th>Date</th><th>Symbol</th><th>Action</th><th>Regime</th><th>Decision</th><th>Reason</th></tr>" +
       rows.map(function (r) {
         return "<tr>" +
           "<td>" + esc(r.date) + "</td>" +
@@ -325,13 +515,7 @@
       }).join("") + "</table>";
   }
 
-  function safe(name, fn, arg) {
-    try { fn(arg); }
-    catch (exc) {
-      showError(name + " render failed: " + (exc && exc.message ? exc.message : String(exc)));
-    }
-  }
-
+  /* ---------- Main render loop ---------- */
   async function refresh() {
     var data;
     try {
@@ -343,20 +527,22 @@
       return;
     }
     clearError();
-    safe("objective", renderObjective, data.objective);
-    safe("positions", function () {
+
+    try { renderObjective(data.objective); } catch (e) { showError("objective: " + e.message); }
+    try {
       renderDirectionSplit(data.positions_by_direction);
       renderPositions(data.positions);
-    });
-    safe("today", function () { renderToday(data.today, data.option_entries, data.open_orders); });
-    safe("strategy", renderStrategyPerf, data.strategy_performance);
-    safe("scorecard", renderScorecard, data.scorecard);
-    safe("shadows", renderShadows, data.recent_shadows);
-    safe("clock", function () {
+    } catch (e) { showError("positions: " + e.message); }
+    try { renderToday(data.today); } catch (e) { showError("today: " + e.message); }
+    try { renderOpenOrders(data.open_orders); } catch (e) { showError("orders: " + e.message); }
+    try { renderStrategyPerf(data.strategy_performance); } catch (e) { showError("performance: " + e.message); }
+    try { renderScorecard(data.scorecard); } catch (e) { showError("scorecard: " + e.message); }
+    try { renderShadows(data.recent_shadows); } catch (e) { showError("shadows: " + e.message); }
+    try {
       var stamp = data.generated_at || new Date().toISOString();
       byId("clock").textContent = stamp.replace("T", " ").slice(0, 19);
       byId("last-updated").textContent = "Last updated: " + stamp.replace("T", " ").slice(0, 19);
-    });
+    } catch (e) { /* ignore clock errors */ }
   }
 
   refresh();
