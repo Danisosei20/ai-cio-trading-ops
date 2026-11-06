@@ -342,10 +342,18 @@ def _run_cycle(args, py: str) -> str | None:
     except (OSError, ValueError):
         pass
     held = held_underliers(args.env_file)
+    pending = open_order_underliers(args.env_file)
     why: dict = {}
-    if held is None:
-        candidates = []  # fail-closed: no entries without verified holdings
+    if held is None or pending is None:
+        # Fail-closed on either unreadable state: an empty set means "nothing
+        # held / nothing working", which is a real answer; None means "could
+        # not find out", which is not permission to trade.
+        candidates = []
     else:
+        # A name with an unfilled order is out of this run's reach: the order
+        # is already working, and pricing a second limit at a fresher quote is
+        # how the book of abandoned orders grew.
+        blocked = held | pending
         regime = _regime()
         weak = weak_rows(args.weak_screen)
         ranked = _ranked_rows(args.screen)
@@ -357,10 +365,11 @@ def _run_cycle(args, py: str) -> str | None:
             # so a down tape that still contains a strong name is not filtered
             # out by the regime it happens to sit in.
             feed = "weak+ranked"
-            puts = gated_candidates(None, args.screen_top, args.max_rsi, held,
-                                    args.direction, rows=weak, force_side="put")
+            puts = gated_candidates(None, args.screen_top, args.max_rsi,
+                                    blocked, args.direction, rows=weak,
+                                    force_side="put")
             calls = gated_candidates(args.screen, args.screen_top, args.max_rsi,
-                                     held, args.direction)
+                                     blocked, args.direction)
             # Dedup by symbol, not by (symbol, side): a name carried by both
             # feeds must be offered once. The weak feed wins, so a down tape
             # prefers the put reading rather than accidentally buying a
@@ -372,10 +381,10 @@ def _run_cycle(args, py: str) -> str | None:
         else:
             feed = "ranked"
             candidates = gated_candidates(args.screen, args.screen_top,
-                                          args.max_rsi, held, args.direction)
+                                          args.max_rsi, blocked, args.direction)
             _record_why(why, ranked, "ranked", None)
         print(f"[entry] screen {screen_date} held={sorted(held)} "
-              f"regime={regime} feed={feed} "
+              f"pending={sorted(pending)} regime={regime} feed={feed} "
               f"candidates={candidates[:args.max_tries]}")
     pilot_exec = "--execute" if args.execute else "--dry-run"
     for symbol, side in candidates[:args.max_tries]:
@@ -440,6 +449,45 @@ def _run_cycle(args, py: str) -> str | None:
 
 def _parse_hhmm(text: str):
     return datetime.strptime(text, "%H:%M").time()
+
+
+def open_order_underliers(env_file: str) -> set[str] | None:
+    """Underliers that already have an unfilled order at the broker.
+
+    Symmetric with `held_underliers`, and it closes the gap that let the loop
+    stack one stale limit per cycle: the pilot's `--max-positions` check reads
+    *positions*, and an unfilled order is not a position, so a working order
+    was invisible to it. Without this, each cycle places a fresh limit at a
+    fresh quote, nothing fills because the price has moved on, and the book
+    of abandoned orders grows until the close.
+
+    Fail-closed like `held_underliers`: None means "could not read", and the
+    caller must block entries rather than pretend the book is clear.
+    """
+    try:
+        import os
+
+        from robinhood_tools.alpaca_paper import (
+            AlpacaPaperBackend, AlpacaPaperHttpTransport)
+        from robinhood_tools.options import occ_details
+        from robinhood_tools.settings import load_env
+
+        env = {**load_env(env_file), **os.environ}
+        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        pending: set[str] = set()
+        for order in backend.list_open_orders():
+            symbol = str(order.get("symbol", ""))
+            if len(symbol) <= 10:
+                continue  # equity, not an OCC contract
+            try:
+                pending.add(occ_details(symbol).underlying)
+            except Exception:  # noqa: BLE001 - an unparsable symbol is not a pass
+                continue
+        return pending
+    except Exception as exc:  # noqa: BLE001 - unreadable means block, not pass
+        print(f"[entry] open-order check FAILED ({type(exc).__name__}: {exc}); "
+              "entries blocked this run (fail-closed)", file=sys.stderr)
+        return None
 
 
 def main(argv=None) -> int:

@@ -235,7 +235,7 @@
       rows + "</table>";
   }
 
-  function renderToday(records, options) {
+  function renderToday(records, options, openOrders) {
     var el = byId("today");
     var parts = [];
     if (records && records.length) {
@@ -252,6 +252,16 @@
         }).join("") + "</table>");
     } else {
       parts.push(emptyBox("No decisions recorded today"));
+    }
+    if (openOrders && openOrders.length) {
+      parts.push("<div class='dim' style='margin-top:10px'>Working orders (unfilled)</div>" +
+        "<table style='margin-top:6px'><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Limit</th><th>Status</th></tr>" +
+        openOrders.map(function (o) {
+          return "<tr><td>" + esc(o.symbol) + "</td><td>" + esc(o.side) + "</td>" +
+            "<td>" + esc(o.qty) + "</td><td>" + esc(o.limit_price) + "</td>" +
+            "<td><span class='tag amber'>" + esc(o.status) + "</span></td></tr>";
+        }).join("") + "</table>" +
+        "<div class='dim' style='margin-top:4px'>Unfilled limits are not positions, so they do not appear above; they expire at the close if they never cross.</div>");
     }
     if (options && options.length) {
       parts.push("<div class='dim' style='margin-top:10px'>Options entries placed</div>" +
@@ -338,7 +348,7 @@
       renderDirectionSplit(data.positions_by_direction);
       renderPositions(data.positions);
     });
-    safe("today", function () { renderToday(data.today, data.option_entries); });
+    safe("today", function () { renderToday(data.today, data.option_entries, data.open_orders); });
     safe("strategy", renderStrategyPerf, data.strategy_performance);
     safe("scorecard", renderScorecard, data.scorecard);
     safe("shadows", renderShadows, data.recent_shadows);

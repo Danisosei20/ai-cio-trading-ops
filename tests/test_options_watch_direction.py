@@ -132,6 +132,7 @@ class MainRoutingTest(unittest.TestCase):
         self.calls: list[dict] = []
         self.rows = [{"symbol": "WEAK1", "mom20": -0.30, "rsi": 40.0}]
         self.ranked = [{"symbol": "STRONG1", "rsi": 50.0, "mom20": 0.20}]
+        self.pending: set = set()
 
     def _screens(self, d):
         weak = Path(d) / "weak.json"
@@ -144,7 +145,10 @@ class MainRoutingTest(unittest.TestCase):
         self.screen = str(screen)
         return screen, weak
 
-    def _main(self, argv, *, regime, held, rows=None, ranked=None):
+    _UNSET = object()
+
+    def _main(self, argv, *, regime, held, rows=None, ranked=None,
+              pending=_UNSET):
         def spy_run(cmd):
             # A pilot that always dry-runs: the loop breaks on the first
             # candidate, so the test observes the choice, not an order.
@@ -188,6 +192,8 @@ class MainRoutingTest(unittest.TestCase):
             self.rows = rows
         if ranked is not None:
             self.ranked = ranked
+        if pending is self._UNSET:
+            pending = self.pending
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as d:
             screen, weak = self._screens(d)
@@ -196,6 +202,8 @@ class MainRoutingTest(unittest.TestCase):
             with mock.patch.object(SCR, "run", spy_run), \
                     mock.patch.object(SCR, "held_underliers",
                                       lambda env_file: held), \
+                    mock.patch.object(SCR, "open_order_underliers",
+                                      lambda env_file: pending), \
                     mock.patch.object(SCR, "_regime", lambda: regime), \
                     mock.patch.object(SCR, "gated_candidates", spy_gated), \
                     mock.patch.object(SCR, "liquid_signal_filter",
@@ -385,6 +393,34 @@ class MainRoutingTest(unittest.TestCase):
         self.assertEqual(call["screen"], self.screen)
         self.assertNotIn("force_side", call)
         self.assertEqual(call["direction"], "call")
+
+    def test_a_name_with_an_unfilled_order_is_out_of_reach(self):
+        # The pilot's --max-positions reads positions, and an unfilled order is
+        # not a position - so without this the loop stacked one stale limit per
+        # cycle until the close.
+        rc, out = self._main([], regime="RISK_OFF", held=set(),
+                             rows=[{"symbol": "WEAK1", "mom20": -0.30,
+                                    "rsi": 40.0}], pending={"WEAK1"})
+        self.assertEqual(rc, 0)
+        self.assertIn("pending=['WEAK1']", out)
+        self.assertNotIn("('WEAK1'", out)
+
+    def test_pending_orders_do_not_block_other_names(self):
+        rc, out = self._main(
+            [], regime="RISK_OFF", held=set(),
+            rows=[{"symbol": "WEAK1", "mom20": -0.30, "rsi": 40.0},
+                  {"symbol": "WEAK2", "mom20": -0.10, "rsi": 45.0}],
+            pending={"WEAK1"})
+        self.assertEqual(rc, 0)
+        self.assertIn("('WEAK2', 'put')", out)
+
+    def test_unreadable_open_orders_blocks_entries(self):
+        # Missing evidence is not permission to trade, same rule as holdings.
+        rc, out = self._main([], regime="RISK_OFF", held=set(),
+                             pending=None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self.calls), 0)
+        self.assertNotIn("candidates=", out)
 
     def test_held_none_blocks_entries_even_in_risk_off(self):
         # ruling 2 + the fail-closed holdings gate: unreadable broker state

@@ -128,6 +128,36 @@ def _positions_by_direction() -> dict:
     }
 
 
+def _open_orders() -> list[dict]:
+    """Unfilled orders at the broker.
+
+    Added because the desk had a live short it could not see: a limit order
+    that has not filled is not a position, so it appeared in no panel, and
+    the entries list showed it as placed. Two of them stacked before anyone
+    noticed.
+    """
+    try:
+        import os
+
+        from robinhood_tools.alpaca_paper import (
+            AlpacaPaperBackend, AlpacaPaperHttpTransport)
+        from robinhood_tools.settings import load_env
+
+        env = {**load_env(".env"), **os.environ}
+        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        out = []
+        for o in backend.list_open_orders():
+            out.append({"symbol": str(o.get("symbol", "")),
+                        "side": str(o.get("side", "")),
+                        "qty": str(o.get("qty", "")),
+                        "limit_price": str(o.get("limit_price", "")),
+                        "status": str(o.get("status", "")),
+                        "submitted_at": str(o.get("submitted_at", ""))})
+        return out
+    except Exception:  # noqa: BLE001 - an unreadable book is not an empty one
+        return []
+
+
 def _strategy_performance() -> dict:
     """Strategy performance from trade state machine."""
     try:
@@ -224,6 +254,7 @@ def state() -> dict:
         "positions_by_direction": _positions_by_direction(),
         "today": _today_records(today),
         "option_entries": _option_entries(today),
+        "open_orders": _open_orders(),
         "scorecard": _scorecard(),
         "strategy_performance": _strategy_performance(),
         "recent_shadows": _recent_shadows(),
