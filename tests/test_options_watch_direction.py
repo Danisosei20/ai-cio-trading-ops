@@ -15,6 +15,7 @@ import tempfile
 import unittest
 import unittest.mock as mock
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 
 
@@ -231,6 +232,111 @@ class MainRoutingTest(unittest.TestCase):
         # The put (weak feed, first) wins; the ranked copy is not added twice
         self.assertIn("[('BOTH', 'put')]", out)
         self.assertNotIn("('BOTH', 'call')", out)
+
+    def test_loop_runs_a_cycle_per_interval_then_stops(self):
+        # The loop must repeat the full cycle, not just sleep once.
+        import scripts.options_watch_trade as owt
+
+        cycles_seen: list = []
+        sleeps: list = []
+        real_cycle, real_sleep = owt._run_cycle, owt.time.sleep
+        class FakeDatetime(datetime):
+            """Clock that walks 14:00, 14:00, ... then 16:00 (past --until)."""
+            ticks = {"n": 0}
+
+            @classmethod
+            def now(cls, tz=None):
+                cls.ticks["n"] += 1
+                hour = 16 if cls.ticks["n"] >= 5 else 14
+                return cls(2026, 11, 6, hour, 0, 0, tzinfo=tz)
+
+        def fake_cycle(args, py):
+            cycles_seen.append(len(cycles_seen) + 1)
+            return None
+
+        try:
+            owt._run_cycle = fake_cycle
+            owt.time.sleep = lambda s: sleeps.append(s)
+            out = io.StringIO()
+            with mock.patch.object(owt, "datetime", FakeDatetime), \
+                    redirect_stdout(out):
+                rc = owt.main(["--no-exits", "--no-notify", "--loop", "30",
+                               "--until", "15:45"])
+        finally:
+            owt._run_cycle, owt.time.sleep = real_cycle, real_sleep
+        text = out.getvalue()
+        self.assertEqual(rc, 0)
+        # Two cycles inside the window, then the clock passes --until and it stops
+        self.assertEqual(cycles_seen, [1, 2])
+        # Two full intervals, each capped at min(interval, time-to-stop)
+        self.assertEqual(sleeps, [1800, 1800])
+        self.assertIn("[loop] cycle 1", text)
+        self.assertIn("[loop] cycle 2", text)
+        self.assertIn("[loop] done, 2 cycle(s)", text)
+
+    def test_loop_never_sleeps_past_its_stop_time(self):
+        # A cycle that finishes 60s before --until must wake exactly at the
+        # stop time, not a full interval later - otherwise the loop lingers
+        # one interval past the time it promised to end.
+        import scripts.options_watch_trade as owt
+
+        sleeps: list = []
+        cycles_seen: list = []
+        real_cycle, real_sleep = owt._run_cycle, owt.time.sleep
+
+        class FakeDatetime(datetime):
+            ticks = {"n": 0}
+
+            @classmethod
+            def now(cls, tz=None):
+                cls.ticks["n"] += 1
+                # 15:44, then 15:44, then 16:00 (past --until 15:45)
+                hour, minute = (16, 0) if cls.ticks["n"] >= 3 else (15, 44)
+                return cls(2026, 11, 6, hour, minute, 0, tzinfo=tz)
+
+        try:
+            owt._run_cycle = lambda a, p: cycles_seen.append(1)
+            owt.time.sleep = lambda s: sleeps.append(s)
+            out = io.StringIO()
+            with mock.patch.object(owt, "datetime", FakeDatetime), \
+                    redirect_stdout(out):
+                owt.main(["--no-exits", "--no-notify", "--loop", "30",
+                          "--until", "15:45"])
+        finally:
+            owt._run_cycle, owt.time.sleep = real_cycle, real_sleep
+        self.assertEqual(cycles_seen, [1])
+        # 30 minutes would be 1800s; only 60s remain before 15:45
+        self.assertEqual(sleeps, [60])
+
+    def test_no_loop_flag_means_a_single_run(self):
+        rc, out = self._main([], regime="RISK_ON", held=set())
+        self.assertEqual(rc, 0)
+        self.assertNotIn("[loop]", out)
+
+    def test_loop_notifies_only_when_a_cycle_placed_something(self):
+        # A cycle that places nothing must not Slack the operator.
+        notified: list = []
+
+        def spy_run(cmd):
+            notified.append(cmd)
+            return 0, '{"action": "dry_run_buy"}', ""
+
+        with tempfile.TemporaryDirectory() as d:
+            screen, weak = self._screens(d)
+            argv = self.ARGV + ["--screen", str(screen),
+                                "--weak-screen", str(weak)]
+            with mock.patch.object(SCR, "run", spy_run), \
+                    mock.patch.object(SCR, "held_underliers",
+                                      lambda env_file: set()), \
+                    mock.patch.object(SCR, "_regime", lambda: "RISK_ON"), \
+                    mock.patch.object(SCR, "gated_candidates",
+                                      lambda *a, **k: []), \
+                    mock.patch.object(SCR, "liquid_signal_filter",
+                                      lambda *a, **k: (True, "ok")), \
+                    redirect_stdout(io.StringIO()):
+                SCR.main(argv)
+        # No candidates => nothing placed => no watchlist send
+        self.assertEqual(notified, [])
 
     def test_risk_on_keeps_the_ranked_feed(self):
         rc, out = self._main([], regime="RISK_ON", held=set())

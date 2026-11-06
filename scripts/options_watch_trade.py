@@ -4,11 +4,16 @@
     "when it send the options watch, the bot should be buying and selling.
      the option calls, if the call lost 25% it should exit."
 
-Deterministic, zero-burn (no LLM). One run does three things, in order:
+Deterministic, zero-burn (no LLM). One cycle does three things, in order:
 
   1. EXITS   options_guard.py --execute    take +2% / cut -25% / DTE / stale
   2. ENTRY   best gated screener name      one entry per run (buy)
   3. NOTIFY  options_watchlist.py --send   the watch itself
+
+`--loop N` repeats that whole cycle every N minutes until `--until` ET, so
+the desk can trade across the session rather than once at 15:10. In loop
+mode the notify only fires when a cycle actually placed something, because a
+loop that Slack-messages every cycle is a loop nobody reads.
 
 Entry gate (all deterministic, mirror of the trading-playbook):
   - candidate from the latest screener top-N, in rank order
@@ -40,8 +45,11 @@ import json
 import os
 import subprocess
 import sys
+import time
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 # Run as `python scripts/options_watch_trade.py` puts scripts/ (not the repo
@@ -58,6 +66,8 @@ from robinhood_tools.market_prices import _spy_closes, market_regime  # noqa: E4
 TAVENV = Path(os.environ.get(
     "TRADINGAGENTS_VENV_PYTHON",
     "/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python"))
+
+ET = ZoneInfo("America/New_York")
 
 
 def desk_python() -> str:
@@ -87,6 +97,13 @@ def parse_args(argv=None):
                    help="candidates to attempt before giving up this run "
                         "(default 10: with the RISK_OFF tape offering both "
                         "feeds, 4 starved the calls behind the puts)")
+    p.add_argument("--loop", type=int, default=0,
+                   help="minutes between cycles; 0 = one run (default). A loop "
+                        "runs the full cycle - exits, one entry, notify on "
+                        "change - until --until ET or the session closes")
+    p.add_argument("--until", default="15:45",
+                   help="stop looping at this ET time (default 15:45, the "
+                        "desk's latest entry time)")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--no-exits", action="store_true")
     p.add_argument("--no-notify", action="store_true")
@@ -294,10 +311,13 @@ def _pilot_action(pilot_out: str) -> str:
     return "no-json"
 
 
-def main(argv=None) -> int:
-    args = parse_args(argv)
-    py = desk_python()
+def _run_cycle(args, py: str) -> str | None:
+    """One full watch cycle: exits, then one gated entry, then a notify.
 
+    Returns the placement summary when something was bought (or would have
+    been in dry-run), else None. The notify only fires on a change, because a
+    loop that Slack-messages every cycle is a loop nobody reads.
+    """
     # 1. EXITS -- take profit / stop out the book before considering entries.
     if not args.no_exits:
         guard_mode = "--execute" if args.execute else "--check"
@@ -392,13 +412,54 @@ def main(argv=None) -> int:
         print(f"[entry] skip {symbol} {side} -> {_tail(out) or _tail(err)} "
               f"| {detail}")
 
-    # 3. NOTIFY -- the watch that triggered this run.
-    if not args.no_notify:
+    # 3. NOTIFY -- the watch that triggered this run. Only on a change: a loop
+    # that Slack-messages every cycle is a loop nobody reads.
+    if placed and not args.no_notify:
         rc, out, err = run([py, "scripts/options_watchlist.py", "--send"])
         print(f"[notify] rc={rc} {_tail(out) or _tail(err)}")
 
     print(json.dumps({"exits_ran": not args.no_exits, "screen": screen_date,
                       "placed": placed, "executed": bool(args.execute)}))
+    return placed
+
+
+def _parse_hhmm(text: str):
+    return datetime.strptime(text, "%H:%M").time()
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    py = desk_python()
+
+    if not args.loop:
+        _run_cycle(args, py)
+        return 0
+
+    # Loop mode: repeat the cycle every --loop minutes until --until ET. The
+    # desk's window is 09:45-15:45 ET, so cycles outside it would only fail at
+    # the pilot's session guard - we stop on the clock instead of guessing.
+    stop_at = _parse_hhmm(args.until)
+    cycles = 0
+    while True:
+        now_et = datetime.now(ET)
+        if now_et.time() >= stop_at:
+            print(f"[loop] stop: {now_et:%H:%M} ET >= {args.until}")
+            break
+        cycles += 1
+        print(f"\n[loop] cycle {cycles} at {now_et:%H:%M:%S} ET "
+              f"(every {args.loop}m until {args.until})")
+        _run_cycle(args, py)
+        # Sleep the interval, but never past --until: the next wake-up lands
+        # exactly on the stop time, so the loop ends when it said it would
+        # rather than lingering one interval late.
+        now_et = datetime.now(ET)
+        deadline = datetime.combine(now_et.date(), stop_at).replace(tzinfo=ET)
+        remaining = (deadline - now_et).total_seconds()
+        if remaining <= 0:
+            print(f"[loop] stop: {now_et:%H:%M} ET >= {args.until}")
+            break
+        time.sleep(min(args.loop * 60, remaining))
+    print(f"[loop] done, {cycles} cycle(s)")
     return 0
 
 
