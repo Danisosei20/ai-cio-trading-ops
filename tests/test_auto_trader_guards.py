@@ -237,14 +237,20 @@ class ShortBudgetSizingTests(unittest.TestCase):
 class ShortReachesRiskControllerTests(unittest.TestCase):
     """A short must reach the controller as a short, not as a long-side call
     booked as a release. Task 3 made that distinction meaningful; without the
-    forward, short exposure is never counted and the split is dead code."""
+    forward, short exposure is never counted and the split is dead code.
 
-    def test_short_plan_is_booked_to_the_short_book(self):
+    The gate itself charges nothing: it checks and *notes* the attempt, and
+    the book is charged only when the order reaches the broker. Charging at
+    the gate is what let a dry-run short consume real short budget for good.
+    """
+
+    def test_short_plan_is_forwarded_to_the_controller_as_a_short(self):
         from robinhood_tools import portfolio_risk as pr
 
         recorded = {}
-        real_check, real_record = pr.PortfolioRiskController.check, \
-            pr.PortfolioRiskController.record_order
+        real = (pr.PortfolioRiskController.check,
+                pr.PortfolioRiskController.note_order,
+                pr.PortfolioRiskController.record_order)
 
         def fake_check(self, symbol, side, notional, strategy,
                        data_age_sec=0, current_equity=0,
@@ -253,57 +259,77 @@ class ShortReachesRiskControllerTests(unittest.TestCase):
                                  "direction": direction}
             return pr.RiskVerdict(True, "approved", {})
 
-        def fake_record(self, symbol, side, strategy, notional,
-                       direction=None, short=None):
-            recorded["record"] = {"side": side, "short": short,
-                                  "direction": direction, "symbol": symbol}
+        def fake_note(self, symbol, side, strategy, notional=0):
+            recorded["note"] = {"side": side, "symbol": symbol}
 
+        def fake_record(self, symbol, side, strategy, notional=0,
+                        direction=None, *, short=None):
+            recorded.setdefault("record", []).append(
+                {"side": side, "short": short, "symbol": symbol})
+
+        plan = {"ticker": "QQQ", "direction": "short", "qty": 50.0,
+                "entry": 100.0}
         try:
             pr.PortfolioRiskController.check = fake_check
+            pr.PortfolioRiskController.note_order = fake_note
             pr.PortfolioRiskController.record_order = fake_record
-            ok, reason = de._call_risk_controller(
-                {"ticker": "QQQ", "direction": "short", "qty": 50.0,
-                 "entry": 100.0},
-                Decimal("100000"))
+            ok, reason = de._call_risk_controller(plan, Decimal("100000"))
+            self.assertTrue(ok, reason)
+            self.assertTrue(recorded["check"]["short"],
+                            "a short must be charged to the short book")
+            self.assertEqual(recorded["note"]["side"], "sell")
+            self.assertIn("QQQ", recorded["note"]["symbol"])
+            # the gate notes the attempt and charges nothing...
+            self.assertNotIn("record", recorded)
+            # ... the fill is what charges the book
+            de._record_fill(plan)
         finally:
-            pr.PortfolioRiskController.check = real_check
-            pr.PortfolioRiskController.record_order = real_record
+            (pr.PortfolioRiskController.check,
+             pr.PortfolioRiskController.note_order,
+             pr.PortfolioRiskController.record_order) = real
 
-        self.assertTrue(ok, reason)
-        self.assertTrue(recorded["check"]["short"],
-                        "a short must be charged to the short book")
-        self.assertIs(recorded["record"]["short"], True)
-        self.assertEqual(recorded["record"]["side"], "sell")
-        self.assertIn("QQQ", recorded["record"]["symbol"])
+        self.assertEqual(len(recorded["record"]), 1)
+        self.assertIs(recorded["record"][0]["short"], True)
+        self.assertEqual(recorded["record"][0]["side"], "sell")
+        self.assertIn("QQQ", recorded["record"][0]["symbol"])
 
-    def test_sell_to_close_still_records_as_a_release(self):
+    def test_sell_to_close_is_still_a_long_side_call(self):
         from robinhood_tools import portfolio_risk as pr
 
         recorded = {}
-        real_check, real_record = pr.PortfolioRiskController.check, \
-            pr.PortfolioRiskController.record_order
+        real = (pr.PortfolioRiskController.check,
+                pr.PortfolioRiskController.note_order,
+                pr.PortfolioRiskController.record_order)
 
         def fake_check(self, symbol, side, notional, strategy,
                        data_age_sec=0, current_equity=0,
                        direction=None, short=None):
             return pr.RiskVerdict(True, "approved", {})
 
-        def fake_record(self, symbol, side, strategy, notional,
-                        direction=None, short=None):
-            recorded["record"] = {"short": short, "side": side}
+        def fake_note(self, symbol, side, strategy, notional=0):
+            recorded["note"] = {"short": False, "side": side}
+
+        def fake_record(self, symbol, side, strategy, notional=0,
+                        direction=None, *, short=None):
+            recorded.setdefault("record", []).append(
+                {"short": short, "side": side})
 
         try:
             pr.PortfolioRiskController.check = fake_check
+            pr.PortfolioRiskController.note_order = fake_note
             pr.PortfolioRiskController.record_order = fake_record
             de._call_risk_controller(
                 {"ticker": "AAPL", "direction": "sell", "qty": 10.0,
                  "entry": 100.0},
                 Decimal("100000"))
         finally:
-            pr.PortfolioRiskController.check = real_check
-            pr.PortfolioRiskController.record_order = real_record
+            (pr.PortfolioRiskController.check,
+             pr.PortfolioRiskController.note_order,
+             pr.PortfolioRiskController.record_order) = real
 
-        self.assertNotEqual(recorded["record"]["short"], True)
+        self.assertNotEqual(recorded["note"]["short"], True)
+        self.assertEqual(recorded["note"]["side"], "sell")
+        self.assertNotIn("record", recorded)
 
 
 class ShortBudgetValidateSetupTests(unittest.TestCase):

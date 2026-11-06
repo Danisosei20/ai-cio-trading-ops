@@ -19,8 +19,10 @@ Scenario groups map to the owner's certification checklist:
   3. exits   - options guard STOP / TARGET / TRAIL / EXPIRE / STALE,
                day-trade flatten at 15:45
   4. risk    - kill switch, duplicate, per-book exposure cap (long and short
-               counted separately), position cap, daily drawdown, stale
-               data, exposure release on sell
+               counted separately), a long and a short in one symbol are two
+               rows, a dry-run entry charges nothing (the cooldown still
+               applies), an entry is charged at the fill and its exit releases
+               it, position cap, daily drawdown, stale data, release on sell
   5. safety  - order timeout returns a block (never hangs), quote error is
                mapped to a clean block, broker is paper-only
   6. truth   - broker reconciliation (orphan exposure) and dashboard P/L
@@ -292,6 +294,103 @@ def _watch_entry_line(stdout: str) -> str:
     """The watch's `[entry] ... candidates=[...]` line, for exact assertions."""
     return next((ln for ln in stdout.splitlines()
                  if ln.startswith("[entry]")), "")
+
+
+@contextmanager
+def fake_bars(price: float):
+    """A yfinance whose every ticker's last 5m close is `price`.
+
+    The desk venv has no yfinance, so `manage_exits`'s `import yfinance` would
+    fail and the price fetch would be skipped. Injecting the module is what
+    lets an exit scenario be driven offline at all.
+    """
+    import types
+
+    class _Close:
+        def __init__(self, values):
+            self._values = values
+
+        @property
+        def iloc(self):
+            values = self._values
+
+            class _Iloc:
+                def __getitem__(self, i):
+                    return values[i]
+
+            return _Iloc()
+
+    class _Frame:
+        empty = False
+
+        def __init__(self):
+            self._close = _Close([price])
+
+        def __getitem__(self, key):
+            return self._close
+
+    mod = types.ModuleType("yfinance")
+
+    class _Ticker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        def history(self, **kw):
+            return _Frame()
+
+    mod.Ticker = _Ticker
+    saved = sys.modules.get("yfinance")
+    sys.modules["yfinance"] = mod
+    try:
+        yield
+    finally:
+        if saved is None:
+            sys.modules.pop("yfinance", None)
+        else:
+            sys.modules["yfinance"] = saved
+
+
+@contextmanager
+def engine_cycle(dry_run: bool, setups: list[dict]):
+    """Drive one day-trade engine cycle offline; yield the engine module.
+
+    Everything the cycle can write is redirected: the risk ledger
+    (`isolated_risk`), the trade state machine, the engine's output root (the
+    scout file it reads back), its log, and the two wall-clock gates -- a cycle
+    run after 15:15 ET must still be able to enter, or the check would pass
+    only in the morning. The broker is `fake_order_path`, so no order can
+    leave the process.
+    """
+    import robinhood_tools.trade_state as trade_state
+    import scripts.daytrade_scout as scout
+    from scripts import daytrade_engine as de
+
+    with isolated_risk(), fake_order_path(), \
+            tempfile.TemporaryDirectory(prefix="paper-cert-engine-") as d:
+        # `_exit_position` reads the backend off the engine module while
+        # `_place_order` imports it again, so both need the stub above. Read
+        # it out of sys.modules: `import a.b as c` binds the package
+        # attribute, which fake_order_path() does not replace.
+        fake_alpaca = sys.modules["robinhood_tools.alpaca_paper"]
+
+        def _scout_main(argv=None):
+            path = de.ROOT_PATH / "outputs" / "daytrade" / \
+                f"{datetime.now(ET).date().isoformat()}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"setups": setups}), encoding="utf-8")
+            return 0
+
+        with patched_attrs(trade_state,
+                           STATE_FILE=Path(d) / "trade_state.json"), \
+                patched_attrs(de, ROOT_PATH=Path(d),
+                              AlpacaPaperBackend=fake_alpaca.AlpacaPaperBackend,
+                              AlpacaPaperHttpTransport=fake_alpaca.AlpacaPaperHttpTransport,
+                              _load_equity=lambda: EQUITY,
+                              _is_no_new_entries_time=lambda now=None: False,
+                              _is_flatten_time=lambda now=None: False,
+                              _log=lambda msg: None), \
+                patched_attrs(scout, main=_scout_main):
+            yield de
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -735,7 +834,72 @@ def group_risk(rec: Recorder) -> None:
         ctrl.record_order("CERTSYM", "sell", "intraday", Decimal("500"))
         open_now = ctrl.status()["open_positions"]
         rec.check("risk", "sell releases exposure (symbol no longer tracked)",
-                  "CERTSYM" not in open_now, f"open={sorted(open_now)}")
+                  "CERTSYM" not in open_now and "long:CERTSYM" not in open_now,
+                  f"open={sorted(open_now)}")
+
+    # A short entry on a symbol the ledger still carries as a long must not
+    # un-book the long: one dict keyed by symbol alone silently dropped the
+    # long row, so the pre-existing long exposure stopped being bounded by
+    # its own cap -- the one place this work failed open instead of closed.
+    with isolated_risk() as (pr, _tmp):
+        ctrl = pr.PortfolioRiskController()
+        ctrl.record_order("CERTBOTH", "buy", "intraday", Decimal("4000"))
+        ctrl.record_order("CERTBOTH", "sell", "intraday", Decimal("2000"),
+                          short=True)
+        expo = ctrl.status()["exposure"]
+        rec.check("risk", "a short on a symbol carried as long keeps the long "
+                  "booked (both books are counted)",
+                  "CERTBOTH" in ctrl.state.book["long"]
+                  and "CERTBOTH" in ctrl.state.book["short"]
+                  and expo["long_notional"] == 4000
+                  and expo["short_notional"] == 2000,
+                  f"long={sorted(ctrl.state.book['long'])} "
+                  f"short={sorted(ctrl.state.book['short'])}",
+                  long_notional=expo["long_notional"],
+                  short_notional=expo["short_notional"])
+
+    # Finding A: the ledger is charged by fills, never by attempts. The desk
+    # runs dry_run=True, so a charge recorded before the dry-run branch is a
+    # permanent phantom short -- nothing releases it, and the short book then
+    # blocks every later short with "short notional budget exhausted".
+    with isolated_risk() as (pr, _tmp):
+        from scripts.daytrade_engine import _call_risk_controller
+        ok, reason = _call_risk_controller(
+            {"ticker": "CERTDRY", "direction": "short", "qty": 50.0,
+             "entry": 100.0}, EQUITY)
+        ctrl = pr.PortfolioRiskController()
+        noted = [(o["symbol"], o["side"]) for o in ctrl.state.recent_orders]
+        rec.check("risk", "a dry-run short entry is approved, charged nothing, "
+                  "and still cools down",
+                  ok and not ctrl.state.book["short"]
+                  and not ctrl.state.book["long"]
+                  and ("CERTDRY", "sell") in noted,
+                  f"{reason} | long={sorted(ctrl.state.book['long'])} "
+                  f"short={sorted(ctrl.state.book['short'])} noted={noted}",
+                  short_notional=ctrl.status()["exposure"]["short_notional"],
+                  recent_orders=noted)
+
+    # ... and the engine-level half of that property, which the final review
+    # recorded as unproven: the entry is charged when the order reaches the
+    # broker, and its exit releases the book it was charged to.
+    with engine_cycle(dry_run=False, setups=[_short_rec(ticker="CERTENG")]) as de:
+        import robinhood_tools.portfolio_risk as pr
+        result = de.run_cycle(dry_run=False)
+        charged = pr.PortfolioRiskController().state.book["short"]
+        exposure = pr.PortfolioRiskController().status()["exposure"]
+        with fake_bars(97.0):  # below the 98 target: the exit fires
+            exits = de.manage_exits(dry_run=False)
+        released = pr.PortfolioRiskController().state.book["short"]
+    rec.check("risk", "an entry is charged at the fill and its exit releases it",
+              len(result["entries"]) == 1 and "CERTENG" in charged
+              and exposure["short_notional"] == 5000.0
+              and len(exits["exits"]) == 1 and not released,
+              f"entries={len(result['entries'])} "
+              f"short={sorted(charged)} "
+              f"short_notional={exposure['short_notional']} "
+              f"exits={len(exits['exits'])} released={sorted(released)}",
+              short_notional=exposure["short_notional"],
+              exits=len(exits["exits"]))
 
     with isolated_risk() as (pr, _tmp):
         ctrl = pr.PortfolioRiskController()
@@ -751,7 +915,7 @@ def group_risk(rec: Recorder) -> None:
         ctrl.record_order("CERTPERSIST", "buy", "intraday", Decimal("250"))
         reloaded = pr.PortfolioRiskController()
         rec.check("risk", "risk state survives a restart (persisted + reloaded)",
-                  "CERTPERSIST" in reloaded.state.open_positions,
+                  "long:CERTPERSIST" in reloaded.state.open_positions,
                   f"reloaded open={sorted(reloaded.state.open_positions)}")
 
 
@@ -837,7 +1001,10 @@ def group_broker_truth(rec: Recorder, enabled: bool) -> None:
     # does not. Stale exposure silently consumes the $5,000 cap.
     try:
         from robinhood_tools.portfolio_risk import PortfolioRiskController
-        tracked = set(PortfolioRiskController().status()["open_positions"])
+        # open_positions is keyed "book:symbol" so a long and a short in one
+        # symbol are two rows; the broker only knows symbols.
+        tracked = {key.split(":", 1)[1]
+                   for key in PortfolioRiskController().status()["open_positions"]}
     except Exception as exc:  # noqa: BLE001
         tracked = set()
         rec.add("truth", "risk ledger readable", WARN,

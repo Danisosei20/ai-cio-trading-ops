@@ -330,6 +330,14 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
     """Call the central Portfolio Risk Controller (atomic, fail-closed).
 
     Returns (approved, reason).
+
+    The approved *attempt* is noted here so the duplicate cooldown still
+    applies — including in dry-run, where nothing is ever charged — but the
+    book is charged only when the order reaches the broker (`_record_fill`).
+    Charging here instead would make every dry-run entry a permanent entry:
+    nothing releases a phantom, so the short book fills up on sessions that
+    never traded and every later short dies at "short notional budget
+    exhausted".
     """
     try:
         from robinhood_tools.portfolio_risk import PortfolioRiskController
@@ -351,17 +359,58 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
             short=short,
         )
         if verdict.approved:
-            ctrl.record_order(
+            ctrl.note_order(
                 plan["ticker"],
                 side,
                 "intraday",
                 plan["qty"] * plan["entry"],
-                short=short,
             )
             return True, "risk approved"
         return False, verdict.reason
     except Exception as exc:  # noqa: BLE001
         return False, f"risk controller error: {type(exc).__name__}: {exc}"
+
+
+def _record_fill(plan: dict) -> None:
+    """Charge a filled order to the risk ledger, once it reached the broker.
+
+    A dry-run order never reaches the broker, so it is never charged: a
+    phantom short would consume the short book's budget until every short
+    died at the cap. This never blocks a trade — the order is already placed,
+    so a failed write is logged and reconciled, not traded around.
+    """
+    try:
+        from robinhood_tools.portfolio_risk import PortfolioRiskController
+        ctrl = PortfolioRiskController()
+        short = plan["direction"] == "short"
+        side = "buy" if plan["direction"] == "long" else "sell"
+        ctrl.record_order(
+            plan["ticker"],
+            side,
+            "intraday",
+            plan["qty"] * plan["entry"],
+            short=short,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log(f"risk record failed {plan['ticker']}: "
+             f"{type(exc).__name__}: {exc}")
+
+
+def _release_position(ticker: str, direction: str, notional: float) -> None:
+    """Release a closed position from the risk ledger.
+
+    An exit is never blocked by the ledger, so this is best-effort: a failed
+    release is logged, and the orphan-exposure check in the certification
+    harness is what surfaces it.
+    """
+    try:
+        from robinhood_tools.portfolio_risk import PortfolioRiskController
+        ctrl = PortfolioRiskController()
+        short = direction == "short"
+        side = "sell" if direction == "long" else "buy"
+        ctrl.record_order(ticker, side, "intraday", notional, short=short)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"risk release failed {ticker}: {type(exc).__name__}: {exc}")
 
 
 def _place_order(plan: dict) -> tuple[bool, str, str | None]:
@@ -488,7 +537,6 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
     Returns a dict of cycle results.
     """
     sm = TradeStateMachine()
-    ctrl = PortfolioRiskController()
     equity = _load_equity()
     today = _now_et().date().isoformat()
 
@@ -591,6 +639,12 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
                     sm.transition(existing_trade.id, TradeState.POSITION_OPEN,
                                   "filled")
                     open_count -= 1
+                    # The long was charged to the ledger when it filled, so
+                    # the close releases it. A sell-to-close bypasses the risk
+                    # gate by design; the release is bookkeeping, not a gate,
+                    # so the exit is never blocked by it.
+                    _release_position(ticker, "long",
+                                      plan["qty"] * plan["entry"])
                     result["entries"].append({**plan, "trade_id": existing_trade.id,
                                               "order_id": order_id,
                                               "status": reason,
@@ -636,6 +690,8 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
                 sm.transition(trade.id, TradeState.ORDER_PENDING, "order placed")
                 sm.transition(trade.id, TradeState.POSITION_OPEN, "filled")
                 open_count += 1
+                # Charge the book only now that the order reached the broker.
+                _record_fill(plan)
                 result["entries"].append({**plan, "trade_id": trade.id,
                                           "order_id": order_id,
                                           "status": reason})
@@ -669,7 +725,6 @@ def manage_exits(dry_run: bool = False) -> dict:
     - If flatten time → exit all
     """
     sm = TradeStateMachine()
-    ctrl = PortfolioRiskController()
     result = {"exits": [], "blocks": []}
 
     open_trades = sm.get_open_trades()
@@ -800,6 +855,12 @@ def _exit_position(trade, current_price: float, reason: str) -> tuple[bool, str,
             settings=settings, snapshot=snapshot,
             order=order, database=db, service=service)
         db.update_candidate_status(candidate_id, "approved")
+        # The exit counts only once it reached the broker: release the book
+        # this position was charged to. Best-effort by design -- the position
+        # is already closed, so a failed release is logged, not retried into a
+        # blocked exit.
+        _release_position(trade.ticker, trade.direction,
+                          float(qty * Decimal(str(current_price))))
         return True, result.get("status", "exited"), result.get("order_id")
     except Exception as exc:  # noqa: BLE001
         return False, f"exit error: {type(exc).__name__}: {exc}", None

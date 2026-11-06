@@ -99,8 +99,8 @@ class RiskVerdict:
 class RiskState:
     """Persisted state for restart recovery."""
     last_updated: str = ""
-    open_positions: dict = field(default_factory=dict)  # symbol -> {strategy, notional, entered_at, direction}
-    # Same keys as open_positions, grouped by direction:
+    open_positions: dict = field(default_factory=dict)  # "book:symbol" -> {strategy, notional, entered_at, direction}
+    # Same symbols as open_positions, grouped by direction:
     # {"long": {symbol: {...}}, "short": {symbol: {...}}}. Derived data —
     # open_positions stays the source of truth; _regroup() rebuilds this.
     book: dict = field(default_factory=lambda: {"long": {}, "short": {}})
@@ -115,14 +115,25 @@ class RiskState:
         A row with no `direction` — a ledger written before direction was
         tracked — is long, which is what the old behaviour assumed. Never
         saves; the controller saves after the call.
+
+        `open_positions` is keyed `"{book}:{symbol}"` (see `_position_key`), so
+        a long and a short in the same symbol are two rows and neither can
+        silently un-book the other. A pre-split ledger keys its rows by the
+        bare symbol; those rows are longs, and rewriting them to the long key
+        here is what stops the next `record_order` on that symbol from writing
+        a second row and double-counting the notional.
         """
         long_book: dict = {}
         short_book: dict = {}
-        for symbol, pos in (self.open_positions or {}).items():
-            if pos.get("direction") == "short":
-                short_book[symbol] = pos
-            else:
-                long_book[symbol] = pos
+        normalized: dict = {}
+        for key, pos in (self.open_positions or {}).items():
+            book = "short" if pos.get("direction") == "short" else "long"
+            # A key already carrying this book's prefix belongs to it; anything
+            # else (a legacy bare symbol) is re-keyed to its own book.
+            symbol = key[len(book) + 1:] if key.startswith(f"{book}:") else key
+            normalized[f"{book}:{symbol}"] = pos
+            (short_book if book == "short" else long_book)[symbol] = pos
+        self.open_positions = normalized
         self.book = {"long": long_book, "short": short_book}
 
 
@@ -153,6 +164,17 @@ class PortfolioRiskController:
         if short is not None:
             return bool(short)
         return direction == "short"
+
+    @staticmethod
+    def _position_key(symbol: str, short: bool) -> str:
+        """`open_positions` key for one book's row in this symbol.
+
+        The book is part of the key, not just a field on the row: otherwise a
+        short entry on a symbol the ledger still carries as a long overwrites
+        the long row, the long book silently reads zero, and its cap stops
+        bounding anything.
+        """
+        return f"{'short' if short else 'long'}:{symbol}"
 
     def _load_state(self) -> RiskState:
         if self.state_path.exists():
@@ -227,7 +249,11 @@ class PortfolioRiskController:
         if total + notional > self._max_book_notional:
             label = "short exposure" if short else "total exposure"
             return False, f"{label} {total}+{notional} > {self._max_book_notional}"
-        if len(self.state.open_positions) >= self._max_open_positions and symbol not in self.state.open_positions:
+        # The 5-position limit is shared across both books, so a symbol held in
+        # either one is already counted and a repeat order is not a new slot.
+        held = (set(self.state.book.get("long", {}))
+                | set(self.state.book.get("short", {})))
+        if len(self.state.open_positions) >= self._max_open_positions and symbol not in held:
             return False, f"max open positions ({self._max_open_positions}) reached"
         return True, "ok"
 
@@ -308,6 +334,41 @@ class PortfolioRiskController:
         finally:
             _release_lock(fd)
 
+    def note_order(self, symbol: str, side: str, strategy: str,
+                   notional: Decimal | float = 0) -> None:
+        """Record an *attempt* for the duplicate cooldown, charging no exposure.
+
+        The day-trade engine calls this when it forwards a plan to the
+        controller and charges the book only once the order reaches the broker
+        (`record_order`). Splitting the two keeps the cooldown working in
+        dry-run — where nothing is ever charged — without a dry-run order
+        consuming notional budget for a position it never opened.
+        """
+        try:
+            fd = _acquire_lock()
+        except TimeoutError:
+            return
+        try:
+            self.state = self._load_state()
+            self._note_recent_order(symbol, side, strategy, notional)
+            self._save_state()
+        finally:
+            _release_lock(fd)
+
+    def _note_recent_order(self, symbol: str, side: str, strategy: str,
+                           notional: Decimal | float) -> None:
+        """Append to `recent_orders` (the cooldown's only source) and prune."""
+        self.state.recent_orders.append({
+            "symbol": symbol, "side": side, "strategy": strategy,
+            "ts": datetime.now(ET).isoformat(), "notional": str(notional),
+        })
+        # Prune old orders (keep last 24h)
+        cutoff = datetime.now(ET) - timedelta(hours=24)
+        self.state.recent_orders = [
+            o for o in self.state.recent_orders
+            if datetime.fromisoformat(o["ts"]) > cutoff
+        ]
+
     def record_order(self, symbol: str, side: str, strategy: str,
                      notional: Decimal | float = 0,
                      direction: str | None = None,
@@ -318,6 +379,9 @@ class PortfolioRiskController:
         direction, `buy` opens a long and `sell` releases it (today's
         behaviour, unchanged). With `short=True` the meaning inverts: a `sell`
         opens the short book and a `buy` releases it.
+
+        A release removes only its own book's row, so closing a long cannot
+        un-book a short in the same symbol (or the reverse).
         """
         try:
             fd = _acquire_lock()
@@ -325,16 +389,7 @@ class PortfolioRiskController:
             return
         try:
             self.state = self._load_state()
-            self.state.recent_orders.append({
-                "symbol": symbol, "side": side, "strategy": strategy,
-                "ts": datetime.now(ET).isoformat(), "notional": str(notional),
-            })
-            # Prune old orders (keep last 24h)
-            cutoff = datetime.now(ET) - timedelta(hours=24)
-            self.state.recent_orders = [
-                o for o in self.state.recent_orders
-                if datetime.fromisoformat(o["ts"]) > cutoff
-            ]
+            self._note_recent_order(symbol, side, strategy, notional)
             # Track exposure. `open_positions` stays the source of truth; the
             # direction stored on the row is what _regroup() groups by. A side
             # that is neither buy nor sell still does nothing, as before.
@@ -342,21 +397,36 @@ class PortfolioRiskController:
             if side in ("buy", "sell"):
                 opens = (side == "sell") if is_short else (side == "buy")
                 if opens:
-                    self.state.open_positions[symbol] = {
+                    self.state.open_positions[self._position_key(symbol, is_short)] = {
                         "strategy": strategy, "notional": str(notional),
                         "entered_at": datetime.now(ET).isoformat(),
                         "direction": "short" if is_short else "long",
                     }
                 else:
-                    self.state.open_positions.pop(symbol, None)
+                    self.state.open_positions.pop(
+                        self._position_key(symbol, is_short), None)
+                    if not is_short:
+                        # A ledger written before the books were split keys
+                        # this long row by the bare symbol.
+                        self.state.open_positions.pop(symbol, None)
             self.state._regroup()
             self._save_state()
         finally:
             _release_lock(fd)
 
-    def remove_position(self, symbol: str) -> None:
-        """Remove a position from tracking (after exit)."""
-        self.state.open_positions.pop(symbol, None)
+    def remove_position(self, symbol: str, short: bool | None = None) -> None:
+        """Remove a position from tracking (after exit).
+
+        With `short` given, only that book's row goes, so a long and a short
+        in one symbol stay independent. Without it every row for the symbol is
+        removed, including the bare-symbol row a pre-split ledger may hold.
+        """
+        books = (("short",) if short else ("long",)) if short is not None \
+            else ("long", "short")
+        for book in books:
+            self.state.open_positions.pop(f"{book}:{symbol}", None)
+        if short is None or short is False:
+            self.state.open_positions.pop(symbol, None)
         self.state._regroup()
         self._save_state()
 
