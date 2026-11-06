@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -119,11 +119,18 @@ def _load_equity() -> Decimal:
 
 
 def _calc_position_size(equity: Decimal, entry: float, stop: float,
-                        direction: str) -> Decimal:
+                        direction: str,
+                        remaining_notional: Decimal | None = None) -> Decimal:
     """Calculate position size based on 0.25% risk per trade.
 
     Risk per trade = equity * 0.25%. Shares = risk / |entry - stop|.
     Returns 0 if risk distance is zero or negative.
+
+    `remaining_notional` is what the order's book can still hold (the short
+    book for a short). When given, the size is clamped to
+    floor(remaining_notional / entry) — never rounded up, because rounding up
+    to one share would breach the very cap being clamped to. If that budget
+    cannot hold a single share the size is 0 and the caller must block.
     """
     risk_amount = equity * MAX_RISK_PCT_PER_TRADE
     risk_distance = abs(entry - stop)
@@ -136,6 +143,18 @@ def _calc_position_size(equity: Decimal, entry: float, stop: float,
     if direction == "short" and stop <= entry:
         return Decimal("0")
     shares = risk_amount / Decimal(str(risk_distance))
+    if remaining_notional is not None:
+        # A non-positive entry has no valid size, and dividing by it would
+        # raise: a zero quote is missing evidence, so fail closed. Long
+        # entries never reach this branch (they get no budget).
+        if entry <= 0:
+            return Decimal("0")
+        affordable = (remaining_notional
+                      / Decimal(str(entry))).to_integral_value(
+                          rounding=ROUND_FLOOR)
+        if affordable < 1:
+            return Decimal("0")
+        shares = min(shares, affordable)
     return shares.quantize(Decimal("0.01"))
 
 
@@ -242,9 +261,25 @@ def _validate_setup(rec: dict, equity: Decimal, open_positions: dict | None = No
     if risk_distance <= 0:
         return False, "no risk distance", {}
 
-    # Position sizing: 0.25% of equity
-    qty = _calc_position_size(equity, entry, stop, direction)
+    # Position sizing: 0.25% of equity. A short is sized to the short book's
+    # remaining budget, so it dies of risk distance or R:R — never of a cap
+    # that is already counting somebody else's longs. `status()` does not
+    # reload from disk, so the budget comes from a fresh controller; an
+    # unreadable budget fails closed.
+    remaining_notional = None
+    if direction == "short":
+        try:
+            exposure = PortfolioRiskController().status()["exposure"]
+            remaining_notional = (Decimal(str(exposure["max_per_book"]))
+                                  - Decimal(str(exposure["short_notional"])))
+        except Exception as exc:  # noqa: BLE001 - missing budget is not permission
+            return False, (f"short budget unavailable: {type(exc).__name__}: "
+                           f"{exc}"), {}
+    qty = _calc_position_size(equity, entry, stop, direction,
+                              remaining_notional=remaining_notional)
     if qty <= 0:
+        if direction == "short":
+            return False, "short notional budget exhausted", {}
         return False, "position size too small", {}
 
     # Risk amount
@@ -280,6 +315,12 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
         from robinhood_tools.portfolio_risk import PortfolioRiskController
         ctrl = PortfolioRiskController()
         side = "buy" if plan["direction"] == "long" else "sell"
+        # Which book this order touches. A short entry is a `sell` and a
+        # sell-to-close is also a `sell`; only the book differs, so the
+        # direction is what gets forwarded. Without `short=True` a short is
+        # charged to the long book's cap and booked as a *release*, so the
+        # short book silently stays empty.
+        short = plan["direction"] == "short"
         verdict = ctrl.check(
             symbol=plan["ticker"],
             side=side,
@@ -287,6 +328,7 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
             strategy="intraday",
             data_age_sec=0,
             current_equity=float(equity),
+            short=short,
         )
         if verdict.approved:
             ctrl.record_order(
@@ -294,6 +336,7 @@ def _call_risk_controller(plan: dict, equity: Decimal) -> tuple[bool, str]:
                 side,
                 "intraday",
                 plan["qty"] * plan["entry"],
+                short=short,
             )
             return True, "risk approved"
         return False, verdict.reason

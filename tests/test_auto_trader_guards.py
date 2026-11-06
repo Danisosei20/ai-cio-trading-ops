@@ -8,12 +8,22 @@
     600s read timeout meant one stalled provider call consumed the entire
     per-ticker budget. The trader now forwards an explicit per-request
     `timeout` into the LLM client factory.
+  - NVDA/AMD/TSLA shorts: every short setup was charged to the *long* book's
+    cap, and a short entry was booked to the controller as a *release*, so
+    short exposure was never counted at all. Two guards pin the split: a
+    short is sized to the short book's remaining budget, and it is forwarded
+    to the controller with `short=True` so it lands in `book["short"]`.
 """
 from __future__ import annotations
 
 import ast
+import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
+
+from scripts import daytrade_engine as de
 
 ROOT = Path(__file__).resolve().parents[1]
 AUTO = ROOT / "scripts" / "tradingagents_paper_auto.py"
@@ -168,6 +178,195 @@ class OrderTimeoutGuardTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(order_id, "order-42")
         self.assertEqual(reason, "accepted")
+
+
+class ShortBudgetSizingTests(unittest.TestCase):
+    """A short is sized to the short book's remaining budget.
+
+    2026-11-05: NVDA/AMD/TSLA shorted at 2R and then died at the desk-wide
+    notional cap, because the cap could not tell a short from a long and the
+    size was never clamped to what the short book could still hold.
+    """
+
+    def test_short_clamps_to_remaining_budget_not_dropped(self):
+        # 0.25% of 100k = 250 risk; stop 1% away => 250 shares; a $5,000
+        # budget at $100 entry clamps it to 50 shares, not 0.
+        qty = de._calc_position_size(Decimal("100000"), Decimal("100"),
+                                     Decimal("101"), "short",
+                                     remaining_notional=Decimal("5000"))
+        self.assertGreater(qty, 0)
+        self.assertLessEqual(qty * Decimal("100"), Decimal("5000"))
+
+    def test_short_returns_zero_when_budget_cannot_hold_one_share(self):
+        # Floor, never up: $50 cannot buy a $100 share, so the size is 0
+        # rather than 1 (which would breach the very cap being clamped to).
+        qty = de._calc_position_size(Decimal("100000"), Decimal("100"),
+                                     Decimal("101"), "short",
+                                     remaining_notional=Decimal("50"))
+        self.assertEqual(qty, 0)
+
+    def test_long_size_unchanged_when_no_remaining_given(self):
+        qty = de._calc_position_size(Decimal("100000"), Decimal("100"),
+                                     Decimal("99"), "long")
+        self.assertGreater(qty, 0)
+
+    def test_zero_price_short_with_a_budget_fails_closed(self):
+        # Dividing the budget by a $0 entry would raise and kill the whole
+        # trading cycle: a zero quote is missing evidence, not permission.
+        qty = de._calc_position_size(Decimal("100000"), Decimal("0"),
+                                     Decimal("101"), "short",
+                                     remaining_notional=Decimal("5000"))
+        self.assertEqual(qty, 0)
+
+
+class ShortReachesRiskControllerTests(unittest.TestCase):
+    """A short must reach the controller as a short, not as a long-side call
+    booked as a release. Task 3 made that distinction meaningful; without the
+    forward, short exposure is never counted and the split is dead code."""
+
+    def test_short_plan_is_booked_to_the_short_book(self):
+        from robinhood_tools import portfolio_risk as pr
+
+        recorded = {}
+        real_check, real_record = pr.PortfolioRiskController.check, \
+            pr.PortfolioRiskController.record_order
+
+        def fake_check(self, symbol, side, notional, strategy,
+                       data_age_sec=0, current_equity=0,
+                       direction=None, short=None):
+            recorded["check"] = {"side": side, "short": short,
+                                 "direction": direction}
+            return pr.RiskVerdict(True, "approved", {})
+
+        def fake_record(self, symbol, side, strategy, notional,
+                       direction=None, short=None):
+            recorded["record"] = {"side": side, "short": short,
+                                  "direction": direction, "symbol": symbol}
+
+        try:
+            pr.PortfolioRiskController.check = fake_check
+            pr.PortfolioRiskController.record_order = fake_record
+            ok, reason = de._call_risk_controller(
+                {"ticker": "QQQ", "direction": "short", "qty": 50.0,
+                 "entry": 100.0},
+                Decimal("100000"))
+        finally:
+            pr.PortfolioRiskController.check = real_check
+            pr.PortfolioRiskController.record_order = real_record
+
+        self.assertTrue(ok, reason)
+        self.assertTrue(recorded["check"]["short"],
+                        "a short must be charged to the short book")
+        self.assertIs(recorded["record"]["short"], True)
+        self.assertEqual(recorded["record"]["side"], "sell")
+        self.assertIn("QQQ", recorded["record"]["symbol"])
+
+    def test_sell_to_close_still_records_as_a_release(self):
+        from robinhood_tools import portfolio_risk as pr
+
+        recorded = {}
+        real_check, real_record = pr.PortfolioRiskController.check, \
+            pr.PortfolioRiskController.record_order
+
+        def fake_check(self, symbol, side, notional, strategy,
+                       data_age_sec=0, current_equity=0,
+                       direction=None, short=None):
+            return pr.RiskVerdict(True, "approved", {})
+
+        def fake_record(self, symbol, side, strategy, notional,
+                        direction=None, short=None):
+            recorded["record"] = {"short": short, "side": side}
+
+        try:
+            pr.PortfolioRiskController.check = fake_check
+            pr.PortfolioRiskController.record_order = fake_record
+            de._call_risk_controller(
+                {"ticker": "AAPL", "direction": "sell", "qty": 10.0,
+                 "entry": 100.0},
+                Decimal("100000"))
+        finally:
+            pr.PortfolioRiskController.check = real_check
+            pr.PortfolioRiskController.record_order = real_record
+
+        self.assertNotEqual(recorded["record"]["short"], True)
+
+
+class ShortBudgetValidateSetupTests(unittest.TestCase):
+    """`_validate_setup` reads the short budget and sizes to it.
+
+    `status()` does not reload from disk, so the budget must come from a
+    freshly constructed controller. The ledger is isolated to a temp dir
+    (mirroring `scripts/paper_certification.py`'s `isolated_risk()`) so the
+    real kill switch and exposure ledger are never touched.
+    """
+
+    # price 100, or_high 101 => risk distance $1 => 250 raw shares at 2R.
+    SHORT_REC = {
+        "ticker": "TSLA",
+        "setup": "short_breakdown",
+        "price": 100.0,
+        "or_low": 99.0,
+        "or_high": 101.0,
+        "vwap": 100.5,
+        "zone_verdict": "short_ok",
+        "odds": {"available": True, "target_first": 0.45,
+                 "stop_first": 0.25},
+    }
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        patcher = patch.multiple(
+            "robinhood_tools.portfolio_risk",
+            STATE_FILE=d / "risk_state.json",
+            LOCK_FILE=d / "risk.lock",
+            KILL_SWITCH_FILE=d / "KILL_SWITCH",
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _occupy_short_book(self, notional: float) -> None:
+        from robinhood_tools import portfolio_risk as pr
+        ctrl = pr.PortfolioRiskController()
+        ctrl.record_order("OCCUPIED", "sell", "intraday", notional, short=True)
+
+    def test_short_is_clamped_to_the_remaining_short_budget(self):
+        # $4,000 of the $5,000 short book is already used: 250 raw shares at
+        # $100 would be $25,000 notional, far past the cap.
+        self._occupy_short_book(4000.0)
+        approved, reason, plan = de._validate_setup(
+            self.SHORT_REC, Decimal("100000"))
+        self.assertTrue(approved, reason)
+        self.assertEqual(plan["direction"], "short")
+        self.assertEqual(plan["qty"], 10.0)
+        self.assertLessEqual(plan["qty"] * plan["entry"], 1000.0)
+
+    def test_long_entry_ignores_the_short_budget(self):
+        self._occupy_short_book(5000.0)
+        rec = dict(self.SHORT_REC, setup="long_reclaim",
+                   zone_verdict="long_ok")
+        approved, reason, plan = de._validate_setup(
+            rec, Decimal("100000"))
+        self.assertTrue(approved, reason)
+        # $1 risk distance on a long at $100 => 250 raw shares, unclamped.
+        self.assertEqual(plan["qty"], 250.0)
+
+    def test_short_blocked_when_budget_cannot_hold_one_share(self):
+        self._occupy_short_book(5000.0)
+        approved, reason, _ = de._validate_setup(
+            self.SHORT_REC, Decimal("100000"))
+        self.assertFalse(approved)
+        self.assertEqual(reason, "short notional budget exhausted")
+
+    def test_budget_read_failure_fails_closed(self):
+        # Missing evidence is not permission to trade.
+        with patch.object(de, "PortfolioRiskController",
+                          side_effect=RuntimeError("ledger unreadable")):
+            approved, reason, _ = de._validate_setup(
+                self.SHORT_REC, Decimal("100000"))
+        self.assertFalse(approved)
+        self.assertIn("ledger unreadable", reason)
 
 
 if __name__ == "__main__":
