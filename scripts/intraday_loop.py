@@ -135,7 +135,13 @@ def run_judge(tickers: list[str], dry_run: bool = False) -> None:
            "--tickers", ",".join(tickers),
            "--analysts", "market,news",
            "--max-tool-rounds", "4",
-           "--ticker-timeout", "600",
+           # Measured 2026-11-06: one nemotron call ~35s (1-token call 0.5s), a
+           # full research run ~544s with one analyst. The previous 600s cap
+           # was under the real cost, so every ticker died at the budget and
+           # the desk recorded no decisions. 1200s is sized from measurement,
+           # not guesswork; the whole invocation is still bounded by the 1800s
+           # subprocess timeout below.
+           "--ticker-timeout", "1200",
            "--quick-model", "nvidia/nemotron-3.5-lightning-30b-a3b",
            "--deep-model", "nvidia/nemotron-3.5-lightning-30b-a3b",
            "--max-notional", "2000"]
@@ -144,7 +150,14 @@ def run_judge(tickers: list[str], dry_run: bool = False) -> None:
     try:
         _log(f"judge: running on {tickers}")
         r = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=900,
+                           encoding="utf-8", errors="replace",
+                           # Only NEW setups reach the judge, so this is
+                           # normally 1-3 tickers. Bounded above the 1200s
+                           # per-ticker budget so a slow-but-completing research
+                           # run is not killed mid-flight: the old 900s cap sat
+                           # under the per-ticker budget, so a run that was
+                           # working still died at the wall clock.
+                           timeout=3600,
                            cwd=str(ROOT))
         if r.returncode != 0:
             _log(f"judge failed (rc={r.returncode}): {r.stderr[:300]}")

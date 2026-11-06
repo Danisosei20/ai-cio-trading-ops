@@ -123,14 +123,24 @@ def parse_args(argv=None):
     p.add_argument("--analysts", default="market,news")
     p.add_argument("--max-tool-rounds", type=int, default=10,
                    help="cap tool rounds per analyst (default 10)")
-    p.add_argument("--ticker-timeout", type=int, default=300,
-                   help="per-ticker research timeout in seconds (default 300)")
+    p.add_argument("--ticker-timeout", type=int, default=1200,
+                   help="per-ticker research timeout in seconds (default 1200). "
+                        "Measured 2026-11-06: one nemotron call costs ~35s "
+                        "(1-token call 0.5s, so the endpoint is healthy - it is "
+                        "the number of calls, not a stall) and a full research "
+                        "run costs ~544s with one analyst. The old 300s default "
+                        "made every ticker fail at the budget: ABNB, AXON, "
+                        "CHTR, FISV, HRL, MRNA, PFE all timed out on 2026-11-06 "
+                        "and the desk recorded no research decisions.")
     p.add_argument("--llm-timeout", type=float, default=90.0,
                    help="per-request LLM timeout in seconds (default 90; the SDK "
                         "default is 600 and a single stalled call can eat the "
-                        "whole ticker budget)")
-    p.add_argument("--llm-max-retries", type=int, default=2,
-                   help="SDK retries per LLM request (default 2)")
+                        "whole ticker budget). 90s leaves ~2.5x headroom over "
+                        "the measured 35s completion.")
+    p.add_argument("--llm-max-retries", type=int, default=1,
+                   help="SDK retries per LLM request (default 1). With 2 retries "
+                        "a stalled call burns 3 x 90s = 270s of the budget "
+                        "before the ticker even reaches its later stages.")
     p.add_argument("--max-notional", type=Decimal, default=Decimal("500"),
                    help="max notional per order (default 500)")
     p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.08"),
