@@ -401,6 +401,12 @@ def _run_cycle(args, py: str) -> str | None:
         # The pilot's own JSON is the authoritative record of what it did.
         action = _pilot_action(out)
         detail = f"{reason} | {zone_note} | liquid ok | pilot {action}"
+        # A refusal is plain text and lands on stderr, so without this the
+        # window/premium refusals were invisible whenever the pilot had
+        # already printed its spot line - which is exactly the "why" the log
+        # exists to answer.
+        if action == "no-json" and (err or "").strip():
+            detail += f" (pilot stderr: {_tail(err)})"
         if '"action": "buy_placed"' in out:
             placed = f"{symbol} {side}"
             print(f"[entry] PLACED {placed} | {detail}")
@@ -429,6 +435,14 @@ def _parse_hhmm(text: str):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    # Line-buffer stdout: `>> log` makes Python block-buffer (8KB), so a loop
+    # that runs all day would show nothing in its log until the buffer filled
+    # - and would lose whatever was buffered if it were killed. The desk's
+    # other loops (_log) already flush per line.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):  # pragma: no cover - very old Python
+        pass
     py = desk_python()
 
     if not args.loop:
