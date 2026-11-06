@@ -225,6 +225,35 @@ def confluence(price: float, profile: dict, prior: dict | None,
     return {"verdict": "long_ok" if direction == "long" else "short_ok", "reasons": reasons}
 
 
+def verdict_from_bars(bars, session: str | None, direction: str = "long") -> dict:
+    """Zone confluence verdict computed from already-fetched bars. Pure.
+
+    Exactly the computation `analyze` performs, minus the yfinance fetch: a
+    caller that already holds a longer history (the backtest) can grade each
+    historical session against only the bars available then, so there is no
+    look-ahead and no second copy of the zone rules.
+    """
+    available = sorted({str(i)[:10] for i in bars.index})
+    session = session or available[-1]
+    if session not in available:
+        return {"error": f"no bars for {session}; have {available}"}
+    profile = _session_profile(_session_bars(bars, session))
+    prior_date = (available[available.index(session) - 1]
+                  if available.index(session) > 0 else None)
+    prior = _session_profile(_session_bars(bars, prior_date)) if prior_date else None
+    price = profile.get("close") if profile else None
+    report = {
+        "session": session,
+        "prior_session": prior_date,
+        "price": price,
+        "profile": profile,
+        "prior": prior,
+    }
+    if price:
+        report["verdict"] = confluence(price, profile, prior, direction)
+    return report
+
+
 def analyze(ticker: str, date: str | None = None, sessions: int = 5,
             direction: str = "long") -> dict:
     import yfinance as yf
@@ -232,24 +261,9 @@ def analyze(ticker: str, date: str | None = None, sessions: int = 5,
     bars = yf.Ticker(ticker).history(period=f"{sessions}d", interval="5m")
     if bars is None or bars.empty:
         return {"ticker": ticker, "error": "no intraday bars"}
-    available = sorted({str(i)[:10] for i in bars.index})
-    session = date or available[-1]
-    if session not in available:
-        return {"ticker": ticker, "error": f"no bars for {session}; have {available}"}
-    profile = _session_profile(_session_bars(bars, session))
-    prior_date = available[available.index(session) - 1] if available.index(session) > 0 else None
-    prior = _session_profile(_session_bars(bars, prior_date)) if prior_date else None
-    price = profile.get("close") if profile else None
-    report = {
-        "ticker": ticker, "session": session,
-        "prior_session": prior_date,
-        "price": price,
-        "profile": profile,
-        "prior": prior,
-        "generated_at": datetime.now(ET).isoformat(),
-    }
-    if price:
-        report["verdict"] = confluence(price, profile, prior, direction)
+    report = verdict_from_bars(bars, date, direction)
+    report["ticker"] = ticker
+    report["generated_at"] = datetime.now(ET).isoformat()
     return report
 
 
