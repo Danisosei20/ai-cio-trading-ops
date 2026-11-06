@@ -240,6 +240,42 @@ def _tail(text: str, n: int = 160) -> str:
     return (text or "").strip().replace("\n", " ")[-n:]
 
 
+def _record_why(why: dict, rows: list, feed: str,
+                forced_side: str | None = None) -> None:
+    """Record *why* a candidate is on the list, so a purchase is auditable.
+
+    A log line that says only "PLACED LITE put" is not a reason. This writes
+    the screen row that produced the candidate: which feed, the momentum, RSI
+    and price, and the side chosen - the same numbers the gates were given.
+    """
+    for row in rows or []:
+        symbol = str(row.get("symbol") or row.get("ticker") or "").strip().upper()
+        symbol = symbol.replace(".", "-")
+        if not symbol:
+            continue
+        side = forced_side or _direction_for_row(row)
+        try:
+            mom = float(row.get("mom20") or 0.0)
+            rsi = float(row.get("rsi") or 0.0)
+            price = float(row.get("price") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        why[symbol] = (f"{feed} feed side={side} mom20={mom:+.1%} "
+                       f"rsi={rsi:.0f} ${price:,.2f}")
+
+
+def _pilot_action(pilot_out: str) -> str:
+    """The pilot's own verdict, for the log. Plain text, never a guess."""
+    try:
+        for chunk in (pilot_out or "").splitlines():
+            chunk = chunk.strip()
+            if chunk.startswith("{"):
+                return str(json.loads(chunk).get("action", "unknown"))
+    except (ValueError, AttributeError):
+        pass
+    return "no-json"
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     py = desk_python()
@@ -259,10 +295,12 @@ def main(argv=None) -> int:
     except (OSError, ValueError):
         pass
     held = held_underliers(args.env_file)
+    why: dict = {}
     if held is None:
         candidates = []  # fail-closed: no entries without verified holdings
     else:
         regime = _regime()
+        weak = weak_rows(args.weak_screen)
         if args.direction == "auto" and regime == "RISK_OFF":
             # Down tape: the ranked top-N is all strength, so one bad day
             # never surfaces. Read the weakest-momentum tail as puts instead,
@@ -270,23 +308,26 @@ def main(argv=None) -> int:
             feed = "weak"
             candidates = gated_candidates(None, args.screen_top, args.max_rsi,
                                           held, args.direction,
-                                          rows=weak_rows(args.weak_screen),
-                                          force_side="put")
+                                          rows=weak, force_side="put")
+            _record_why(why, weak, "weak", "put")
         else:
             feed = "ranked"
             candidates = gated_candidates(args.screen, args.screen_top,
                                           args.max_rsi, held, args.direction)
+            _record_why(why, weak, "weak", None)
         print(f"[entry] screen {screen_date} held={sorted(held)} "
               f"regime={regime} feed={feed} "
               f"candidates={candidates[:args.max_tries]}")
     pilot_exec = "--execute" if args.execute else "--dry-run"
     for symbol, side in candidates[:args.max_tries]:
+        reason = why.get(symbol, "no screen row (reason unavailable)")
         liquid_ok, liquid_reason = liquid_signal_filter(symbol, side,
-                                                        args.liquid_signals)
+                                                       args.liquid_signals)
         if not liquid_ok:
-            print(f"[entry] skip {symbol} {side} -> {liquid_reason}")
+            print(f"[entry] skip {symbol} {side} -> {liquid_reason} | {reason}")
             continue
         # Zone confluence gate (POC + supply/demand), fail-open on any error.
+        zone_note = "zone n/a"
         try:
             from scripts.zone_analysis import analyze
 
@@ -296,8 +337,9 @@ def main(argv=None) -> int:
             wanted = "long" if side == "call" else "short"
             if ((code == "long_blocked" and wanted == "long")
                     or (code == "short_blocked" and wanted == "short")):
-                print(f"[entry] skip {symbol} {side} -> zone {code}")
+                print(f"[entry] skip {symbol} {side} -> zone {code} | {reason}")
                 continue
+            zone_note = f"zone {code}"
         except Exception:  # noqa: BLE001 - a zone bug never blocks the loop
             pass
         rc, out, err = run([py, "scripts/options_pilot.py",
@@ -306,15 +348,19 @@ def main(argv=None) -> int:
                             "--max-contracts", str(args.max_contracts),
                             "--max-positions", str(args.max_positions),
                             pilot_exec])
+        # The pilot's own JSON is the authoritative record of what it did.
+        action = _pilot_action(out)
+        detail = f"{reason} | {zone_note} | liquid ok | pilot {action}"
         if '"action": "buy_placed"' in out:
             placed = f"{symbol} {side}"
-            print(f"[entry] PLACED {placed}")
+            print(f"[entry] PLACED {placed} | {detail}")
             break
         if '"action": "dry_run_buy"' in out:
             placed = f"{symbol} {side} (dry-run)"
-            print(f"[entry] would place {placed}")
+            print(f"[entry] would place {placed} | {detail}")
             break
-        print(f"[entry] skip {symbol} {side} -> {_tail(out) or _tail(err)}")
+        print(f"[entry] skip {symbol} {side} -> {_tail(out) or _tail(err)} "
+              f"| {detail}")
 
     # 3. NOTIFY -- the watch that triggered this run.
     if not args.no_notify:
