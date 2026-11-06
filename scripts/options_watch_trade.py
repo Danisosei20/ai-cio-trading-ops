@@ -15,6 +15,12 @@ Entry gate (all deterministic, mirror of the trading-playbook):
   - RSI <= --max-rsi (default 73; playbook: <=~70 usable, avoid >75-77)
   - underlier not already held (no doubling a name)
   - direction follows 20d momentum (mom20 >= 0 -> call, else put)
+  - regime: SPY below its 50-day mean (RISK_OFF) with --direction auto swaps
+    the feed to the screener's weak-momentum tail (weak.json) and pins puts,
+    because a one-day slide cannot flip a 20-day lookback and the ranked
+    top-N only ever surfaces strength. Every other regime -- including
+    UNKNOWN, which fails closed -- and an explicit --direction call/put keep
+    the ranked feed unchanged.
   - S&P 500 constituent or ETF allowlist, premium <= cap, <=5 options,
     <=5 contracts, earnings blackout, session window -- all enforced
     downstream by options_pilot -> place_long_option. We never bypass.
@@ -38,9 +44,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 # Run as `python scripts/options_watch_trade.py` puts scripts/ (not the repo
-# root) on sys.path; robinhood_tools lives at the root.
+# root) on sys.path; robinhood_tools lives at the root. The fix has to run
+# before the robinhood_tools import below, not after it.
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from robinhood_tools.market_prices import _spy_closes, market_regime  # noqa: E402
+
 # TradingAgents venv interpreter. macOS source-machine path kept as default for
 # backwards compatibility; set TRADINGAGENTS_VENV_PYTHON per machine (Windows:
 # TradingAgents/.venv/Scripts/python.exe).
@@ -61,6 +71,9 @@ def desk_python() -> str:
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="15:10 options watch -> trade.")
     p.add_argument("--screen", default="outputs/screener/latest.json")
+    p.add_argument("--weak-screen", default="outputs/screener/weak.json",
+                   help="bear-book feed (weakest mom20 first), used only "
+                        "when the regime is RISK_OFF")
     p.add_argument("--screen-top", type=int, default=5)
     p.add_argument("--max-rsi", type=float, default=73.0,
                    help="skip names above this RSI (overbought gas)")
@@ -82,13 +95,25 @@ def parse_args(argv=None):
 
 
 def gated_candidates(screen_path: str | Path, top: int, max_rsi: float,
-                     held: set[str], direction: str = "auto") -> list[tuple[str, str]]:
-    """Pure: rank-ordered (symbol, direction) that clear the RSI/held gate."""
-    try:
-        doc = json.loads(Path(screen_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    rows = doc.get("ranked") or doc.get("rows") or []
+                     held: set[str], direction: str = "auto", *,
+                     rows: list[dict] | None = None,
+                     force_side: str | None = None) -> list[tuple[str, str]]:
+    """Pure: rank-ordered (symbol, direction) that clear the RSI/held gate.
+
+    One gate for both books. `rows` supplies the feed directly (the
+    weak-momentum tail under RISK_OFF) instead of reading `screen_path`, and
+    `force_side` pins the side for every emitted pair -- but the held filter,
+    the RSI cap, the symbol cleanup and the `top` truncation are the same
+    code either way. A second filter for the bear book would silently drop
+    "no doubling a name" and the RSI cap, which is exactly the defect this
+    shape avoids.
+    """
+    if rows is None:
+        try:
+            doc = json.loads(Path(screen_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        rows = doc.get("ranked") or doc.get("rows") or []
     out: list[tuple[str, str]] = []
     for row in rows:
         if len(out) >= top:
@@ -100,13 +125,49 @@ def gated_candidates(screen_path: str | Path, top: int, max_rsi: float,
         rsi = row.get("rsi")
         if rsi is not None and float(rsi) > max_rsi:
             continue
-        if direction != "auto":
+        if force_side is not None:
+            side = force_side
+        elif direction != "auto":
             side = direction
         else:
-            mom = row.get("mom20")
-            side = "call" if (mom is None or float(mom) >= 0) else "put"
+            side = _direction_for_row(row)
         out.append((symbol, side))
     return out
+
+
+def _direction_for_row(row: dict, regime: str = "auto") -> str:
+    """Per-row side rule: mom20 >= 0 -> call, else put.
+
+    `regime` is accepted so a per-row regime rule has a seam, and is
+    deliberately not read today: no regime flips this answer. RISK_OFF is
+    applied upstream instead, by choosing the weak feed and pinning the side,
+    so the per-row rule stays identical for whatever rows it is handed.
+    """
+    mom = row.get("mom20")
+    return "call" if (mom is None or float(mom) >= 0) else "put"
+
+
+def _regime() -> str:
+    """RISK_ON / CHOP / RISK_OFF / UNKNOWN, failing closed to UNKNOWN.
+
+    `market_regime` is pure; `_spy_closes` is the only network edge and
+    already returns [] on any failure (which maps to UNKNOWN). The try/except
+    keeps a surprise here from costing the run its entries.
+    """
+    try:
+        return market_regime(_spy_closes())
+    except Exception:  # noqa: BLE001 - an unreadable regime is never RISK_ON
+        return "UNKNOWN"
+
+
+def weak_rows(path: str | Path) -> list[dict]:
+    """Bear-book rows out of the screener's weak.json tail. [] on any error."""
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        rows = doc.get("weak")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return rows if isinstance(rows, list) else []
 
 
 def held_underliers(env_file: str) -> set[str] | None:
@@ -201,9 +262,22 @@ def main(argv=None) -> int:
     if held is None:
         candidates = []  # fail-closed: no entries without verified holdings
     else:
-        candidates = gated_candidates(args.screen, args.screen_top, args.max_rsi,
-                                      held, args.direction)
+        regime = _regime()
+        if args.direction == "auto" and regime == "RISK_OFF":
+            # Down tape: the ranked top-N is all strength, so one bad day
+            # never surfaces. Read the weakest-momentum tail as puts instead,
+            # through the same gate below (held + RSI + top).
+            feed = "weak"
+            candidates = gated_candidates(None, args.screen_top, args.max_rsi,
+                                          held, args.direction,
+                                          rows=weak_rows(args.weak_screen),
+                                          force_side="put")
+        else:
+            feed = "ranked"
+            candidates = gated_candidates(args.screen, args.screen_top,
+                                          args.max_rsi, held, args.direction)
         print(f"[entry] screen {screen_date} held={sorted(held)} "
+              f"regime={regime} feed={feed} "
               f"candidates={candidates[:args.max_tries]}")
     pilot_exec = "--execute" if args.execute else "--dry-run"
     for symbol, side in candidates[:args.max_tries]:
