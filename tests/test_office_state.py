@@ -8,6 +8,44 @@ from scripts import desk_fleet
 from scripts.office_state import outcome, publish, snapshot
 
 
+class PositionDirectionTests(unittest.TestCase):
+    """Long/short means MARKET EXPOSURE, not contract side.
+
+    2026-11-06: `direction = "long" if qty > 0 else "short"` classified a
+    bought put as "long" because the qty is positive (you own the contracts).
+    The dashboard therefore reported the entire bearish book as
+    "Long - 4 / Short - 0" and told the operator they had no short exposure
+    while four puts were open.
+    """
+
+    def setUp(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "trading_state", Path("scripts/trading_state.py"))
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+    def test_a_bought_put_is_short_exposure(self):
+        self.assertEqual(self.mod._position_direction("RDDT261218P00090000", 5),
+                         "short")
+
+    def test_a_bought_call_is_long_exposure(self):
+        self.assertEqual(self.mod._position_direction("ACN261120C00260000", 2),
+                         "long")
+
+    def test_equity_is_long_when_held(self):
+        self.assertEqual(self.mod._position_direction("NVDA", 3), "long")
+
+    def test_negative_qty_is_short(self):
+        self.assertEqual(self.mod._position_direction("F261120C00015000", -2),
+                         "short")
+
+    def test_unparsable_contract_is_not_assumed_short(self):
+        self.assertEqual(self.mod._position_direction("NOTACONTRACT", 5),
+                         "long")
+
+
 class OfficeStateTests(unittest.TestCase):
     def test_failures_are_not_completed(self):
         self.assertEqual(outcome({"runs": [{"returncode": 1}]}), "blocked")

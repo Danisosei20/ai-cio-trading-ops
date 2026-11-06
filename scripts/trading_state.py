@@ -82,6 +82,26 @@ def _objective(today: str) -> dict:
     return out
 
 
+def _position_direction(symbol: str, qty: float) -> str:
+    """Long/short by MARKET EXPOSURE, not by contract side.
+
+    A bought put carries a positive qty (you own the contracts) but profits
+    when the underlying falls. Classifying on qty alone reported four short
+    puts as "Long - 4 / Short - 0", which reads as no downside exposure when
+    the entire book is bearish - the operator asked for short exposure and the
+    dashboard told them they had none.
+    """
+    if qty <= 0:
+        return "short"
+    if len(symbol) > 10:  # OCC contract, not an equity symbol
+        try:
+            from robinhood_tools.options import occ_details
+            return "short" if occ_details(symbol).right == "put" else "long"
+        except Exception:  # noqa: BLE001 - unparsable contract is not a short
+            return "long"
+    return "long"
+
+
 def _positions() -> list[dict]:
     try:
         from robinhood_tools.alpaca_paper import (AlpacaPaperBackend,
@@ -93,7 +113,7 @@ def _positions() -> list[dict]:
         out = []
         for p in backend.list_positions():
             qty = float(p.get("qty", 0))
-            direction = "long" if qty > 0 else "short"
+            direction = _position_direction(str(p.get("symbol", "")), qty)
             pos = {k: p.get(k) for k in
                    ("symbol", "qty", "avg_entry_price", "current_price",
                     "market_value", "unrealized_pl", "unrealized_plpc")}
