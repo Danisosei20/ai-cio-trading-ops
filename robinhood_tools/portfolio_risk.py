@@ -4,13 +4,21 @@
 Every strategy (equities, day trades, options, overnight) must pass through
 this controller before any order reaches Alpaca. It enforces:
 
-  - Global exposure limits (total open notional across all strategies)
+  - Direction-aware exposure limits: the long book and the short book are
+    separate ledgers, each capped on its own, so a short no longer dies at a
+    cap the long book is already using
   - Position count limits (max open positions)
   - Drawdown limits (max daily/weekly loss)
   - Duplicate order protection (same symbol+side within cooldown window)
   - Stale data detection (market data older than threshold → block)
   - Global kill switch (file-based, instant halt)
   - Restart recovery (state persisted to disk, reloaded on startup)
+
+Direction: without `direction`/`short` a call behaves exactly as it always
+has — `buy` opens a long and `sell` releases it. With `short=True` (or
+`direction="short"`) the buy/sell meaning inverts: a `sell` opens the short
+book and a `buy` releases it. A long `sell` that releases a held position is
+never booked as a short entry.
 
 Usage:
   # As a Python module:
@@ -24,6 +32,10 @@ Usage:
 
   # As a CLI gate (exit 0 = approved, exit 1 = rejected):
   python scripts/portfolio_risk_check.py --symbol NVDA --side buy --notional 500 --strategy overnight
+  python scripts/portfolio_risk_check.py --symbol NVDA --side sell --notional 500 \\
+      --strategy intraday --short          # short entry, charged to the short book
+  python scripts/portfolio_risk_check.py --symbol NVDA --side sell --notional 500 \\
+      --strategy intraday --direction short   # equivalent spelling
 """
 from __future__ import annotations
 
@@ -87,11 +99,31 @@ class RiskVerdict:
 class RiskState:
     """Persisted state for restart recovery."""
     last_updated: str = ""
-    open_positions: dict = field(default_factory=dict)  # symbol -> {strategy, notional, entered_at}
+    open_positions: dict = field(default_factory=dict)  # symbol -> {strategy, notional, entered_at, direction}
+    # Same keys as open_positions, grouped by direction:
+    # {"long": {symbol: {...}}, "short": {symbol: {...}}}. Derived data —
+    # open_positions stays the source of truth; _regroup() rebuilds this.
+    book: dict = field(default_factory=lambda: {"long": {}, "short": {}})
     recent_orders: list = field(default_factory=list)     # [{symbol, side, ts, strategy}]
     daily_pnl_baseline: float = 0.0
     peak_equity: float = 0.0
     kill_switch: bool = False
+
+    def _regroup(self) -> None:
+        """Rebuild `book` from open_positions' stored direction.
+
+        A row with no `direction` — a ledger written before direction was
+        tracked — is long, which is what the old behaviour assumed. Never
+        saves; the controller saves after the call.
+        """
+        long_book: dict = {}
+        short_book: dict = {}
+        for symbol, pos in (self.open_positions or {}).items():
+            if pos.get("direction") == "short":
+                short_book[symbol] = pos
+            else:
+                long_book[symbol] = pos
+        self.book = {"long": long_book, "short": short_book}
 
 
 class PortfolioRiskController:
@@ -104,20 +136,38 @@ class PortfolioRiskController:
         self.state = self._load_state()
         self._duplicate_cooldown_sec = 300  # 5 min cooldown between same symbol+side
         self._stale_data_threshold_sec = 120  # market data older than 2 min = stale
-        self._max_total_notional = Decimal("5000")  # account-level cap
+        self._max_total_notional = Decimal("5000")  # account-level cap; the per-book cap below is the gate
+        self._max_book_notional = Decimal("5000")  # per book: long, and short, counted separately
         self._max_open_positions = 5
         self._max_daily_loss_pct = 0.03  # 3% daily loss limit
         self._max_weekly_loss_pct = 0.07  # 7% weekly loss limit
+
+    def _book_notional(self, book: str) -> Decimal:
+        """Open notional in one book ("long" or "short")."""
+        return sum((Decimal(str(v.get("notional", 0)))
+                    for v in self.state.book.get(book, {}).values()), Decimal("0"))
+
+    @staticmethod
+    def _is_short(direction: str | None, short: bool | None) -> bool:
+        """Resolve which book an order touches. Absent direction = long."""
+        if short is not None:
+            return bool(short)
+        return direction == "short"
 
     def _load_state(self) -> RiskState:
         if self.state_path.exists():
             try:
                 raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-                return RiskState(**{k: v for k, v in raw.items()
-                                   if k in RiskState.__dataclass_fields__})
+                state = RiskState(**{k: v for k, v in raw.items()
+                                     if k in RiskState.__dataclass_fields__})
             except (json.JSONDecodeError, TypeError, OSError):
-                pass
-        return RiskState()
+                return RiskState()
+        else:
+            return RiskState()
+        # A ledger written before direction existed has no `book` and its rows
+        # carry no `direction`, so regroup them as longs.
+        state._regroup()
+        return state
 
     def _save_state(self) -> None:
         self.state.last_updated = datetime.now(ET).isoformat()
@@ -163,11 +213,20 @@ class PortfolioRiskController:
                 continue
         return False
 
-    def check_exposure(self, symbol: str, notional: Decimal) -> tuple[bool, str]:
-        """Check if adding this position would exceed exposure limits."""
-        total = sum(Decimal(str(v.get("notional", 0))) for v in self.state.open_positions.values())
-        if total + notional > self._max_total_notional:
-            return False, f"total exposure {total}+{notional} > {self._max_total_notional}"
+    def check_exposure(self, symbol: str, notional: Decimal,
+                       short: bool = False) -> tuple[bool, str]:
+        """Check if adding this position would exceed its book's exposure cap.
+
+        Long and short notional are counted separately: each book is capped at
+        `_max_book_notional`, so a short entry is invisible to the long book
+        (and vice versa) instead of being charged a budget that is already
+        tracking something else.
+        """
+        book = "short" if short else "long"
+        total = self._book_notional(book)
+        if total + notional > self._max_book_notional:
+            label = "short exposure" if short else "total exposure"
+            return False, f"{label} {total}+{notional} > {self._max_book_notional}"
         if len(self.state.open_positions) >= self._max_open_positions and symbol not in self.state.open_positions:
             return False, f"max open positions ({self._max_open_positions}) reached"
         return True, "ok"
@@ -194,8 +253,14 @@ class PortfolioRiskController:
 
     def check(self, symbol: str, side: str, notional: Decimal | float,
              strategy: str, data_age_sec: float = 0,
-             current_equity: float = 0) -> RiskVerdict:
-        """Single entry point. Returns approved/rejected with reasons."""
+             current_equity: float = 0, direction: str | None = None,
+             short: bool | None = None) -> RiskVerdict:
+        """Single entry point. Returns approved/rejected with reasons.
+
+        `direction`/`short` say which book this order touches. With no
+        direction the call is a long order, exactly as before: a `buy` is
+        charged to the long book and a `sell` releases it.
+        """
         # Atomic: acquire lock before reading state
         try:
             fd = _acquire_lock()
@@ -206,6 +271,7 @@ class PortfolioRiskController:
             self.state = self._load_state()
             checks = {}
             notional = Decimal(str(notional))
+            is_short = self._is_short(direction, short)
 
             # 1. Kill switch
             if self.check_kill_switch():
@@ -218,7 +284,7 @@ class PortfolioRiskController:
                 return RiskVerdict(False, f"duplicate {side} {symbol} within {self._duplicate_cooldown_sec}s cooldown", checks)
 
             # 3. Exposure limits
-            ok, reason = self.check_exposure(symbol, notional)
+            ok, reason = self.check_exposure(symbol, notional, short=is_short)
             checks["exposure"] = reason
             if not ok:
                 return RiskVerdict(False, reason, checks)
@@ -243,8 +309,16 @@ class PortfolioRiskController:
             _release_lock(fd)
 
     def record_order(self, symbol: str, side: str, strategy: str,
-                     notional: Decimal | float = 0) -> None:
-        """Record a placed order for duplicate detection and exposure tracking."""
+                     notional: Decimal | float = 0,
+                     direction: str | None = None,
+                     *, short: bool | None = None) -> None:
+        """Record a placed order for duplicate detection and exposure tracking.
+
+        `direction`/`short` say which book this order touches. With no
+        direction, `buy` opens a long and `sell` releases it (today's
+        behaviour, unchanged). With `short=True` the meaning inverts: a `sell`
+        opens the short book and a `buy` releases it.
+        """
         try:
             fd = _acquire_lock()
         except TimeoutError:
@@ -261,14 +335,19 @@ class PortfolioRiskController:
                 o for o in self.state.recent_orders
                 if datetime.fromisoformat(o["ts"]) > cutoff
             ]
-            # Track exposure
-            if side == "buy":
+            # Track exposure. `open_positions` stays the source of truth; the
+            # direction stored on the row is what _regroup() groups by.
+            is_short = self._is_short(direction, short)
+            opens = (side == "sell") if is_short else (side == "buy")
+            if opens:
                 self.state.open_positions[symbol] = {
                     "strategy": strategy, "notional": str(notional),
                     "entered_at": datetime.now(ET).isoformat(),
+                    "direction": "short" if is_short else "long",
                 }
-            elif side == "sell":
+            else:
                 self.state.open_positions.pop(symbol, None)
+            self.state._regroup()
             self._save_state()
         finally:
             _release_lock(fd)
@@ -276,16 +355,25 @@ class PortfolioRiskController:
     def remove_position(self, symbol: str) -> None:
         """Remove a position from tracking (after exit)."""
         self.state.open_positions.pop(symbol, None)
+        self.state._regroup()
         self._save_state()
 
     def status(self) -> dict:
         """Current controller status."""
+        long_notional = self._book_notional("long")
+        short_notional = self._book_notional("short")
         return {
             "kill_switch": self.check_kill_switch(),
             "open_positions": self.state.open_positions,
             "recent_orders_24h": len(self.state.recent_orders),
             "peak_equity": self.state.peak_equity,
             "last_updated": self.state.last_updated,
+            "exposure": {
+                "long_notional": float(long_notional),
+                "short_notional": float(short_notional),
+                "max_per_book": float(self._max_book_notional),
+                "total_notional": float(long_notional + short_notional),
+            },
         }
 
 
@@ -299,6 +387,10 @@ def main(argv=None) -> int:
     p.add_argument("--strategy", default="unknown")
     p.add_argument("--data-age", type=float, default=0)
     p.add_argument("--equity", type=float, default=0)
+    p.add_argument("--direction", choices=["long", "short"], default="long",
+                   help="book this order touches (default: long)")
+    p.add_argument("--short", action="store_true",
+                   help="shorthand for --direction short: a sell opens the short book")
     p.add_argument("--engage-kill", action="store_true")
     p.add_argument("--clear-kill", action="store_true")
     args = p.parse_args(argv)
@@ -314,12 +406,17 @@ def main(argv=None) -> int:
         print("kill switch cleared")
         return 0
 
+    # Without --short/--direction short a sell is recorded as a release, so the
+    # short book would silently read zero while the position is live.
+    short = True if args.short else None
     verdict = ctrl.check(args.symbol, args.side, Decimal(str(args.notional)),
-                         args.strategy, args.data_age, args.equity)
+                         args.strategy, args.data_age, args.equity,
+                         direction=args.direction, short=short)
     print(json.dumps({"approved": verdict.approved, "reason": verdict.reason,
                       "checks": verdict.checks}))
     if verdict.approved:
-        ctrl.record_order(args.symbol, args.side, args.strategy, args.notional)
+        ctrl.record_order(args.symbol, args.side, args.strategy, args.notional,
+                          direction=args.direction, short=short)
     return 0 if verdict.approved else 1
 
 
