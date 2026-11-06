@@ -336,17 +336,19 @@ class PortfolioRiskController:
                 if datetime.fromisoformat(o["ts"]) > cutoff
             ]
             # Track exposure. `open_positions` stays the source of truth; the
-            # direction stored on the row is what _regroup() groups by.
+            # direction stored on the row is what _regroup() groups by. A side
+            # that is neither buy nor sell still does nothing, as before.
             is_short = self._is_short(direction, short)
-            opens = (side == "sell") if is_short else (side == "buy")
-            if opens:
-                self.state.open_positions[symbol] = {
-                    "strategy": strategy, "notional": str(notional),
-                    "entered_at": datetime.now(ET).isoformat(),
-                    "direction": "short" if is_short else "long",
-                }
-            else:
-                self.state.open_positions.pop(symbol, None)
+            if side in ("buy", "sell"):
+                opens = (side == "sell") if is_short else (side == "buy")
+                if opens:
+                    self.state.open_positions[symbol] = {
+                        "strategy": strategy, "notional": str(notional),
+                        "entered_at": datetime.now(ET).isoformat(),
+                        "direction": "short" if is_short else "long",
+                    }
+                else:
+                    self.state.open_positions.pop(symbol, None)
             self.state._regroup()
             self._save_state()
         finally:
