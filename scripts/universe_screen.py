@@ -6,12 +6,19 @@ Long-only momentum screen with documented scoring (no black box):
 Filters: price>$10, dollar volume>=$10M/day, RSI<80, >=60 bars.
 Earnings are NOT screened here (checked per-trade at gate time).
 
+rank() leads with that score for the long book. rank_weak() scores the same
+way but sorts the other way, so a RISK_OFF tape can read weak names off disk
+instead of refetching the universe.
+
   ../TradingAgents/.venv/bin/python scripts/universe_screen.py \
     --top 20 --out outputs/screener/latest.json
   ../TradingAgents/.venv/bin/python scripts/tradingagents_paper_auto.py \
     --screen --screen-top 2
 
 Output JSON: {"date": ..., "universe": 503, "ranked": [...top...]}.
+latest.json keeps that shape exactly (long book only). weak.json repeats the
+same payload plus a 20-name "weak" tail ordered by weakest mom20, so the
+options watch has put candidates without a network call.
 The auto-trader's --screen flag consumes it (skips held/cooldown symbols
 via the ledger at trade time).
 """
@@ -94,6 +101,50 @@ def rank(rows: list[dict], top: int) -> list[dict]:
     return scored[:top]
 
 
+def rank_weak(rows: list[dict], top: int) -> list[dict]:
+    """Bear-book tail: same score as rank, weakest momentum first.
+
+    Scores every row exactly as rank does (same weights, same z-score
+    denominator guard) so a symbol carries one score whichever book reads
+    it, then sorts ascending by mom20 and truncates to top. Pure function,
+    unit-tested.
+
+    A single row cannot divide by zero: pstdev is 0 there and the existing
+    "or 1e-9" guard keeps the z-scores finite. features() always sets a
+    float mom20, so no None guard is needed.
+    """
+    import statistics
+
+    def z(key: str) -> list[float]:
+        vals = [r[key] for r in rows]
+        mu = statistics.fmean(vals)
+        sd = statistics.pstdev(vals) or 1e-9
+        return [(v - mu) / sd for v in vals]
+
+    z_mom, z_rv, z_52 = z("mom20"), z("relvol"), z("dist52w")
+    scored = [{**r, "score": round(0.5 * a + 0.3 * b + 0.2 * c, 3)}
+              for r, a, b, c in zip(rows, z_mom, z_rv, z_52)]
+    scored.sort(key=lambda r: r["mom20"])
+    return scored[:top]
+
+
+def screener_payload(rows: list[dict], ranked: list[dict], universe: int,
+                     weak: list[dict] | None = None,
+                     when: str | None = None) -> dict:
+    """Build the payload both screener files share.
+
+    "weak" is opt-in: latest.json must stay byte-identical to the long-only
+    shape, so only the bear path passes the tail. "when" defaults to today;
+    main() threads --end through it so a dated run names its dated file
+    after the bars it screened.
+    """
+    payload = {"date": when or date.today().isoformat(),
+               "universe": universe, "screened": len(rows), "ranked": ranked}
+    if weak is not None:
+        payload["weak"] = weak
+    return payload
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Rank the S&P 500 for the morning run.")
     ap.add_argument("--top", type=int, default=20)
@@ -120,14 +171,21 @@ def main(argv=None) -> int:
         if feat:
             rows.append({"symbol": symbol.replace("-", "."), **feat})
     ranked = rank(rows, a.top)
+    weak = rank_weak(rows, 20)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"date": a.end or date.today().isoformat(),
-               "universe": len(symbols), "screened": len(rows), "ranked": ranked}
+    stamp = a.end or date.today().isoformat()
+    payload = screener_payload(rows, ranked, len(symbols), when=stamp)
     out.write_text(json.dumps(payload, indent=2))
     dated = out.parent / f"{payload['date']}.json"
     dated.write_text(json.dumps(payload, indent=2))
+    bear = screener_payload(rows, ranked, len(symbols), weak=weak, when=stamp)
+    weak_out = out.parent / "weak.json"
+    weak_out.write_text(json.dumps(bear, indent=2))
+    weak_dated = out.parent / f"weak-{bear['date']}.json"
+    weak_dated.write_text(json.dumps(bear, indent=2))
     print(f"screened={len(rows)} top={len(ranked)} -> {out}")
+    print(f"weak={len(weak)} -> {weak_out}")
     for r in ranked[:10]:
         print(f"{r['symbol']:8} score={r['score']:6.2f} mom20={r['mom20']:7.1%} "
               f"rvol={r['relvol']:5.1f} rsi={r['rsi']:4.1f} ${r['price']:.2f}")
