@@ -439,7 +439,12 @@ def _run_cycle(args, py: str) -> str | None:
     # 3. NOTIFY -- the watch that triggered this run. Only on a change: a loop
     # that Slack-messages every cycle is a loop nobody reads.
     if placed and not args.no_notify:
-        rc, out, err = run([py, "scripts/options_watchlist.py", "--send"])
+        # The notify report must use the cap the desk actually enforces, or
+        # the close message disagrees with the loop that printed it: a
+        # watchlist default of 1200 flagged a $1764 APP put "over cap" that
+        # the watch itself (cap 3000) would have accepted.
+        rc, out, err = run([py, "scripts/options_watchlist.py", "--send",
+                            "--premium-cap", str(args.premium_cap)])
         print(f"[notify] rc={rc} {_tail(out) or _tail(err)}")
 
     print(json.dumps({"exits_ran": not args.no_exits, "screen": screen_date,

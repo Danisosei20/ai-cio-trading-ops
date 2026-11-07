@@ -26,7 +26,7 @@ def parse_args(argv=None):
     p.add_argument("--tickers", default="")
     p.add_argument("--screen", default="outputs/screener/latest.json")
     p.add_argument("--screen-top", type=int, default=5)
-    p.add_argument("--premium-cap", type=Decimal, default=Decimal("1200"))
+    p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--send", action="store_true")
     p.add_argument("--config", default="config/approval_routes.json")
