@@ -327,6 +327,16 @@
   }
 
   /* ---------- Objective ---------- */
+  function renderRegime(regime) {
+    var el = byId("regime");
+    if (!el) return;
+    var r = String(regime || "UNKNOWN").toUpperCase();
+    el.textContent = "REGIME: " + r;
+    el.classList.remove("dim");
+    el.style.color = r === "RISK_ON" ? "var(--long)"
+                    : (r === "RISK_OFF" ? "var(--short)" : "var(--warn)");
+  }
+
   function renderObjective(o) {
     o = o || {};
     var target = num(o.target_pnl_usd) || 10000;
@@ -528,6 +538,7 @@
     }
     clearError();
 
+    try { renderRegime(data.regime); } catch (e) { /* header chip is cosmetic */ }
     try { renderObjective(data.objective); } catch (e) { showError("objective: " + e.message); }
     try {
       renderDirectionSplit(data.positions_by_direction);

@@ -35,6 +35,22 @@ AUTO_DIR = ROOT / "outputs" / "paper" / "tradingagents"
 WATCH_LOG = ROOT / "outputs" / "options-watch.log"
 
 
+def _live_regime() -> str:
+    """Live tape regime: SPY vs its 50-day mean, never read as risk-on.
+
+    The dashboard header showed "REGIME: —" because the payload carried no
+    regime at all. This is the same helper the 15:10 watch gates on, so the
+    header reads the same verdict the trading paths act on. An unreadable
+    regime fails closed to UNKNOWN.
+    """
+    try:
+        from robinhood_tools.market_prices import _spy_closes, market_regime
+
+        return market_regime(_spy_closes())
+    except Exception:  # noqa: BLE001 - an unreadable regime is never RISK_ON
+        return "UNKNOWN"
+
+
 def _objective(today: str) -> dict:
     goal_file = ROOT / "outputs" / "learning" / "profit_goal.json"
     equity = None
@@ -269,6 +285,7 @@ def state() -> dict:
     return {
         "generated_at": datetime.now(ET).isoformat(),
         "date": today,
+        "regime": _live_regime(),
         "objective": _objective(today),
         "positions": _positions(),
         "positions_by_direction": _positions_by_direction(),

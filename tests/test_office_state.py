@@ -41,6 +41,30 @@ class PositionDirectionTests(unittest.TestCase):
         self.assertEqual(self.mod._position_direction("F261120C00015000", -2),
                          "short")
 
+    def test_live_regime_fails_closed_to_unknown(self):
+        """An unreadable regime must never read as RISK_ON."""
+        with patch.object(self.mod, "_live_regime", return_value="UNKNOWN"):
+            pass  # sanity: patching path works
+        with patch("robinhood_tools.market_prices._spy_closes",
+                   side_effect=RuntimeError("no data")):
+            self.assertEqual(self.mod._live_regime(), "UNKNOWN")
+
+    def test_state_carries_a_regime(self):
+        """The header chip needs the key in the payload (it showed "—")."""
+        import ast
+
+        tree = ast.parse(Path("scripts/trading_state.py").read_text(encoding="utf-8"))
+        keys = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Dict)
+                    and any(isinstance(k, ast.Constant) and k.value == "generated_at"
+                            for k in node.keys)):
+                for k in node.keys:
+                    if isinstance(k, ast.Constant):
+                        keys.add(k.value)
+        self.assertIn("regime", keys,
+                      "state() must publish the live regime for the header")
+
     def test_unparsable_contract_is_not_assumed_short(self):
         self.assertEqual(self.mod._position_direction("NOTACONTRACT", 5),
                          "long")
