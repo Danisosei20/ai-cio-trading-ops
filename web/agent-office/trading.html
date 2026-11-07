@@ -356,7 +356,7 @@
 
   /* ---------- Direction split (long/short pills) ---------- */
   function renderDirectionSplit(rec) {
-    split = rec.positions_by_direction || {};
+    var split = rec && rec.positions_by_direction || {};
     var l = split.long  || { count: 0, unrealized_pl: 0 };
     var s = split.short || { count: 0, unrealized_pl: 0 };
     byId("positions-dir").innerHTML =
