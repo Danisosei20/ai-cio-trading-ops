@@ -190,6 +190,21 @@ def current_quote(symbol: str, data_client=None) -> tuple[Decimal, str, str]:
     return quote.price, quote.source, quote.as_of
 
 
+def _is_nim_toolcall_parse_error(exc: BaseException) -> bool:
+    """True when NIM 400s on the model's own tool-call emission.
+
+    Seen live on PTC 2026-10-28, HII 2026-10-29 and QQQ/TSLA 2026-11-02:
+    ``ValueError: {'message': 'unexpected tokens remaining in message header:
+    Some("to=functions.get_indicators")', 'type': 'BadRequestError',
+    'code': 400}``. NIM parses the assistant message with a function-call
+    grammar and the model emitted something it could not read, so the whole
+    propagate raises and the ticker records no decision at all.
+    """
+    text = str(exc)
+    return ("unexpected tokens remaining in message header" in text
+            or ("BadRequestError" in text and "to=functions." in text))
+
+
 def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -217,7 +232,19 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     selected = [a.strip() for a in args.analysts.split(",") if a.strip()]
     try:
         ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
-        state, decision = ta.propagate(ticker, trade_date)
+        try:
+            state, decision = ta.propagate(ticker, trade_date)
+        except Exception as exc:  # noqa: BLE001 - one bounded retry, then out
+            if not _is_nim_toolcall_parse_error(exc):
+                raise
+            # NIM's parser choked on the model's tool-call emission, which
+            # killed the ticker with no decision. The emission is stochastic,
+            # so re-roll the same evidence path exactly once; a second failure
+            # propagates to the outer handler and still fails closed.
+            print(f"  NIM tool-call parse error for {ticker}; retrying once",
+                  flush=True)
+            ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
+            state, decision = ta.propagate(ticker, trade_date)
     except Exception as exc:  # noqa: BLE001 - degrade, never lose the ticker
         # Hosted judgment-tier endpoints 504/429 under the Research Manager's
         # heavy prompt (Step 5 on free NIM did it 3/3 on 2026-10-27). Fall back

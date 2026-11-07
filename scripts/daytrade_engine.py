@@ -54,7 +54,7 @@ MIN_REWARD_TO_RISK = Decimal("1.5")          # minimum 1.5:1 planned R:R
 MAX_DAY_TRADES = 2                           # max 2 simultaneous day trades
 NO_NEW_ENTRIES_AFTER = "15:15"               # no new entries after 3:15 PM ET
 FLATTEN_AT = "15:45"                         # flatten by 3:45 PM ET
-MAX_TOTAL_NOTIONAL = Decimal("5000")         # desk-wide cap
+MAX_TOTAL_NOTIONAL = Decimal("10000")        # desk-wide cap
 
 
 def _log(msg: str) -> None:
