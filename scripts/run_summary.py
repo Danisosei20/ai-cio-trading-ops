@@ -47,15 +47,37 @@ def collect(today: str) -> tuple[list[dict], list[dict]]:
     return records, shadows
 
 
+def _entries_from_watch_log(text: str, today: str) -> list[str]:
+    """PLACED lines belonging to today's watch runs, not the whole log.
+
+    2026-11-16: the 10:23 summary claimed "options entries: 13" while the
+    broker had placed exactly one order that day. The old parse collected
+    every `[entry] PLACED` line ever written to the log, so last week's
+    entries were still being counted as today's. The watch writes a dated
+    banner per run (`=== options watch started Mon 11/16/2026 ...`); an
+    entry belongs to the run whose banner introduced it. No matching
+    banner means no entries - an honest zero, never an inflated count.
+    """
+    banner = f"options watch started {datetime.strptime(today, '%Y-%m-%d').strftime('%a %m/%d/%Y')}"
+    entries: list[str] = []
+    in_today = False
+    for line in text.splitlines():
+        if line.startswith("=== options watch started"):
+            in_today = banner in line
+            continue
+        if in_today and "[entry] PLACED" in line:
+            entries.append(line.split("PLACED", 1)[1].strip())
+    return entries
+
+
 def _option_activity(today: str) -> tuple[list[str], str]:
     """Options-loop activity for the day: entries from the watch log, exits
     from the guard state. Returns (entries, exits_summary)."""
     entries: list[str] = []
     watch = ROOT / "outputs" / "options-watch.log"
     if watch.exists():
-        for line in watch.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "[entry] PLACED" in line:
-                entries.append(line.split("PLACED", 1)[1].strip())
+        entries = _entries_from_watch_log(
+            watch.read_text(encoding="utf-8", errors="replace"), today)
     exits = ""
     guard = ROOT / "outputs" / "paper" / "options_guard.json"
     if guard.exists():
