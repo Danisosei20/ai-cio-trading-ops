@@ -103,10 +103,25 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                  correlation_id=auth.approval_id, approval_id=auth.approval_id)
     placed = service.place_option_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
-    return {"action": "buy_placed", "contract": contract.option_symbol,
-            "qty": contracts, "limit": str(request.limit_price),
-            "premium": str(premium), "order_id": placed.id,
-            "status": placed.status, "approval_id": auth.approval_id}
+    result = {"action": "buy_placed", "contract": contract.option_symbol,
+              "qty": contracts, "limit": str(request.limit_price),
+              "premium": str(premium), "order_id": placed.id,
+              "status": placed.status, "approval_id": auth.approval_id}
+    # One Slack message per placed order (owner directive 2026-11-16). The
+    # end-of-run summary is not a substitute: 13 entries logged today with
+    # no per-order alert. Never blocks the order path.
+    try:
+        from .order_alerts import option_message, post_order_alert
+
+        post_order_alert(
+            settings=settings,
+            message=option_message(side="buy", contract=contract.option_symbol,
+                                   qty=contracts, limit=request.limit_price,
+                                   premium=premium, order_id=placed.id,
+                                   approval_id=auth.approval_id))
+    except Exception:  # noqa: BLE001 - alerting is best-effort, never fatal
+        pass
+    return result
 
 
 def close_long_option(*, settings, quote, contracts: int,
@@ -158,7 +173,22 @@ def close_long_option(*, settings, quote, contracts: int,
     db.approve(auth.approval_id)
     placed = service.place_option_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
-    return {"action": "sell_placed", "contract": contract.option_symbol,
-            "qty": contracts, "limit": str(request.limit_price),
-            "order_id": placed.id, "status": placed.status,
-            "approval_id": auth.approval_id}
+    result = {"action": "sell_placed", "contract": contract.option_symbol,
+              "qty": contracts, "limit": str(request.limit_price),
+              "order_id": placed.id, "status": placed.status,
+              "approval_id": auth.approval_id}
+    # One Slack message per placed exit (owner directive 2026-11-16): the
+    # guard closes positions all session and the operator only learned about
+    # it from the next run summary.
+    try:
+        from .order_alerts import option_message, post_order_alert
+
+        post_order_alert(
+            settings=settings,
+            message=option_message(side="sell", contract=contract.option_symbol,
+                                   qty=contracts, limit=request.limit_price,
+                                   order_id=placed.id,
+                                   approval_id=auth.approval_id))
+    except Exception:  # noqa: BLE001 - alerting is best-effort, never fatal
+        pass
+    return result

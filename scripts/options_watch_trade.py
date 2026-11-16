@@ -299,24 +299,59 @@ def _record_why(why: dict, rows: list, feed: str,
                        f"rsi={rsi:.0f} ${price:,.2f}")
 
 
+def _balanced_end(text: str, start: int) -> int:
+    """Index of the '}' matching the '{' at `start`, string-aware.
+
+    Returns -1 when the object never closes. Braces inside string values
+    (a contract symbol never has one, but a pandas warning dict does) do
+    not move the depth.
+    """
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
 def _pilot_action(pilot_out: str) -> str:
     """The pilot's own verdict, for the log. Plain text, never a guess.
 
-    Scans for the JSON object rather than requiring a line to start with `{`:
-    yfinance prints deprecation warnings to stdout during the quote fetch, so
-    the JSON is rarely the first thing on the line - which made this report
-    "no-json" for a purchase the pilot had actually confirmed.
+    Scans for the JSON object rather than requiring a line to start with
+    `{`: yfinance prints deprecation warnings during the quote fetch, and
+    the pilot prints its record with `json.dumps(rec, indent=2)`, so the
+    JSON is rarely one clean line. 2026-11-16: parsing line-by-line
+    reported "no-json" for 13 purchases the pilot had actually confirmed,
+    which hid every window/premium refusal reason from the log too.
     """
-    for chunk in (pilot_out or "").splitlines():
-        start = chunk.find("{")
-        if start < 0:
-            continue
-        try:
-            obj = json.loads(chunk[start:])
-        except ValueError:
-            continue
-        if isinstance(obj, dict) and "action" in obj:
-            return str(obj["action"])
+    text = pilot_out or ""
+    idx = text.find("{")
+    while idx >= 0:
+        end = _balanced_end(text, idx)
+        if end > idx:
+            try:
+                obj = json.loads(text[idx:end + 1])
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict) and "action" in obj:
+                return str(obj["action"])
+        idx = text.find("{", idx + 1)
     return "no-json"
 
 

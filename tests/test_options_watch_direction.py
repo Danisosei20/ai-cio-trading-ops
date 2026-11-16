@@ -31,6 +31,47 @@ SCR = load_module()
 gated_candidates = SCR.gated_candidates
 _regime = SCR._regime
 weak_rows = SCR.weak_rows
+_pilot_action = SCR._pilot_action
+
+
+class PilotActionParseTest(unittest.TestCase):
+    """The watch must read the pilot's verdict, whatever shape it arrives in.
+
+    2026-11-16: the pilot prints `json.dumps(rec, indent=2)` (multi-line),
+    and a yfinance/pandas deprecation line lands on stdout before it. The
+    old line-by-line parser reported "no-json" for 13 confirmed placements,
+    so the log claimed the pilot said nothing while the broker held the
+    orders - and every window/premium refusal reason was invisible too.
+    """
+
+    def test_multiline_indented_json_is_read(self):
+        out = ("INTC spot 56.27 (alpaca-iex 2026-11-16T14:23:11Z)\n"
+               "{\n"
+               '  "ticker": "INTC",\n'
+               '  "action": "buy_placed",\n'
+               '  "contract": "INTC261218P00050000",\n'
+               '  "qty": 2\n'
+               "}\n")
+        self.assertEqual(_pilot_action(out), "buy_placed")
+
+    def test_warning_line_before_the_json_is_skipped(self):
+        out = ("<stdin>:1: FutureWarning: ...\n"
+               "df.rename(columns={'Surprise (%)': 'Surprise(%)'}, "
+               "inplace=True)\n"
+               "{\n"
+               '  "ticker": "MRVL",\n'
+               '  "action": "skip",\n'
+               '  "reason": "premium ~$3000 exceeds $3000 cap"\n'
+               "}\n")
+        self.assertEqual(_pilot_action(out), "skip")
+
+    def test_single_line_json_still_works(self):
+        out = '{"ticker": "TER", "action": "dry_run_buy", "qty": 1}\n'
+        self.assertEqual(_pilot_action(out), "dry_run_buy")
+
+    def test_empty_output_is_no_json(self):
+        self.assertEqual(_pilot_action(""), "no-json")
+        self.assertEqual(_pilot_action("no output at all"), "no-json")
 
 
 class WeakFeedGateTest(unittest.TestCase):

@@ -143,7 +143,7 @@ class PaperFlowTest(unittest.TestCase):
                               earnings_date=date(2026, 11, 20),
                               take_profit_price=Decimal("276.00"),
                               bracket_stop_price=Decimal("211.60")),
-            database=self.db, service=service)
+            database=self.db, service=service, today=date(2026, 10, 6))
         self.assertEqual(result["take_profit"], "276.00")
         self.assertEqual(result["bracket_stop"], "211.60")
         self.assertIn(result["order_id"], sim.brackets)
@@ -172,7 +172,7 @@ class PaperFlowTest(unittest.TestCase):
                               earnings_date=date(2026, 11, 20),
                               take_profit_price=Decimal("276.00"),
                               bracket_stop_price=Decimal("211.60")),
-            database=self.db, service=service)
+            database=self.db, service=service, today=date(2026, 10, 6))
         events = sim.update_marks({"NVDA": Decimal("280.00")})
         self.assertEqual(events[0]["reason"], "target")
         self.assertEqual(result["status"], "filled")
