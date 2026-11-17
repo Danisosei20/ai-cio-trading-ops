@@ -112,6 +112,37 @@ def check_tasks() -> None:
                f"{len(TASKS)} registered and commands resolve")
 
 
+def check_office_autostart() -> None:
+    """The dashboard must come back after a reboot, not wait for a human.
+
+    2026-11-16: nothing started the office viewer - no scheduled task (the
+    desk tasks are InteractiveToken and can't be created non-interactively)
+    and no Run entry - so a reboot left /trading dark until someone started
+    agent_office.py by hand. It now autostarts from the HKCU Run entry;
+    this checks the entry exists AND its command resolves, the same
+    split-path class that hid three dead scheduled tasks.
+    """
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+            value, _ = winreg.QueryValueEx(key, "AI-Desk-Office-Viewer")
+    except OSError:
+        record("FAIL", "office autostart",
+               "HKCU Run entry AI-Desk-Office-Viewer missing; the viewer "
+               "will not come back after a reboot")
+        return
+    command = str(value).strip().strip('"')
+    if '"' in command:
+        command = command[command.index('"') + 1:]
+    if not Path(command).exists():
+        record("FAIL", "office autostart",
+               f"Run entry points at a missing file: {command}")
+        return
+    record("PASS", "office autostart", f"{Path(command).name} at logon")
+
+
 def check_repo_env() -> None:
     keys = {k: _env_value(REPO_ENV, k) for k in
             ("ALPACA_API_KEY", "ALPACA_SECRET_KEY", "SLACK_BOT_TOKEN", "SLACK_CHANNEL_ID")}
@@ -269,6 +300,7 @@ def main(argv=None) -> int:
     check_ta_venv()
     check_broker()
     check_office()
+    check_office_autostart()
     if args.full:
         run_tests()
         run_certification()
