@@ -36,11 +36,13 @@ def market_regime(spy_closes: list[float]) -> str:
     history -- which includes an empty `_spy_closes()` after a failed fetch --
     and callers fail closed on UNKNOWN rather than assuming RISK_ON.
 
-    Three other copies of this rule exist and are deliberately left alone:
-    `scripts/daytrade_backtest.py:84` (backtest-only),
-    `scripts/overnight_pilot.py:501` (broken, tracked separately), and the
-    live inline copy at `scripts/tradingagents_paper_auto.py:493-498`. Point
-    them here rather than adding a fourth.
+    Two other copies of this rule exist and are deliberately left alone:
+    `scripts/daytrade_backtest.py:84` (backtest-only) and the live inline
+    copy at `scripts/tradingagents_paper_auto.py:493-498` - which now
+    routes through regime_gate_passes() but keeps the same verdict.
+    `scripts/overnight_pilot.py` was a third copy (with a NameError bug)
+    and was pointed here on 2026-11-16. Point new callers here rather
+    than adding another.
     """
     if len(spy_closes) < 51:
         return "UNKNOWN"

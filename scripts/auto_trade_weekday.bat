@@ -30,6 +30,9 @@ REM runs once here and /trading reads the artifact, never re-simulating).
 REM What the current book does under any market scenario (spot moves,
 REM decay, IV shocks, gaps) - read-only, ~5s, one artifact for the desk.
 "%TA_PY%" scripts\scenario_analysis.py>>%LOG% 2>&1
+REM How the desk's REAL fills performed, split by regime / side / weekday /
+REM hold length - the actual track record, not a simulation.
+"%TA_PY%" scripts\performance_by_scenario.py>>%LOG% 2>&1
 REM Certify the execution paths AND the truth against the live broker
 REM (read-only: ledger vs positions, dashboard P/L vs broker). The
 REM --no-broker variant used to skip those two checks forever; after the
