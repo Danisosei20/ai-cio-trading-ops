@@ -43,13 +43,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+
+ET = ZoneInfo("America/New_York")
 from robinhood_tools.options import occ_details  # noqa: E402
 from robinhood_tools.options_flow import close_long_option  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -253,6 +256,13 @@ def main(argv=None) -> int:
     # (otherwise it would inherit an old date and trip STALE prematurely).
     held = {str(r.get("symbol")) for r in results if r.get("symbol")}
     state = {sym: rec for sym, rec in state.items() if sym in held}
+    if not results:
+        # Every run leaves a trace. A silent exit 0 is indistinguishable
+        # from "the guard did nothing" when there is nothing to do - and on
+        # 2026-11-17 that ambiguity made a correctly-working stop-loss look
+        # like an unfired one (the exit limit was working for 69 minutes).
+        print(json.dumps({"action": "no_open_option_positions",
+                          "checked_at": datetime.now(ET).isoformat()}))
 
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps({"updated": today.isoformat(), "tracked": state,
