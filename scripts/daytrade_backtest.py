@@ -384,7 +384,11 @@ def main(argv=None) -> int:
 
     text = json.dumps(result, indent=2)
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
+        out_path = Path(args.out)
+        # A run that finishes computing must not die writing its report:
+        # --out is routinely pointed at a new outputs/<subdir>/ path.
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(text, encoding="utf-8")
         print(f"written -> {args.out}")
     else:
         print(text)
