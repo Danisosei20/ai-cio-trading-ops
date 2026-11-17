@@ -50,9 +50,49 @@ def parse_args(argv=None):
                         "default. The spread, DTE, delta and OI gates are NOT "
                         "relaxed - only the volume floor.")
     p.add_argument("--close", default="", help="OCC symbol to sell-to-close")
+    p.add_argument("--odds-paths", type=int, default=4000,
+                   help="simulation paths for the entry odds gate")
+    p.add_argument("--min-ev-pct", type=float, default=0.0,
+                   help="minimum simulated EV on premium to open "
+                        "(default 0 = strictly positive; the owner can "
+                        "set a margin - under the winners-run policy a "
+                        "capped loss against an uncapped win prices "
+                        "positive by construction, so the margin is the "
+                        "only part that filters)")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
+
+
+def _odds_verdict(quote, ticker: str, today, args) -> dict:
+    """Simulate the candidate under the guard's exit bands.
+
+    Never raises: an odds error is itself a refusal (fail closed), the
+    same posture the equity odds gate takes.
+    """
+    try:
+        from robinhood_tools.options_gate import (
+            entry_odds_verdict,
+            sigma_for_underlier,
+        )
+
+        iv = float(quote.iv) if quote.iv else None
+        sigma = sigma_for_underlier(ticker, iv)
+        if sigma is None:
+            return {"approved": False,
+                    "reason": "odds gate: no vol estimate for "
+                              f"{ticker} (realized and quoted IV both "
+                              "missing) - fail closed"}
+        return entry_odds_verdict(
+            premium0=float(quote.mid()),
+            delta=float(quote.delta) if quote.delta is not None else 0.5,
+            spot0=float(quote.underlying_price), sigma=float(sigma),
+            expiry=quote.contract.expiry, today=today,
+            paths=getattr(args, "odds_paths", 4000),
+            min_ev_pct=getattr(args, "min_ev_pct", 0.0))
+    except Exception as exc:  # noqa: BLE001 - no odds means no entry
+        return {"approved": False,
+                "reason": f"odds gate error: {type(exc).__name__}: {exc}"}
 
 
 def main(argv=None) -> int:
@@ -148,6 +188,24 @@ def main(argv=None) -> int:
            "iv": str(quote.iv), "qty": contracts,
            "premium": str((Decimal(contracts) * quote.ask * 100).quantize(Decimal("0.01"))),
            "rejected_elsewhere": len(rejected)}
+    # Odds gate verdict (owner decision 2026-11-16): the contract's
+    # simulated EV under the guard's exit bands. Dry-run REPORTS it so the
+    # operator can see the gate's opinion before --execute; execute mode
+    # enforces it here (and place_long_option enforces it again at the
+    # choke point, so both entry paths are covered).
+    odds = _odds_verdict(quote, ticker, today, args)
+    rec["odds"] = {
+        "approved": odds.get("approved"),
+        "ev_pct_on_premium": odds.get("ev_pct_on_premium"),
+        "stop_first": odds.get("stop_first"),
+        "neither": odds.get("neither"),
+        "reason": odds.get("reason", ""),
+    }
+    if not odds.get("approved", False):
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "contract": quote.contract.option_symbol,
+                          "reason": odds.get("reason", "odds gate refused")}))
+        return 0
     if args.dry_run or not args.execute:
         rec["action"] = "dry_run_buy"
         print(json.dumps(rec, indent=2))

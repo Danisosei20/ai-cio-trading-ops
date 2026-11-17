@@ -628,7 +628,7 @@ def group_gates(rec: Recorder) -> None:
               f"_spy_closes()={closes} _regime()={regime}")
 
     # 2026-11-16 owner decisions, certified like any other execution gate.
-    from datetime import datetime
+    from datetime import date, datetime
     from zoneinfo import ZoneInfo
 
     from robinhood_tools.options_flow import weekend_gap_block
@@ -645,6 +645,59 @@ def group_gates(rec: Recorder) -> None:
               "put-AM/call-PM both allowed")
 
     from scripts.tradingagents_paper_auto import regime_gate_passes
+
+    # The options-entry odds gate (owner decision 2026-11-16). The gate
+    # prices the candidate contract under the guard's exit bands; under the
+    # winners-run policy a capped loss against an uncapped win prices
+    # positive by construction, so the gate's live work is (a) refusing at
+    # an owner-set margin and (b) failing closed with no vol estimate.
+    from robinhood_tools.options_gate import entry_odds_verdict
+
+    verdicts = entry_odds_verdict(premium0=10.0, delta=-0.4788, spot0=95.0,
+                                  sigma=0.92, expiry="2027-01-15",
+                                  today=date(2026, 11, 16), paths=1000,
+                                  min_ev_pct=0.0)
+    rec.check("gates", "options entry odds gate approves a positive-EV contract",
+              verdicts["approved"] and verdicts["ev_pct_on_premium"] > 0,
+              f"EV {verdicts['ev_pct_on_premium']:+.2%} "
+              f"stop {verdicts['stop_first']:.0%}")
+
+    marginal = entry_odds_verdict(premium0=10.0, delta=-0.20, spot0=95.0,
+                                  sigma=0.60, expiry="2027-01-15",
+                                  today=date(2026, 11, 16), paths=1000,
+                                  min_ev_pct=0.05)
+    rec.check("gates", "options entry odds gate refuses at the EV margin",
+              not marginal["approved"] and "below" in marginal["reason"],
+              marginal["reason"])
+
+    try:
+        from robinhood_tools.options_gate import require_positive_ev
+
+        class _Q:
+            class contract:
+                underlying = "NVDA"
+                option_symbol = "NVDA261218C00240000"
+                expiry = "2026-12-18"
+
+            def mid(self):
+                import decimal
+
+                return decimal.Decimal("5.00")
+
+            delta = None
+            iv = None
+            underlying_price = __import__("decimal").Decimal("230.00")
+
+        require_positive_ev(quote=_Q(), today=date(2026, 11, 16), paths=50,
+                            sigma_provider=lambda underlying, iv: None)
+        blocked = False
+        detail = "no refusal"
+    except Exception as exc:  # noqa: BLE001 - the refusal IS the check
+        blocked = (type(exc).__name__ == "PolicyViolation"
+                   and "no vol estimate" in str(exc))
+        detail = f"{type(exc).__name__}: {str(exc)[:120]}"
+    rec.check("gates", "options entry odds gate fails closed with no vol",
+              blocked and "fail closed" in detail, detail)
 
     rec.check("gates", "research-driven puts pass in RISK_OFF (owner decision)",
               regime_gate_passes(regime="RISK_OFF", circuit_broken=False,

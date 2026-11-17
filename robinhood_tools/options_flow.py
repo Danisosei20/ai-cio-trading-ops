@@ -62,7 +62,10 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                       database: CioDatabase | None = None,
                       service=None, today: date | None = None,
                       session_override: tuple[str, str] | None = None,
-                      override_reason: str = "") -> dict:
+                      override_reason: str = "",
+                       odds_gate: bool = True,
+                       odds_sigma: float | None = None,
+                       min_ev_pct: float = 0.0) -> dict:
     """Review → ledger → guarded placement of one long option opener."""
     from .runtime import build_paper_options_service as _build
 
@@ -100,6 +103,18 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     # sell-to-close path lives in close_long_option, untouched.
     db.require_no_symbol_loss_streak(symbol, today=today.isoformat())
     snapshot.require_eligible_purchase(symbol)
+    # Odds gate (owner decision 2026-11-16): the contract's simulated EV
+    # under the guard's exit bands must be positive before it can be
+    # opened - the equity path has gated on the Time Machine all along,
+    # and the options book is where the desk's losses are. Fail-closed:
+    # no vol estimate means no odds, and no odds means no order. Exits
+    # are never gated (close_long_option does not call this).
+    if odds_gate:
+        from .options_gate import require_positive_ev
+
+        require_positive_ev(quote=quote, today=today,
+                            sigma=odds_sigma,
+                            min_ev_pct=min_ev_pct)
     # Index ETFs have no single earnings event; the blackout cannot apply.
     if symbol not in {item.upper() for item in snapshot.index_etfs}:
         require_earnings_clear(today=today, earnings_date=earnings_date,

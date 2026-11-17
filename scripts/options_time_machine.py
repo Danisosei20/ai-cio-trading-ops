@@ -43,96 +43,12 @@ ET = ZoneInfo("America/New_York")
 OUT = ROOT / "outputs" / "simulation" / "options_time_machine.json"
 BLACKOUT_DAYS = 10  # horizon: a position older than this is not "now"
 
-
-def annualized_vol(closes: list[float]) -> float | None:
-    """Annualized vol from daily log returns (0 when fewer than 20 bars)."""
-    if len(closes) < 20:
-        return None
-    returns = [math.log(closes[i] / closes[i - 1])
-               for i in range(1, len(closes))
-               if closes[i - 1] > 0 and closes[i] > 0]
-    if len(returns) < 19:
-        return None
-    return statistics.stdev(returns) * math.sqrt(252)
-
-
-def simulate_option_odds(*, premium0: float, delta: float, spot0: float,
-                         sigma: float, days: int, paths: int,
-                         target_pct: float, stop_pct: float,
-                         seed: int, arm_pct: float = 0.25,
-                         floor_ratio: float = 0.40) -> dict:
-    """Simulated exit-band odds. Pure and seeded: same inputs, same answer.
-
-    The exit policy as the guard enforces it (owner 2026-11-16):
-      * target_pct <= 0 -> no take-profit; winners run unlimited.
-      * the +25% trail arm locks a floor at peak x floor_ratio, and the
-        guard exits when premium touches it (TRAIL).
-      * -stop_pct always closes (STOP); expiry ends the hold (NEITHER,
-        terminal return reported).
-    """
-    target = premium0 * (1 + target_pct) if target_pct > 0 else None
-    stop = premium0 * (1 - stop_pct)
-    arm = premium0 * (1 + arm_pct)
-    rng = random.Random(seed)
-    dt = 1.0 / 252.0
-    drift_step = -0.5 * sigma * sigma * dt
-    diff_step = sigma * math.sqrt(dt)
-    target_first = stop_first = trail_first = neither = 0
-    terminal: list[float] = []
-    returns: list[float] = []
-    for _ in range(paths):
-        spot = spot0
-        premium = premium0
-        peak = premium0
-        hit = 0
-        exit_ret = 0.0
-        for _day in range(max(days, 1)):
-            spot *= math.exp(drift_step + diff_step * rng.gauss(0, 1))
-            premium = premium0 + delta * (spot - spot0)
-            if premium > peak:
-                peak = premium
-            if target is not None and premium >= target:
-                hit = 1
-                exit_ret = target_pct
-                break
-            if premium <= stop:
-                hit = -1
-                exit_ret = -stop_pct
-                break
-            if peak >= arm and premium <= peak * floor_ratio:
-                hit = 2
-                exit_ret = peak * floor_ratio / premium0 - 1
-                break
-        if hit == 1:
-            target_first += 1
-        elif hit == -1:
-            stop_first += 1
-        elif hit == 2:
-            trail_first += 1
-        else:
-            neither += 1
-            terminal.append(premium)
-            exit_ret = premium / premium0 - 1
-        returns.append(exit_ret)
-    p_target, p_stop = target_first / paths, stop_first / paths
-    p_trail = trail_first / paths
-    p_neither = neither / paths
-    ev_pct = sum(returns) / paths
-    return {
-        "paths": paths,
-        "target_first": p_target,
-        "stop_first": p_stop,
-        "trail_first": p_trail,
-        "neither": p_neither,
-        "target_pct": target_pct,
-        "stop_pct": stop_pct,
-        "arm_pct": arm_pct,
-        "floor_ratio": floor_ratio,
-        "ev_pct_on_premium": round(ev_pct, 5),
-        "ev_usd_per_contract": round(ev_pct * premium0 * 100, 2),
-        "terminal_premium_median": (statistics.median(terminal)
-                                    if terminal else None),
-    }
+# The model lives in the package so the entry gate, this CLI and the tests
+# all run the same math (re-exported here for backwards compatibility).
+from robinhood_tools.options_odds import (  # noqa: E402
+    annualized_vol,
+    simulate_option_odds,
+)
 
 
 def fetch_quote(symbol: str, *, max_age_minutes: int = 5):
@@ -187,14 +103,97 @@ def parse_args(argv=None):
                     help="simulate off the last quote even when the market is "
                          "closed (the trading path still fails closed on "
                          "stale quotes; a simulation is not a decision)")
-    args = ap.parse_args(argv)
-    max_age = 1440 if args.allow_stale else 5
+    ap.add_argument("--candidates", action="store_true",
+                   help="dry-run the ENTRY odds gate over the current "
+                        "screener feeds (what the watch would face)")
+    ap.add_argument("--min-ev-pct", type=float, default=0.0,
+                   help="EV bar for --candidates (default 0 = strictly "
+                        "positive; the owner can set a margin)")
     return ap.parse_args(argv)
+
+
+def run_candidates(args) -> int:
+    """Dry-run the entry odds gate across the screener's candidates.
+
+    Evidence, not a decision: each row is what the 15:10 watch would see
+    tomorrow for that contract under the current exit policy. Writes
+    outputs/simulation/options_gate_dryrun.json.
+    """
+    import json as _json
+
+    from robinhood_tools.alpaca_options import AlpacaOptionsData
+    from robinhood_tools.market_prices import get_quote
+    from robinhood_tools.options_flow import pick_long_option
+    from robinhood_tools.options_gate import (
+        entry_odds_verdict,
+        sigma_for_underlier,
+    )
+    from robinhood_tools.settings import load_env
+
+    env = load_env(".env")
+    data = AlpacaOptionsData.from_values(env)
+    today = date.today()
+    rows = []
+    for feed, side in (("outputs/screener/latest.json", "call"),
+                       ("outputs/screener/weak.json", "put")):
+        path = ROOT / feed
+        if not path.exists():
+            continue
+        doc = _json.loads(path.read_text(encoding="utf-8"))
+        for row in (doc.get("ranked") or [])[:5]:
+            symbol = str(row.get("symbol") or "").upper().replace(".", "-")
+            if not symbol:
+                continue
+            try:
+                spot_q = get_quote(symbol, max_age_minutes=1440)
+                quote, _rejected = pick_long_option(
+                    data=data, underlying=symbol, spot=spot_q.price,
+                    direction="bullish" if side == "call" else "bearish",
+                    today=today)
+            except Exception as exc:  # noqa: BLE001 - no quote is an answer
+                rows.append({"symbol": symbol, "side": side,
+                             "error": f"{type(exc).__name__}: {exc}"})
+                continue
+            iv = float(quote.iv) if quote.iv else None
+            sigma = sigma_for_underlier(symbol, iv)
+            if sigma is None:
+                rows.append({"symbol": symbol, "side": side,
+                             "contract": quote.contract.option_symbol,
+                             "approved": False,
+                             "reason": "no vol estimate (fail closed)"})
+                continue
+            verdict = entry_odds_verdict(
+                premium0=float(quote.mid()),
+                delta=float(quote.delta) if quote.delta is not None else 0.5,
+                spot0=float(quote.underlying_price), sigma=sigma,
+                expiry=quote.contract.expiry, today=today,
+                paths=args.paths, min_ev_pct=args.min_ev_pct)
+            verdict.update({"symbol": symbol, "side": side,
+                            "contract": quote.contract.option_symbol,
+                            "premium": round(float(quote.mid()), 2),
+                            "delta": round(float(quote.delta or 0), 4),
+                            "sigma": round(sigma, 4)})
+            rows.append(verdict)
+            print(_json.dumps(verdict))
+
+    payload = {"generated_at": datetime.now(ET).isoformat(),
+               "min_ev_pct": args.min_ev_pct, "candidates": rows}
+    out = ROOT / "outputs" / "simulation" / "options_gate_dryrun.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"written -> {out}")
+    approved = sum(1 for r in rows if r.get("approved"))
+    print(f"dry-run: {approved}/{len(rows)} candidates approved "
+          f"at the {args.min_ev_pct:+.2%} bar")
+    return 0
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
     max_age = 1440 if args.allow_stale else 5
+
+    if args.candidates:
+        return run_candidates(args)
 
     symbols = list(args.symbol)
     if args.book:
