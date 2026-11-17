@@ -55,10 +55,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+from robinhood_tools.market_prices import market_regime  # noqa: E402
 from robinhood_tools.paper_flow import SignalOrder, place_signal_order  # noqa: E402
 from robinhood_tools.runtime import (  # noqa: E402
     build_paper_service_with_session, build_settings)
 from robinhood_tools.settings import load_env
+from robinhood_tools.trade_state import TradeState, TradeStateMachine  # noqa: E402
+from robinhood_tools.universe import Sp500Snapshot  # noqa: E402
+
+
+def _log(msg: str) -> None:
+    """Timestamped stdout log (the .bat redirects it to overnight.log)."""
+    print(f"{datetime.now(ET).isoformat()} {msg}", flush=True)
 
 ET = __import__("zoneinfo").ZoneInfo("America/New_York")
 
@@ -422,10 +430,21 @@ def main(argv=None) -> int:
     spy_bars = yf.Ticker("SPY").history(period="60d", interval="1d")
     spy_closes = [float(v) for v in spy_bars["Close"].dropna()] if spy_bars is not None else []
 
-    state = load_state()
+    state = _load_state()
     today = date.today().isoformat()
 
+    # Account equity for sizing and the risk controller. main() used to
+    # reference `equity` without ever assigning it (the pilot has never
+    # completed a run; see the audit note below).
+    equity = Decimal("0")
+    try:
+        acct = backend.transport.request("GET", "/v2/account")
+        equity = Decimal(str(acct.get("equity", "0")))
+    except Exception:  # noqa: BLE001 - zero equity sizes every ticket to nothing
+        equity = Decimal("0")
+
     if args.enter:
+        result = {"mode": "enter", "entries": [], "blocks": []}
         # Build candidate pool from all tickers
         candidates = []
         for ticker in tickers:
@@ -443,7 +462,15 @@ def main(argv=None) -> int:
                 or_high = entry_price * 1.02
                 target = entry_price + 2 * (entry_price - or_low)
 
-                score, factors = _compute_ticker_score(ticker, list(hist.itertuples()),
+                # The scorer and _vwap read dict bars with lowercase keys;
+                # itertuples() rows are namedtuples and b["High"] raised
+                # TypeError on every ticker (the pilot never completed a
+                # run until 2026-11-16).
+                bars = [{"high": float(r["High"]), "low": float(r["Low"]),
+                         "close": float(r["Close"]),
+                         "volume": float(r["Volume"])}
+                        for _, r in hist.iterrows()]
+                score, factors = _compute_ticker_score(ticker, bars,
                                                        spy_closes, entry_price,
                                                        or_low, target)
 
@@ -461,9 +488,7 @@ def main(argv=None) -> int:
                     "price": entry_price,
                     "or_low": or_low,
                     "or_high": or_high,
-                    "vwap": _vwap([{"high": b["High"], "low": b["Low"],
-                                    "close": b["Close"], "volume": b["Volume"]}
-                                   for b in hist.itertuples()]),
+                    "vwap": _vwap(bars),
                     "zone_verdict": "long_ok",
                     "odds": {"available": False,
                              "reason": "time machine long-side only",
@@ -495,10 +520,15 @@ def main(argv=None) -> int:
         except Exception:
             pass
 
-        # Check regime
+        # Check regime - the desk's ONE regime definition: market_regime()
+        # (SPY vs its 50-day mean; RISK_ON above, RISK_OFF below, CHOP on
+        # it). This previously called uptrend_ok(), a function that exists
+        # nowhere in the repo: every run with enough SPY history died with
+        # NameError, and every run without it silently read CHOP and
+        # blocked the whole book. One definition, one verdict, fail-closed.
         regime = "CHOP"
         if len(spy_closes) >= 51:
-            regime = "RISK_ON" if uptrend_ok(spy_closes, 50) else "CHOP"
+            regime = market_regime(spy_closes)
 
         # Select candidates up to MAX_OPEN_POSITIONS
         selected = []
@@ -533,6 +563,17 @@ def main(argv=None) -> int:
             selected.append((rec, plan))
 
         # Place orders for selected setups
+        # State machine, order placement and the risk gate are the desk's
+        # own (daytrade_engine) - reusing them keeps one risk definition.
+        # Imported locally so the module also loads as `scripts.overnight_pilot`.
+        try:
+            from scripts.daytrade_engine import (  # noqa: PLC0415
+                _call_risk_controller, _place_order_with_timeout)
+        except ImportError:  # run as a bare script: scripts/ is sys.path[0]
+            from daytrade_engine import (  # noqa: PLC0415
+                _call_risk_controller, _place_order_with_timeout)
+        sm = TradeStateMachine()
+        open_count = 0
         for rec, plan in selected:
             ticker = rec["ticker"]
             trade = sm.create_trade(
@@ -544,7 +585,7 @@ def main(argv=None) -> int:
             sm.transition(trade.id, TradeState.SIGNAL_FOUND, "scout detected setup")
             sm.transition(trade.id, TradeState.RISK_PENDING, "risk approved")
 
-            if dry_run:
+            if args.dry_run:
                 _log(f"[DRY-RUN] would place long {ticker} "
                      f"qty={plan['qty']} entry={plan['entry']} "
                      f"stop={plan['stop']} target={plan['target']} "
@@ -594,7 +635,7 @@ def main(argv=None) -> int:
                                      source_url="https://example.com/unused-for-sells"),
         env_path=args.env_file,
         earliest_entry_et=EXIT_WINDOW[0], latest_entry_et=EXIT_WINDOW[1])
-    state = load_state()
+    state = _load_state()
     remaining = []
     for entry in state.get("entries", []):
         symbol = entry["symbol"]
@@ -630,7 +671,7 @@ def main(argv=None) -> int:
             print(json.dumps({"ticker": symbol, "mode": "exit", "action": "skip",
                               "reason": f"{type(exc).__name__}: {exc}"}))
     state["entries"] = remaining
-    save_state(state)
+    _save_state(state)
     return 0
 
 

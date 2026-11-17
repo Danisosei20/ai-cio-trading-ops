@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -61,17 +62,54 @@ def _env_value(path: Path, key: str) -> str:
     return ""
 
 
+def _task_command(task: str) -> str:
+    r"""The task's <Command> exactly as Task Scheduler stored it.
+
+    Three desk tasks (AI-Desk-OvernightEnter/Exit, AI-Desk-IntradayLoop)
+    were registered with the path split at the space in the Windows
+    username: Command=`C:\Users\Danis`, Arguments=`Akoto\...\foo.bat`.
+    schtasks reports them registered, and nothing else noticed - so the
+    15:40 overnight pilot and the 10:00-15:30 intraday loop have never
+    once executed. Registration existence is not enough; the command
+    itself must resolve to a real file.
+    """
+    proc = subprocess.run(["schtasks", "/Query", "/TN", task, "/XML"],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return ""
+    command = re.search(r"<Command>(.*?)</Command>", proc.stdout, re.S)
+    if not command:
+        return ""
+    value = command.group(1).strip()
+    # The broken registrations glue a drive prefix to a quoted path
+    # (C:"C:\Users\Danis or C:\"C:\Users\Danis). Resolve to the quoted
+    # path inside before stat-ing it.
+    if '"' in value:
+        value = value[value.index('"') + 1:]
+    return value.strip('"')
+
+
 def check_tasks() -> None:
     missing = []
+    unresolvable = []
     for name in TASKS:
         proc = subprocess.run(["schtasks", "/Query", "/TN", name, "/FO", "LIST"],
                               capture_output=True, text=True)
         if proc.returncode != 0:
             missing.append(name)
+            continue
+        command = _task_command(name)
+        if command and not Path(command).exists():
+            unresolvable.append(f"{name} -> {command}")
     if missing:
         record("FAIL", "scheduled tasks", f"missing: {', '.join(missing)}")
+    elif unresolvable:
+        record("FAIL", "scheduled task commands",
+               "registered but unrunnable (path split at the space): "
+               + "; ".join(unresolvable))
     else:
-        record("PASS", "scheduled tasks", f"{len(TASKS)} registered")
+        record("PASS", "scheduled tasks",
+               f"{len(TASKS)} registered and commands resolve")
 
 
 def check_repo_env() -> None:

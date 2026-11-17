@@ -1,4 +1,5 @@
 """Tests for the overnight gap-trade pilot (multi-stock)."""
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -270,6 +271,128 @@ class TestScoreCalculation(unittest.TestCase):
         self.assertIn("liquidity", factors)
         self.assertIn("ema_alignment", factors)
         self.assertIn("historical_perf", factors)
+
+
+class TestRegimeDefinition(unittest.TestCase):
+    """The overnight pilot must read the desk's ONE regime verdict.
+
+    2026-11-06 audit: overnight_pilot called `uptrend_ok(spy_closes, 50)`
+    -- a function defined nowhere in the repo. Every run with 51+ SPY
+    closes died with NameError (and produced no overnight log at all);
+    every run with less silently read CHOP and blocked the entire book.
+    The fix routes through the certified market_regime() every other
+    path gates on. These guards keep the two failure modes from coming
+    back: a call to a regime helper that does not exist, and a second
+    private regime definition drifting from the desk's.
+    """
+
+    @staticmethod
+    def _defined_names(tree):
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        names.add(t.id)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.add((alias.asname or alias.name).split(".")[0])
+        return names
+
+    def _repo_scripts(self):
+        for path in sorted((ROOT / "scripts").glob("*.py")):
+            yield path.name, ast.parse(path.read_text(encoding="utf-8"))
+
+    def test_no_script_calls_an_undefined_uptrend_ok(self):
+        for name, tree in self._repo_scripts():
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id == "uptrend_ok"):
+                    self.fail(f"{name} calls uptrend_ok(); it is defined nowhere")
+
+    def test_overnight_pilot_gates_on_market_regime(self):
+        # AST, not a string match: the source comment names the retired
+        # bug deliberately, so the guard must look for a *call*.
+        tree = ast.parse((ROOT / "scripts" / "overnight_pilot.py").read_text(
+            encoding="utf-8"))
+        calls = [n.func.id for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+        self.assertIn("market_regime", calls,
+                      "the overnight pilot must use the desk's certified regime")
+        self.assertNotIn("uptrend_ok", calls)
+        imported = {a.name for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) for a in n.names}
+        self.assertIn("market_regime", imported,
+                      "market_regime must be imported, not referenced accidentally")
+
+    def test_market_regime_is_pure_and_fails_closed(self):
+        from robinhood_tools.market_prices import market_regime
+
+        rising = [100.0 + i for i in range(60)]
+        falling = [160.0 - i for i in range(60)]
+        self.assertEqual(market_regime(rising), "RISK_ON")
+        self.assertEqual(market_regime(falling), "RISK_OFF")
+        self.assertEqual(market_regime([100.0] * 60), "CHOP")
+        self.assertEqual(market_regime([]), "UNKNOWN")
+        self.assertNotEqual(market_regime([]), "RISK_ON")
+
+
+class TestPilotMainResolves(unittest.TestCase):
+    """Every bare call in main() must resolve: the pilot had never run.
+
+    Found 2026-11-16 by static check: main() referenced load_state,
+    save_state, _log, _call_risk_controller, _place_order_with_timeout,
+    TradeState, Sp500Snapshot, plus unassigned sm/dry_run/open_count/
+    equity/result -- 13 defects, every one past the first NameError,
+    because the module had NEVER completed a run. This guard walks the
+    calls so the next half-ported copy fails in CI, not at 15:40 ET.
+    """
+
+    def test_every_bare_call_in_main_resolves(self):
+        import builtins
+
+        tree = ast.parse((ROOT / "scripts" / "overnight_pilot.py").read_text(
+            encoding="utf-8"))
+        defined = set(dir(builtins))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                defined.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    for n in ast.walk(t):
+                        if isinstance(n, ast.Name):
+                            defined.add(n.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    defined.add((a.asname or a.name).split(".")[0])
+            elif isinstance(node, ast.arg):
+                defined.add(node.arg)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                defined.add(node.name)
+        main = next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef) and n.name == "main")
+        # Locals assigned inside main() itself.
+        for node in ast.walk(main):
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    for n in ast.walk(t):
+                        if isinstance(n, ast.Name):
+                            defined.add(n.id)
+            elif isinstance(node, ast.arg):
+                defined.add(node.arg)
+        unresolved = sorted({
+            node.func.id for node in ast.walk(main)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id not in defined
+        })
+        self.assertEqual(unresolved, [],
+                         f"main() calls names it cannot resolve: {unresolved}")
 
 
 if __name__ == "__main__":
