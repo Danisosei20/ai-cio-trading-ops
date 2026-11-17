@@ -31,13 +31,14 @@ Never commit `.env` — it is git-ignored.
 Run the full test suite:
 
 ```bash
-python3 -m unittest discover -s tests   # 358 tests, all green
+python3 -m unittest discover -s tests   # 559 tests, all green
 ```
 
 Run preflight before any trading session:
 
 ```bash
-python3 scripts/preflight.py            # 9 checks, all must PASS
+python3 scripts/preflight.py            # 10 checks, all must PASS
+python3 scripts/paper_certification.py --no-broker   # 62 execution-path checks
 ```
 
 ---
@@ -52,15 +53,30 @@ through the risk gate.
 
 | Time | Task | Purpose |
 |------|------|---------|
-| 09:35 | `AI-Desk-OvernightExit` | Sell overnight positions at open |
-| 09:45 | `AI-CIO-AutoTrade-0945` | Swing debate → screen 7 names → gate → paper orders |
+| logon | `AI-Desk-Office-Viewer` (HKCU Run) | Serve `/trading` — idempotent, never a second server |
+| 09:35 | `AI-Desk-OvernightExit` | Sell overnight positions at open (live: exits are never blocked) |
+| 09:45 | `AI-CIO-AutoTrade-0945` | Reconcile fills → screen 7 names → debate → gate → options entries |
 | 09:50 | `AI-Desk-Watchdog` | Verify the 09:45 run completed |
 | 10:00–15:30 | `AI-Desk-IntradayLoop` | Continuous scan every 45 min → judge → enter |
 | 15:10 | `AI-Desk-OptionsWatch-1510` | Options entries (zone-gated) |
-| 15:40 | `AI-Desk-OvernightEnter` | NVDA overnight gap capture (backtested edge only) |
+| 15:40 | `AI-Desk-OvernightEnter` | 10-name overnight gap scan — **dry-run** (unvalidated; owner decision to go live) |
 | 15:45 | `AI-Desk-Flatten-1545` | Flatten all day trades before close |
 | 16:30 | `AI-Desk-ScoreShadows-1630` | Grade shadows, settle memory |
 | Fri 16:45 | `AI-Desk-WeeklyReview-1645` | Weekly scorecard vs $10k objective → Slack |
+
+Two rules the desk enforces from the 2026-11-16 owner review:
+
+- **Per-symbol loss memory** — two consecutive losing round-trips on one
+  underlier rest it for 5 trading days (entries only; exits never blocked).
+- **Weekend gap rule** — no new short premium (put openers) after Thursday
+  15:45 ET: the position cannot be exited until Monday's open, so an
+  overnight stop is fiction across the weekend.
+
+The regime gate lets research-driven puts open when SPY is below its 50-day
+mean (RISK_OFF) — the same verdict the 15:10 watch trades on. CHOP/UNKNOWN
+still block all new risk desk-wide. Every order — entry and exit — posts one
+Slack message, and every broker fill is reconciled into the desk's own
+`order_fills` ledger each morning run.
 
 ### Pipeline diagram
 
@@ -69,7 +85,7 @@ flowchart TD
     SC[Screener: top 10 → top 7] --> Z[Zone scan: POC · VA · VWAP · EMA 9/21 · S/D]
     Z --> DEB[TradingAgents debate\n 2 analysts (market, news) → bull vs bear → manager (NIM lightning-30b)]
     DEB --> G1{Gates}
-    G1 -- desk cross-check --> G2{regime CHOP/TREND}
+    G1 -- desk cross-check --> G2{regime: SPY vs 50d mean\n RISK_ON / RISK_OFF / CHOP / UNKNOWN}
     G2 --> G3{session 09:45–15:45 + clock}
     G3 --> G4{zone verdict}
     G4 --> G5{odds gate (day trades)\n ≥40% stop / <20% target → block}
@@ -125,7 +141,7 @@ flowchart LR
     TAKE --> RIDE[winners ride · e.g. ACN +144%]
 ```
 
-**Important:** Options trading has **no fixed take-profit target** by default — winners run unlimited. The -15% stop is a stop-loss, not a guaranteed exit price during gaps or illiquid trading. A trailing stop armed at +25% locks in at least +40% of peak profit (floor = peak × 0.40).
+**Important:** The options exit policy (owner decision 2026-11-06) takes profit at **+2%** ("take the trade at any time, even if the profit is 2%") and cuts at **-15%**; above a +25% peak a trailing floor of peak × 0.40 takes over. The -15% stop is a stop-loss, not a guaranteed exit price during gaps or illiquid trading — a weekend gap can fill far past it, which is why no new short premium opens after Thursday 15:45 ET.
 
 ---
 
@@ -141,7 +157,7 @@ scripts/
   options_pilot.py           Options entry execution
   options_guard.py           Options exit guard (+2%/-25%/DTE/trail)
   options_watch_trade.py     15:10 options watch loop
-  overnight_pilot.py         Overnight gap capture (NVDA only)
+  overnight_pilot.py         Overnight gap capture (10-name scan, dry-run)
   preflight.py               9-check system health
   trading_state.py           /trading page state assembler
   desk_metrics.py            Risk-adjusted metrics (Sharpe, Sortino, MDD, PF)
@@ -297,7 +313,7 @@ The test suite uses the Python standard library and does not contact Alpaca or R
 python3 -m unittest discover -s tests
 ```
 
-358 tests, all green. The suite covers account restrictions, broker-review requirements, approval expiry, order tampering, duplicate execution, S&P 500 purchase restrictions, Slack delivery records, message formatting, learning-journal fields, trade state machine transitions, position sizing, reward-to-risk validation, odds-gate fail-closed behavior, risk controller atomicity, backtest aggregation, and more.
+559 tests, all green. The suite covers account restrictions, broker-review requirements, approval expiry, order tampering, duplicate execution, S&P 500 purchase restrictions, Slack delivery records, message formatting, learning-journal fields, trade state machine transitions, position sizing, reward-to-risk validation, odds-gate fail-closed behavior, risk controller atomicity, backtest aggregation, and more.
 
 ---
 
@@ -324,7 +340,7 @@ There is intentionally no casual `buy` command.
 
 ## Small-account safety profile
 
-The checked-in live policy limits new orders and total symbol exposure to $25. Autonomous Alpaca paper mode permits up to $500 per order and $500 total exposure to one symbol. Both preserve at least $50 cash, permit one open position, stops new entries after $5 daily or $10 weekly realized loss, blocks entries within five days of earnings, and applies a five-trading-day cooldown after an invalidated loss. Risk-off markets require a higher candidate score, and all critical data inputs must be present and fresh.
+The checked-in live policy limits new orders and total symbol exposure to $25. Autonomous Alpaca paper mode permits up to $2,000 per order and $2,000 total exposure to one symbol (the morning run passes `--max-notional 2000`; options premium is capped at $3,000 per contract, matching the watch). Both preserve at least $50 cash, permit one open position, stops new entries after $5 daily or $10 weekly realized loss, blocks entries within five days of earnings, and applies a five-trading-day cooldown after an invalidated loss. Risk-off markets require a higher candidate score, and all critical data inputs must be present and fresh. On top of that stand the two 2026-11-16 rules: per-symbol loss memory (two consecutive losing round-trips rest an underlier 5 trading days) and the weekend gap rule (no new short premium after Thursday 15:45 ET).
 
 `emergency-stop` durably blocks new reviews and placements. It does not cancel orders or liquidate positions. Only an explicit operator action may call `emergency-resume`. Paper and live modes use separate databases and dashboards under `outputs/paper/` and `outputs/live/`.
 
