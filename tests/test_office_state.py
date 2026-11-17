@@ -65,6 +65,26 @@ class PositionDirectionTests(unittest.TestCase):
         self.assertIn("regime", keys,
                       "state() must publish the live regime for the header")
 
+    def test_state_carries_reconciliation(self):
+        """The ledger/broker verdict must reach the dashboard."""
+        import ast
+
+        tree = ast.parse(Path("scripts/trading_state.py").read_text(encoding="utf-8"))
+        keys = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Dict)
+                    and any(isinstance(k, ast.Constant) and k.value == "generated_at"
+                            for k in node.keys)):
+                for k in node.keys:
+                    if isinstance(k, ast.Constant):
+                        keys.add(k.value)
+        self.assertIn("reconciliation", keys,
+                      "state() must publish the fill-reconciliation verdict")
+
+    def test_reconciliation_reports_never_run_without_a_file(self):
+        with patch.object(Path, "read_text", side_effect=OSError("no file")):
+            self.assertEqual(self.mod._reconciliation()["status"], "never_run")
+
     def test_unparsable_contract_is_not_assumed_short(self):
         self.assertEqual(self.mod._position_direction("NOTACONTRACT", 5),
                          "long")

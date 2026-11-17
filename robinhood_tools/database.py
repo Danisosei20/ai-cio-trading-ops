@@ -882,6 +882,25 @@ class CioDatabase:
             raise PolicyViolation("Only a buy-pending lifecycle can become an open position.")
         return self.get_trade_lifecycle(symbol)
 
+    def open_lifecycle_from_fill(self, symbol: str, *, order_id: str) -> dict:
+        """Reconciler transition: a broker fill proves the position is open.
+
+        research/buy_pending -> open. A fill is stronger evidence than an
+        approval row - the desk holds the position whether or not the
+        ledger ever saw the authorization - so reconciliation can open a
+        lifecycle the approval flow never touched.
+        """
+        with self.connect() as db:
+            changed = db.execute(
+                "UPDATE trade_lifecycles SET status='open',buy_order_id=? "
+                "WHERE symbol=? AND status IN ('research','buy_pending')",
+                (order_id, symbol.upper()),
+            ).rowcount
+        if changed != 1:
+            raise PolicyViolation(
+                "Only a research or buy-pending lifecycle can open from a fill.")
+        return self.get_trade_lifecycle(symbol)
+
     def attach_buy_authorization(self, symbol: str, *, approval_id: str) -> dict:
         """Attach a reviewed buy to an existing research lifecycle without creating a second ticker task."""
         with self.connect() as db:

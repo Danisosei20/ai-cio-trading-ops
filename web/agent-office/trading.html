@@ -242,6 +242,7 @@
     <h2>Positions</h2>
     <div class="split" id="positions-dir"></div>
     <div id="positions"></div>
+    <div class="dim" id="recon-note" style="margin-top:8px"></div>
   </section>
 
   <section class="card">
@@ -327,6 +328,27 @@
   }
 
   /* ---------- Objective ---------- */
+  function renderReconciliation(r) {
+    var el = byId("recon-note");
+    if (!el) return;
+    if (!r || r.status === "never_run") {
+      el.textContent = "Ledger: fills never reconciled against the broker";
+      el.style.color = "var(--warn)";
+      return;
+    }
+    var orphans = (r.orphan_orders || []).length;
+    var unattr = (r.unattributed_exits || []).length;
+    var stamp = (r.generated_at || "").replace("T", " ").slice(0, 16);
+    el.textContent = "Ledger: " + (r.fills_recorded || 0) + " fills recorded"
+      + " | " + (r.fills_already_known || 0) + " known"
+      + " | " + (r.lifecycles_closed || 0) + " round-trips closed"
+      + " | " + orphans + " orphan orders"
+      + (unattr ? " | " + unattr + " unattributed exits" : "")
+      + " | reconciled " + stamp;
+    el.style.color = (r.status === "ok" && !orphans && !unattr) ? "var(--good)"
+                      : (r.status === "ok" ? "var(--warn)" : "var(--bad)");
+  }
+
   function renderRegime(regime) {
     var el = byId("regime");
     if (!el) return;
@@ -546,6 +568,7 @@
     } catch (e) { showError("positions: " + e.message); }
     try { renderToday(data.today); } catch (e) { showError("today: " + e.message); }
     try { renderOpenOrders(data.open_orders); } catch (e) { showError("orders: " + e.message); }
+    try { renderReconciliation(data.reconciliation); } catch (e) { showError("reconciliation: " + e.message); }
     try { renderStrategyPerf(data.strategy_performance); } catch (e) { showError("performance: " + e.message); }
     try { renderScorecard(data.scorecard); } catch (e) { showError("scorecard: " + e.message); }
     try { renderShadows(data.recent_shadows); } catch (e) { showError("shadows: " + e.message); }

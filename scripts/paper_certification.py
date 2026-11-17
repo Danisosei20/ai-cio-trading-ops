@@ -985,6 +985,69 @@ def group_safety(rec: Recorder) -> None:
               ok and oid == "fake-order-1", f"{reason} id={oid}")
 
 
+def group_fill_ledger(rec: Recorder) -> None:
+    """Offline: the desk ledger must be able to prove what filled.
+
+    The defect this certifies against (measured 2026-11-16): the desk
+    database held 49 approvals and zero order_fills while the broker held
+    88 orders - reconcile_order() existed with tests and no caller, so no
+    desk report could verify a fill without hand-querying Alpaca. Runs
+    against a temp DB and a stubbed broker: no network, deterministic.
+    """
+    import tempfile
+    from decimal import Decimal
+    from pathlib import Path
+
+    from robinhood_tools.database import CioDatabase
+    from robinhood_tools.fill_reconciler import reconcile_desk_fills
+    from robinhood_tools.reconciliation import Fill
+
+    def _fill(fid, qty, price):
+        return Fill(fill_id=fid, quantity=Decimal(qty), price=Decimal(price),
+                    fee=Decimal("0"), filled_at="2026-11-16T15:10:20Z")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CioDatabase(Path(tmp) / "cio.db")
+        orders = [
+            {"id": "CERT-BUY", "symbol": "CERT261218C00065000",
+             "side": "buy", "status": "filled", "qty": "2"},
+            {"id": "CERT-SELL", "symbol": "CERT261218C00065000",
+             "side": "sell", "status": "filled", "qty": "2"},
+            {"id": "CERT-OPEN", "symbol": "CERTEQ", "side": "buy",
+             "status": "accepted", "qty": "1"},
+        ]
+        fills = {"CERT-BUY": [_fill("cf1", "2", "10.00")],
+                 "CERT-SELL": [_fill("cf2", "2", "12.00")]}
+
+        first = reconcile_desk_fills(database=db, orders=orders,
+                                     fills_by_order=fills)
+        rec.check(
+            "ledger", "broker fills land in order_fills (the ledger can prove a fill)",
+            first.fills_recorded == 2 and len(db.order_fills("CERT-BUY")) == 1,
+            f"recorded={first.fills_recorded} status={first.status}")
+
+        lifecycle = db.get_trade_lifecycle("CERT261218C00065000")
+        rec.check(
+            "ledger", "a round-trip closes with realized profit (contracts x100)",
+            lifecycle["status"] == "closed"
+            and Decimal(lifecycle["realized_profit"]) == Decimal("400.00"),
+            f"status={lifecycle['status']} realized={lifecycle['realized_profit']}")
+
+        unfilled = db.order_fills("CERT-OPEN")
+        rec.check(
+            "ledger", "an unfilled order records nothing",
+            first.filled_orders == 2 and not unfilled,
+            f"filled_orders={first.filled_orders} open-order fills={len(unfilled)}")
+
+        second = reconcile_desk_fills(database=db, orders=orders,
+                                      fills_by_order=fills)
+        rec.check(
+            "ledger", "a second reconciliation records nothing (idempotent)",
+            second.fills_recorded == 0
+            and second.fills_already_known == 2,
+            f"recorded={second.fills_recorded} known={second.fills_already_known}")
+
+
 def group_broker_truth(rec: Recorder, enabled: bool) -> None:
     if not enabled:
         rec.add("truth", "broker reconciliation", SKIP, "--no-broker")
@@ -1107,6 +1170,7 @@ def main(argv=None) -> int:
         ("exits", group_exits),
         ("risk", group_risk),
         ("safety", group_safety),
+        ("ledger", group_fill_ledger),
     ):
         try:
             fn(rec)

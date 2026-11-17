@@ -169,6 +169,46 @@ class AlpacaPaperBackend:
             ))
         return fills
 
+    def list_fill_activities(self, *, account_id: str,
+                             max_pages: int = 10) -> list[dict[str, Any]]:
+        """All FILL activities, paged once per run (not once per order).
+
+        Reconciliation needs every fill, so it cannot call get_fills per
+        order: 88 orders would mean 88 round trips. `page_token` walks the
+        activity log; the pull is bounded because an unbounded page loop on
+        a busy account would hang the morning batch.
+        """
+        self._require_account(account_id)
+        activities: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(max_pages):
+            path = ("/v2/account/activities?activity_types=FILL"
+                    "&page_size=100&direction=desc")
+            if page_token:
+                path += f"&page_token={quote(page_token)}"
+            page = self.transport.request("GET", path)
+            if not isinstance(page, list):
+                raise ConnectorUnavailable("Alpaca paper fill activity response was invalid.")
+            activities.extend(page)
+            page_token = page[-1].get("id") if page else None
+            if not page_token or len(page) < 100:
+                break
+        return activities
+
+    def list_all_orders(self, *, account_id: str) -> list[dict[str, Any]]:
+        """Every order at the broker, any status (filled/canceled/expired).
+
+        Oldest first: reconciliation drives lifecycles from observed fills,
+        and a sell-pending lifecycle must see its buy first. Newest-first
+        made every exit look unattributed (2026-11-16 first live run).
+        """
+        self._require_account(account_id)
+        orders = self.transport.request(
+            "GET", "/v2/orders?status=all&limit=500&direction=asc")
+        if not isinstance(orders, list):
+            raise ConnectorUnavailable("Alpaca paper orders response was invalid.")
+        return orders
+
     def list_positions(self) -> list[dict[str, Any]]:
         positions = self.transport.request("GET", "/v2/positions")
         if not isinstance(positions, list):

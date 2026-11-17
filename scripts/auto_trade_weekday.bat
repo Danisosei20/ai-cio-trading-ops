@@ -22,6 +22,7 @@ echo ==================================================>>%LOG%
 echo === auto trade run started %DATE% %TIME% ===>>%LOG%
 "%TA_PY%" -c "import json,pathlib,datetime,zoneinfo; p=pathlib.Path('outputs/auto-trade-run.json'); d=json.loads(p.read_text()) if p.exists() else {}; d['started_at']=datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York')).isoformat(); d['status']='started'; p.write_text(json.dumps(d))"
 
+"%TA_PY%" scripts\reconcile_fills.py --quiet>>%LOG% 2>&1
 "%TA_PY%" scripts\options_guard.py --execute>>%LOG% 2>&1
 "%TA_PY%" scripts\universe_screen.py --top 10 --out outputs\screener\latest.json>>%LOG% 2>&1
 "%TA_PY%" scripts\zone_analysis.py --tickers SPY,QQQ,NVDA,AMD,AAPL>>%LOG% 2>&1

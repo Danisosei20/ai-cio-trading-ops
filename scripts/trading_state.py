@@ -35,6 +35,33 @@ AUTO_DIR = ROOT / "outputs" / "paper" / "tradingagents"
 WATCH_LOG = ROOT / "outputs" / "options-watch.log"
 
 
+def _reconciliation() -> dict:
+    """Latest fill-reconciliation run (outputs/paper/fill_reconciliation.json).
+
+    The desk's ledger used to hold zero fills while the broker held every
+    order, so no desk report could prove what had actually traded. The
+    reconciler closes that gap each run; this surfaces its verdict -
+    including orphan orders and exits it could not attribute - so the
+    dashboard can never quietly disagree with the broker again.
+    """
+    path = ROOT / "outputs" / "paper" / "fill_reconciliation.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "never_run"}
+    return {
+        "status": doc.get("status", "unknown"),
+        "generated_at": doc.get("generated_at", ""),
+        "orders_at_broker": doc.get("orders_at_broker", 0),
+        "fills_recorded": doc.get("fills_recorded", 0),
+        "fills_already_known": doc.get("fills_already_known", 0),
+        "lifecycles_closed": doc.get("lifecycles_closed", 0),
+        "orphan_orders": doc.get("orphan_orders", []),
+        "unattributed_exits": doc.get("unattributed_exits", []),
+        "errors": doc.get("errors", []),
+    }
+
+
 def _live_regime() -> str:
     """Live tape regime: SPY vs its 50-day mean, never read as risk-on.
 
@@ -292,6 +319,7 @@ def state() -> dict:
         "today": _today_records(today),
         "option_entries": _option_entries(today),
         "open_orders": _open_orders(),
+        "reconciliation": _reconciliation(),
         "scorecard": _scorecard(),
         "strategy_performance": _strategy_performance(),
         "recent_shadows": _recent_shadows(),

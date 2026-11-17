@@ -9,5 +9,6 @@ set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv
 if not exist outputs mkdir outputs
 echo.>>outputs\options-watch.log
 echo === options watch started %DATE% %TIME% ===>>outputs\options-watch.log
+"%TA_PY%" scripts\reconcile_fills.py --quiet>>outputs\options-watch.log 2>&1
 "%TA_PY%" scripts\options_watch_trade.py --execute>>outputs\options-watch.log 2>&1
 echo === options watch done %DATE% %TIME% ===>>outputs\options-watch.log
