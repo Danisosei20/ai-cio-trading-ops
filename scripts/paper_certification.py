@@ -627,6 +627,41 @@ def group_gates(rec: Recorder) -> None:
               closes == [] and regime == "UNKNOWN",
               f"_spy_closes()={closes} _regime()={regime}")
 
+    # 2026-11-16 owner decisions, certified like any other execution gate.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from robinhood_tools.options_flow import weekend_gap_block
+
+    et = ZoneInfo("America/New_York")
+    thursday_pm = datetime(2026, 11, 19, 15, 50, tzinfo=et)
+    thursday_am = datetime(2026, 11, 19, 10, 0, tzinfo=et)
+    blocked_pm = weekend_gap_block(right="put", when=thursday_pm)
+    rec.check("gates", "weekend gap rule blocks a Thursday-PM put opener",
+              blocked_pm is not None, blocked_pm or "not blocked")
+    rec.check("gates", "weekend gap rule spares Thursday AM and every call",
+              weekend_gap_block(right="put", when=thursday_am) is None
+              and weekend_gap_block(right="call", when=thursday_pm) is None,
+              "put-AM/call-PM both allowed")
+
+    from scripts.tradingagents_paper_auto import regime_gate_passes
+
+    rec.check("gates", "research-driven puts pass in RISK_OFF (owner decision)",
+              regime_gate_passes(regime="RISK_OFF", circuit_broken=False,
+                                 sig="underweight", options_mode=True),
+              "underweight+options+RISK_OFF passes")
+    rec.check("gates", "long premium buys still blocked in RISK_OFF",
+              not regime_gate_passes(regime="RISK_OFF", circuit_broken=False,
+                                     sig="buy", options_mode=True)
+              and not regime_gate_passes(regime="CHOP", circuit_broken=False,
+                                        sig="underweight", options_mode=True),
+              "buy in RISK_OFF and any new risk in CHOP both blocked")
+    rec.check("gates", "equity exits never regime-blocked",
+              all(regime_gate_passes(regime=r, circuit_broken=False,
+                                     sig="sell", options_mode=False)
+                  for r in ("RISK_OFF", "CHOP", "UNKNOWN")),
+              "sell passes in every regime")
+
 
 def group_exits(rec: Recorder) -> None:
     from scripts.options_guard import decide

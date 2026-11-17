@@ -45,6 +45,32 @@ from robinhood_tools.universe import Sp500Snapshot  # noqa: E402
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 BUY_SIGNALS = {"buy", "overweight"}
 SELL_SIGNALS = {"sell", "underweight"}
+
+
+def regime_gate_passes(*, regime: str, circuit_broken: bool, sig: str,
+                       options_mode: bool) -> bool:
+    """Does this signal pass the desk-wide regime gate?
+
+    Owner decision 2026-11-16 (Friday review): research-driven shorts may
+    trade a down tape. A bearish analyst signal in options mode now opens a
+    put when the regime is RISK_OFF - the same verdict the 15:10 watch has
+    always traded puts on, so the research path and the watch finally
+    agree. Everything else keeps the old, conservative rule:
+
+    - RISK_ON and no breaker: everything passes.
+    - Equity-mode sells are exits: passes in any regime (never block an
+      exit).
+    - Options-mode bearish: passes ONLY in RISK_OFF. CHOP/UNKNOWN still
+      block new risk desk-wide - missing evidence is not permission.
+    - Any buy while the circuit breaker is tripped: blocked.
+    """
+    if circuit_broken:
+        return False
+    if regime == "RISK_ON":
+        return True
+    if sig in SELL_SIGNALS and (not options_mode or regime == "RISK_OFF"):
+        return True
+    return False
 ET = ZoneInfo("America/New_York")
 STATUS_FILE = Path("outputs/paper/tradingagents/status.json")
 RUN_LOG = Path("outputs/paper/tradingagents/live.log")
@@ -636,9 +662,14 @@ def main(argv=None) -> int:
                                  f"{rec.get('desk_verdict')} ({rec.get('desk_outcome')})")
                 set_stage(ticker, "skip", rec["reason"])
             else:
-                # Regime gates every premium buy (stock AND long puts/calls).
-                # Only equity sells (exits) pass in CHOP/UNKNOWN.
-                if (regime != "RISK_ON" or circuit_broken) and not (sig in SELL_SIGNALS and not args.options):
+                # Regime gates every premium buy (stock AND long puts/calls). Equity
+                # sells are exits and always pass; options-mode bearish passes
+                # in RISK_OFF (owner decision 2026-11-16). CHOP/UNKNOWN still
+                # block new risk desk-wide.
+                if not regime_gate_passes(regime=regime,
+                                          circuit_broken=circuit_broken,
+                                          sig=sig,
+                                          options_mode=args.options):
                     if circuit_broken and regime == "RISK_ON":
                         rec["reason"] = "circuit breaker: equity down >2% from prev close - buys blocked"
                     else:

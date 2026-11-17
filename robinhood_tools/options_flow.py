@@ -8,8 +8,9 @@ Sells-to-close travel the same path (side sell, effect close).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from .alpaca_options import AlpacaOptionsData
 from .database import CioDatabase
@@ -18,6 +19,29 @@ from .models import OptionLeg, OptionOrderRequest
 from .options import OptionSelectionFilters, select_long_option
 from .safety import require_earnings_clear
 from .universe import Sp500Snapshot
+
+WEEKEND_GAP_CUTOFF_ET = "15:45"   # owner decision 2026-11-16
+WEEKEND_GAP_WEEKDAY = 3           # Thursday (Monday = 0)
+
+
+def weekend_gap_block(*, right: str, when) -> str | None:
+    """Owner decision 2026-11-16: no new short premium after Thursday close.
+
+    On 2026-11-10 SPY gapped straight through every -15% put stop and the
+    desk lost the whole short book: a put opened Thursday PM cannot be
+    exited until Monday's open, so an overnight stop is fiction across
+    that window. Long (call) openers are unaffected - the rule mirrors
+    the loss that was actually observed.
+    """
+    if str(right).lower() != "put":
+        return None
+    if when.weekday() != WEEKEND_GAP_WEEKDAY:
+        return None
+    cutoff = datetime.strptime(WEEKEND_GAP_CUTOFF_ET, "%H:%M").time()
+    if when.time() >= cutoff:
+        return (f"weekend gap rule: no new put openers after Thursday "
+                f"{WEEKEND_GAP_CUTOFF_ET} ET (unexitable until Monday open)")
+    return None
 
 
 def pick_long_option(*, data: AlpacaOptionsData, underlying: str, spot: Decimal,
@@ -45,6 +69,7 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     if contracts < 1:
         raise PolicyViolation("At least one contract is required.")
     today = today or date.today()
+    now_et = datetime.now(ZoneInfo("America/New_York"))
 
     settings.require_paper_trading()
     if settings.trading_enabled:
@@ -63,6 +88,12 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     symbol = contract.underlying
     if snapshot is None:
         raise PolicyViolation("No membership evidence; option openers blocked.")
+    # Weekend gap rule (owner decision 2026-11-16): Thursdays after 15:45
+    # ET open no new short premium - the position cannot be exited until
+    # Monday's open, so a -15% stop is fiction across the weekend.
+    gap_block = weekend_gap_block(right=contract.right, when=now_et)
+    if gap_block:
+        raise PolicyViolation(gap_block)
     # Per-symbol loss memory on entries: an underlier that keeps losing
     # rests before it can be bought again (RDDT, TTWO, 2026-11-10/16).
     # Entry-only by construction: this function places openers, and the
