@@ -112,6 +112,31 @@ def check_tasks() -> None:
                f"{len(TASKS)} registered and commands resolve")
 
 
+def check_properties() -> None:
+    """Property-based invariants over the whole input space.
+
+    The scenario matrix proves the gates on the cases someone thought of;
+    this proves the stronger claim - for ANY input (hostile symbols, zero
+    and negative money, unreadable dates, degenerate Greeks) no gate
+    crashes, nothing unapprovable is approved, and the accounting is
+    exact. Deterministic seed, so a failure reproduces.
+    """
+    try:
+        from scripts import property_test
+
+        code = property_test.main(["--cases", "60"])
+        if code == 0:
+            record("PASS", "property invariants",
+                   f"{property_test.LAST_CHECKS} checks held across "
+                   f"generated inputs")
+        else:
+            record("FAIL", "property invariants",
+                   "an invariant was violated over generated inputs - "
+                   "see outputs/simulation/property_test.json")
+    except Exception as exc:  # noqa: BLE001 - report, never crash
+        record("FAIL", "property invariants", f"{type(exc).__name__}: {exc}")
+
+
 def check_single_viewer() -> None:
     """Exactly ONE office viewer, never two.
 
@@ -359,6 +384,7 @@ def main(argv=None) -> int:
     check_office()
     check_office_autostart()
     check_single_viewer()
+    check_properties()
     check_scenarios()
     if args.full:
         run_tests()
