@@ -24,6 +24,9 @@ echo === auto trade run started %DATE% %TIME% ===>>%LOG%
 
 "%TA_PY%" scripts\reconcile_fills.py --quiet>>%LOG% 2>&1
 "%TA_PY%" scripts\options_guard.py --execute>>%LOG% 2>&1
+REM Position odds for the dashboard (the simulation is expensive, so it
+REM runs once here and /trading reads the artifact, never re-simulating).
+"%TA_PY%" scripts\options_time_machine.py --book --allow-stale>>%LOG% 2>&1
 "%TA_PY%" scripts\universe_screen.py --top 10 --out outputs\screener\latest.json>>%LOG% 2>&1
 "%TA_PY%" scripts\zone_analysis.py --tickers SPY,QQQ,NVDA,AMD,AAPL>>%LOG% 2>&1
 REM Owner decision 2026-11-16 (Friday review): research-driven shorts may

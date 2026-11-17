@@ -221,7 +221,11 @@ def main(argv=None) -> int:
     cycle = 0
     while True:
         now = datetime.now(ET)
-        if now > end_dt:
+        # --once means "run one cycle now": a rehearsal after hours must
+        # not be a silent no-op (2026-11-16: --once --force at 22:39 ET
+        # logged "end of scan window reached" and did nothing, so the
+        # loop's wiring could not be verified outside the session).
+        if now > end_dt and not args.once:
             _log("end of scan window reached")
             break
         if not _market_open() and not args.force:

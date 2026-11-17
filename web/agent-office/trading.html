@@ -243,6 +243,7 @@
     <div class="split" id="positions-dir"></div>
     <div id="positions"></div>
     <div class="dim" id="recon-note" style="margin-top:8px"></div>
+    <div class="dim" id="odds-note" style="margin-top:4px"></div>
   </section>
 
   <section class="card">
@@ -347,6 +348,25 @@
       + " | reconciled " + stamp;
     el.style.color = (r.status === "ok" && !orphans && !unattr) ? "var(--good)"
                       : (r.status === "ok" ? "var(--warn)" : "var(--bad)");
+  }
+
+  function renderPositionOdds(o) {
+    var el = byId("odds-note");
+    if (!el) return;
+    if (!o || o.status !== "ok" || !(o.results || []).length) {
+      el.textContent = "Odds: no simulation run yet";
+      return;
+    }
+    var r = o.results[0];
+    var stamp = (o.generated_at || "").replace("T", " ").slice(0, 16);
+    var med = r.terminal_premium_median;
+    el.textContent = "Odds (sim " + stamp + "): stop " + Math.round((r.stop_first || 0) * 100)
+      + "% | survive " + Math.round((r.neither || 0) * 100) + "%"
+      + (med ? " | median terminal $" + med.toFixed(2) : "")
+      + " | EV " + (r.ev_pct_on_premium >= 0 ? "+" : "") + (r.ev_pct_on_premium * 100).toFixed(1)
+      + "% (" + (r.ev_usd_per_contract >= 0 ? "+$" : "-$") + Math.abs(r.ev_usd_per_contract).toFixed(0)
+      + "/contract)";
+    el.style.color = (r.ev_pct_on_premium || 0) >= 0 ? "var(--good)" : "var(--bad)";
   }
 
   function renderRegime(regime) {
@@ -569,6 +589,7 @@
     try { renderToday(data.today); } catch (e) { showError("today: " + e.message); }
     try { renderOpenOrders(data.open_orders); } catch (e) { showError("orders: " + e.message); }
     try { renderReconciliation(data.reconciliation); } catch (e) { showError("reconciliation: " + e.message); }
+    try { renderPositionOdds(data.position_odds); } catch (e) { showError("odds: " + e.message); }
     try { renderStrategyPerf(data.strategy_performance); } catch (e) { showError("performance: " + e.message); }
     try { renderScorecard(data.scorecard); } catch (e) { showError("scorecard: " + e.message); }
     try { renderShadows(data.recent_shadows); } catch (e) { showError("shadows: " + e.message); }

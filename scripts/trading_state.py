@@ -62,6 +62,24 @@ def _reconciliation() -> dict:
     }
 
 
+def _position_odds() -> dict:
+    """Last options Time Machine run (outputs/simulation/...json), as-is.
+
+    The simulation is expensive (thousands of paths plus market data), so
+    the dashboard shows the last written run with its timestamp rather
+    than re-simulating on every poll. The 09:45 batch refreshes it.
+    """
+    path = ROOT / "outputs" / "simulation" / "options_time_machine.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "never_run"}
+    return {"status": "ok",
+            "generated_at": doc.get("generated_at", ""),
+            "model": doc.get("model", ""),
+            "results": doc.get("results", [])}
+
+
 def _live_regime() -> str:
     """Live tape regime: SPY vs its 50-day mean, never read as risk-on.
 
@@ -320,6 +338,7 @@ def state() -> dict:
         "option_entries": _option_entries(today),
         "open_orders": _open_orders(),
         "reconciliation": _reconciliation(),
+        "position_odds": _position_odds(),
         "scorecard": _scorecard(),
         "strategy_performance": _strategy_performance(),
         "recent_shadows": _recent_shadows(),
