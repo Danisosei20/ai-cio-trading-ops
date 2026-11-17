@@ -354,7 +354,7 @@
     var el = byId("odds-note");
     if (!el) return;
     if (!o || o.status !== "ok" || !(o.results || []).length) {
-      el.textContent = "Odds: no simulation run yet";
+      el.textContent = "Odds: no open positions to simulate";
       return;
     }
     var r = o.results[0];

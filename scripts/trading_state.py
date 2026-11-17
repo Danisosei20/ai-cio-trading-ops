@@ -62,22 +62,30 @@ def _reconciliation() -> dict:
     }
 
 
-def _position_odds() -> dict:
+def _position_odds(held_symbols: set[str] | None = None) -> dict:
     """Last options Time Machine run (outputs/simulation/...json), as-is.
 
     The simulation is expensive (thousands of paths plus market data), so
     the dashboard shows the last written run with its timestamp rather
     than re-simulating on every poll. The 09:45 batch refreshes it.
+
+    Results are filtered to what is CURRENTLY held: after the 2026-11-17
+    stop-loss filled, the dashboard kept quoting odds for a position that
+    no longer existed - stale odds for a closed book are worse than none.
     """
     path = ROOT / "outputs" / "simulation" / "options_time_machine.json"
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"status": "never_run"}
+    results = doc.get("results", [])
+    if held_symbols is not None:
+        results = [r for r in results
+                   if str(r.get("symbol", "")).upper() in held_symbols]
     return {"status": "ok",
             "generated_at": doc.get("generated_at", ""),
             "model": doc.get("model", ""),
-            "results": doc.get("results", [])}
+            "results": results}
 
 
 def _live_regime() -> str:
@@ -327,18 +335,20 @@ def _recent_shadows(limit: int = 8) -> list[dict]:
 
 def state() -> dict:
     today = datetime.now(ET).date().isoformat()
+    positions = _positions()
+    held = {str(p.get("symbol", "")).upper() for p in positions}
     return {
         "generated_at": datetime.now(ET).isoformat(),
         "date": today,
         "regime": _live_regime(),
         "objective": _objective(today),
-        "positions": _positions(),
+        "positions": positions,
         "positions_by_direction": _positions_by_direction(),
         "today": _today_records(today),
         "option_entries": _option_entries(today),
         "open_orders": _open_orders(),
         "reconciliation": _reconciliation(),
-        "position_odds": _position_odds(),
+        "position_odds": _position_odds(held),
         "scorecard": _scorecard(),
         "strategy_performance": _strategy_performance(),
         "recent_shadows": _recent_shadows(),

@@ -112,6 +112,34 @@ def check_tasks() -> None:
                f"{len(TASKS)} registered and commands resolve")
 
 
+def check_single_viewer() -> None:
+    """Exactly ONE office viewer, never two.
+
+    2026-11-17: Windows SO_REUSEADDR let a second agent_office bind 8766
+    next to the first, so API requests hit either instance - and the
+    dashboard served stale code (odds for a closed position) with nothing
+    to show which instance answered. A duplicate viewer is a correctness
+    bug, not a convenience.
+    """
+    try:
+        proc = subprocess.run(["netstat", "-ano"], capture_output=True,
+                              text=True)
+        listeners = [ln for ln in proc.stdout.splitlines()
+                     if "LISTENING" in ln and ":8766" in ln]
+        pids = {ln.split()[-1] for ln in listeners}
+        if not listeners:
+            record("WARN", "single office viewer",
+                   "nothing listening on 8766 (office_server.bat starts it)")
+        elif len(pids) == 1:
+            record("PASS", "single office viewer", f"one instance (pid {pids.pop()})")
+        else:
+            record("FAIL", "single office viewer",
+                   f"{len(pids)} instances bound to 8766 (pids {sorted(pids)}) - "
+                   f"requests hit a random one; kill all but one")
+    except Exception as exc:  # noqa: BLE001 - report, never crash
+        record("FAIL", "single office viewer", f"{type(exc).__name__}: {exc}")
+
+
 def check_scenarios() -> None:
     """The decision matrix: what the desk does in every scenario.
 
@@ -330,6 +358,7 @@ def main(argv=None) -> int:
     check_broker()
     check_office()
     check_office_autostart()
+    check_single_viewer()
     check_scenarios()
     if args.full:
         run_tests()
