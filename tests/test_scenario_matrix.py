@@ -43,12 +43,16 @@ class ScenarioMatrixTest(unittest.TestCase):
                       scenario_test.scenarios_exit_policy,
                       scenario_test.scenarios_entry_caps,
                       scenario_test.scenarios_ledger,
-                      scenario_test.scenarios_controls):
+                      scenario_test.scenarios_controls,
+                      scenario_test.scenarios_entry_funnel,
+                      scenario_test.scenarios_fail_closed,
+                      scenario_test.scenarios_recon):
             group()
             for row in scenario_test.results:
                 groups.add(row["group"])
         expected = {"regime", "weekend-gap", "loss-memory", "odds-gate",
-                    "exit-policy", "entry-caps", "ledger", "controls"}
+                    "exit-policy", "entry-caps", "ledger", "controls",
+                    "entry-funnel", "fail-closed", "broker-recon"}
         self.assertTrue(expected.issubset(groups),
                         f"missing families: {expected - groups}")
 

@@ -262,10 +262,178 @@ def _safe(value):
     return value
 
 
+# ── I. The entry funnel: the whole sequence for one candidate ─────────────
+def scenarios_entry_funnel() -> None:
+    """What happens to a candidate, gate by gate, in the flow's own order.
+
+    The gates are the real ones; the candidate inputs are stubbed. The
+    recorded answer is the FIRST gate that refuses (or "OPEN"), which is
+    what the operator sees in the log when an entry does not appear.
+    """
+    from scripts.tradingagents_paper_auto import regime_gate_passes
+    from robinhood_tools.errors import PolicyViolation
+    from robinhood_tools.loss_memory import RoundTrip, loss_streak_verdict
+    from robinhood_tools.options_flow import weekend_gap_block
+    from robinhood_tools.options_gate import entry_odds_verdict
+
+    g = "entry-funnel"
+
+    def funnel(*, regime, side, iv_with_delta=(-0.4788, 0.92), sigma=0.92,
+               premium=10.28, premium_cap=Decimal("3000"), ask=10.36,
+               open_positions=0, max_positions=5, when=None, loss_trips=None,
+               min_ev_pct=0.0):
+        """Walk the documented gate order; return the first refusal or OPEN."""
+        sig = "overweight" if side == "call" else "underweight"
+        if not regime_gate_passes(regime=regime, circuit_broken=False,
+                                  sig=sig, options_mode=True):
+            return "BLOCKED regime"
+        if side == "put" and weekend_gap_block(
+                right="put", when=when or datetime(2026, 11, 18, 10, 0,
+                                                    tzinfo=ET)) is not None:
+            return "BLOCKED weekend-gap"
+        if loss_trips:
+            v = loss_streak_verdict(loss_trips, symbol="RDDT", today=TODAY)
+            if v.blocked:
+                return "BLOCKED loss-memory"
+        delta, vol = iv_with_delta
+        odds = entry_odds_verdict(premium0=premium, delta=delta, spot0=95.0,
+                                  sigma=vol if vol else sigma,
+                                  expiry="2027-01-15", today=TODAY,
+                                  paths=1000, min_ev_pct=min_ev_pct)
+        if not odds["approved"]:
+            return "BLOCKED odds-gate"
+        if ask * 1 * 100 > premium_cap:
+            return "BLOCKED premium-cap"
+        if open_positions >= max_positions:
+            return "BLOCKED position-cap"
+        return "OPEN"
+
+    check(g, "RISK_ON call, healthy contract", "OPEN",
+          funnel(regime="RISK_ON", side="call", iv_with_delta=(0.45, 0.5)))
+    check(g, "RISK_OFF put via bearish signal (owner decision)", "OPEN",
+          funnel(regime="RISK_OFF", side="put"))
+    check(g, "RISK_OFF call (long premium in a down tape)", "BLOCKED regime",
+          funnel(regime="RISK_OFF", side="call", iv_with_delta=(0.45, 0.5)))
+    check(g, "CHOP put", "BLOCKED regime", funnel(regime="CHOP", side="put"))
+    check(g, "Thursday 15:50 put", "BLOCKED weekend-gap",
+          funnel(regime="RISK_OFF", side="put",
+                 when=datetime(2026, 11, 19, 15, 50, tzinfo=ET)))
+    two_losses = [RoundTrip("RDDT", Decimal("1"), Decimal("-100"),
+                            date(2026, 11, 14)),
+                  RoundTrip("RDDT", Decimal("1"), Decimal("-50"),
+                            date(2026, 11, 12))]
+    check(g, "double-loser underlier", "BLOCKED loss-memory",
+          funnel(regime="RISK_OFF", side="put", loss_trips=two_losses))
+    check(g, "a marginal contract against a +15% EV bar", "BLOCKED odds-gate",
+          funnel(regime="RISK_OFF", side="put", iv_with_delta=(-0.4788, 0.92),
+                 premium=10.0, min_ev_pct=0.15))
+    check(g, "premium over the $3000 cap", "BLOCKED premium-cap",
+          funnel(regime="RISK_OFF", side="put", ask=35.38))
+    check(g, "five positions already open", "BLOCKED position-cap",
+          funnel(regime="RISK_OFF", side="put", open_positions=5))
+
+
+# ── J. Fail-closed data paths ─────────────────────────────────────────────
+def scenarios_fail_closed() -> None:
+    """Missing evidence is not permission: the data-failure scenarios."""
+    from robinhood_tools.database import CioDatabase
+    from robinhood_tools.errors import PolicyViolation
+    from robinhood_tools.paper_flow import SignalOrder, place_signal_order
+    from robinhood_tools.runtime import build_settings
+
+    g = "fail-closed"
+    settings = build_settings("config/approval_routes.json", ".env")
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CioDatabase(Path(tmp) / "cio.db")
+        try:
+            place_signal_order(settings=settings, snapshot=None,
+                               order=SignalOrder(symbol="NVDA", side="buy",
+                                                 quantity=Decimal("1"),
+                                                 limit_price=Decimal("100")),
+                               database=db, today=date(2026, 11, 16))
+            blocked = False
+            why = "placed"
+        except PolicyViolation as exc:
+            blocked = True
+            why = str(exc)[:60]
+        check(g, "a buy with no membership evidence", True, blocked, why)
+
+        db.set_emergency_kill(True)
+        try:
+            db.require_not_killed()
+            killed = False
+        except PolicyViolation:
+            killed = True
+        check(g, "the kill switch blocks new placements", True, killed)
+        db.set_emergency_kill(False)
+
+        # A stale quote is a refusal, not a trade (get_quote enforces its
+        # own freshness; the trading paths pass max_age_minutes=5).
+        from robinhood_tools.market_prices import get_quote
+        from datetime import datetime as _dt, timedelta, timezone
+
+        class _StaleClient:
+            def get_snapshot(self, symbol, **kw):
+                return {"latestTrade": {"p": 100.0,
+                                        "t": (_dt.now(timezone.utc)
+                                              - timedelta(minutes=30)).isoformat()}}
+
+        try:
+            get_quote("NVDA", data_client=_StaleClient())
+            stale_blocked = False
+        except PolicyViolation:
+            stale_blocked = True
+        check(g, "a stale quote fails closed", True, stale_blocked)
+
+
+# ── K. Broker reconciliation: the ledger must tell the truth ──────────────
+def scenarios_recon() -> None:
+    from robinhood_tools.database import CioDatabase
+    from robinhood_tools.fill_reconciler import reconcile_desk_fills
+    from robinhood_tools.reconciliation import Fill
+
+    g = "broker-recon"
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CioDatabase(Path(tmp) / "cio.db")
+        orders = [{"id": "orphan-1", "symbol": "MRNA261120C00200000",
+                   "side": "buy", "status": "filled"}]
+        fills = {"orphan-1": [Fill("fx", Decimal("1"), Decimal("5.00"),
+                                   Decimal("0"), "2026-11-13T15:10:00Z")]}
+        report = reconcile_desk_fills(database=db, orders=orders,
+                                      fills_by_order=fills)
+        check(g, "a fill with no approval is reported as an orphan", 1,
+              len(report.orphan_orders))
+        check(g, "the orphan fill is still recorded (the ledger is complete)",
+              1, len(db.order_fills("orphan-1")))
+
+        sells = [{"id": "exit-1", "symbol": "F261120C00015000",
+                  "side": "sell", "status": "filled"}]
+        sell_fills = {"exit-1": [Fill("fy", Decimal("2"), Decimal("8.00"),
+                                      Decimal("0"), "2026-11-14T14:45:00Z")]}
+        report2 = reconcile_desk_fills(database=db, orders=sells,
+                                       fills_by_order=sell_fills)
+        check(g, "an exit with no lifecycle is reported, not absorbed", 1,
+              len(report2.unattributed_exits))
+
+        # A partial fill records the partial quantity.
+        partial = [{"id": "part-1", "symbol": "NVDA", "side": "buy",
+                    "status": "partially_filled"}]
+        partial_fills = {"part-1": [Fill("fz", Decimal("3"), Decimal("100.00"),
+                                         Decimal("0"),
+                                         "2026-11-13T15:10:00Z")]}
+        reconcile_desk_fills(database=db, orders=partial,
+                             fills_by_order=partial_fills)
+        rows = db.order_fills("part-1")
+        check(g, "a partial fill records only what filled", "3",
+              rows[0]["quantity"] if rows else "none")
+
+
 def main(argv=None) -> int:
     for group in (scenarios_regime, scenarios_weekend, scenarios_loss_memory,
                   scenarios_odds_gate, scenarios_exit_policy,
-                  scenarios_entry_caps, scenarios_ledger, scenarios_controls):
+                  scenarios_entry_caps, scenarios_ledger, scenarios_controls,
+                  scenarios_entry_funnel, scenarios_fail_closed,
+                  scenarios_recon):
         try:
             group()
         except Exception as exc:  # noqa: BLE001 - a crashed group is a FAIL
