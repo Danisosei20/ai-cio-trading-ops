@@ -1247,6 +1247,34 @@ class CioDatabase:
         if row:
             raise PolicyViolation(f"{symbol.upper()} is in cooldown through {row['expires_on']}: {row['reason']}")
 
+    def all_fill_rows(self) -> list[dict]:
+        """Every recorded fill (order_fills), for realized-P/L readers."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM order_fills ORDER BY filled_at").fetchall()
+        return [dict(row) for row in rows]
+
+    def require_no_symbol_loss_streak(self, symbol: str, *, today: str) -> None:
+        """Block new entries on a symbol that keeps losing.
+
+        Reads the desk's own reconciled fills (not the broker, not memory)
+        and pairs them into round-trips per underlier. Two consecutive
+        losses inside the window rest the symbol. Exits are never blocked:
+        this is only called from entry paths.
+        """
+        from datetime import date as _date
+
+        from .loss_memory import loss_streak_verdict, round_trips
+
+        try:
+            day = _date.fromisoformat(today)
+        except (TypeError, ValueError):
+            raise PolicyViolation(f"Unreadable date {today!r}; loss memory fails closed.")
+        verdict = loss_streak_verdict(round_trips(self.all_fill_rows()),
+                                      symbol=symbol, today=day)
+        if verdict.blocked:
+            raise PolicyViolation(verdict.reason)
+
     def dashboard(self) -> dict:
         with self.connect() as db:
             statuses = {row["status"]: row["count"] for row in db.execute(

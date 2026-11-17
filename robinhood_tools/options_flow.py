@@ -63,6 +63,11 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     symbol = contract.underlying
     if snapshot is None:
         raise PolicyViolation("No membership evidence; option openers blocked.")
+    # Per-symbol loss memory on entries: an underlier that keeps losing
+    # rests before it can be bought again (RDDT, TTWO, 2026-11-10/16).
+    # Entry-only by construction: this function places openers, and the
+    # sell-to-close path lives in close_long_option, untouched.
+    db.require_no_symbol_loss_streak(symbol, today=today.isoformat())
     snapshot.require_eligible_purchase(symbol)
     # Index ETFs have no single earnings event; the blackout cannot apply.
     if symbol not in {item.upper() for item in snapshot.index_etfs}:

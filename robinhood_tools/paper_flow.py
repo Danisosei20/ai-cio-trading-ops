@@ -68,6 +68,11 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
     db.require_no_symbol_cooldown(order.symbol, today=today.isoformat())
+    if order.side == "buy":
+        # Per-symbol loss memory: a loser gets a rest before it gets
+        # re-bought (RDDT lost 40% and was re-bought the same session).
+        # Entries only - a sell is an exit, and exits are never blocked.
+        db.require_no_symbol_loss_streak(order.symbol, today=today.isoformat())
     if snapshot is not None and settings.index_etf_allowlist:
         import dataclasses as _dc
 
