@@ -141,7 +141,7 @@ flowchart LR
     TAKE --> RIDE[winners ride · e.g. ACN +144%]
 ```
 
-**Important:** The options exit policy (owner decision 2026-11-06) takes profit at **+2%** ("take the trade at any time, even if the profit is 2%") and cuts at **-15%**; above a +25% peak a trailing floor of peak × 0.40 takes over. The -15% stop is a stop-loss, not a guaranteed exit price during gaps or illiquid trading — a weekend gap can fill far past it, which is why no new short premium opens after Thursday 15:45 ET.
+**Important:** The options exit policy (owner decision 2026-11-16) has **no fixed take-profit target — winners run unlimited** — with a **-15%** stop and a trailing floor armed at a **+25%** peak (floor = peak × 0.40, so a +200% winner locks in +80%). The earlier +2% take-profit was reverted after the options Time Machine priced it at **-$47.53 per contract per round trip** on the live book (61% win rate at a 1:7.5 payoff); with winners running, the same simulation reads **+$110.68**. The -15% stop is a stop-loss, not a guaranteed exit price during gaps or illiquid trading — a weekend gap can fill far past it, which is why no new short premium opens after Thursday 15:45 ET.
 
 ---
 

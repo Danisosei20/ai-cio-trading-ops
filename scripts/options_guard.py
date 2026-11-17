@@ -4,20 +4,25 @@
 Evaluates every open OCC position each run:
   EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
   STOP    premium down <= --stop-pct (default 0.15 = -15%)
-  TARGET  premium up >= --target-pct (default 0.02 = +2%)
+  TARGET  premium up >= --target-pct (default 0 = DISABLED — winners run)
   STALE   held >= --max-hold-days (default 5) while NOT in profit
   TRAIL   if peak >= 25%: floor = peak * (1 - stop_pct/trail_arm)
           (trail_arm=0.25, so floor = peak * 0.40). Exit if current <= floor.
 Exits sell-to-close through review + ledger + session guard. Paper only.
 
-ACTUAL POLICY (reconciled 2026-11-06):
-  - Take-profit: +2% by default. Owner decision 2026-11-06 ("take trade at
-    any time even if the profit is 2%") re-enabled it, superseding the
-    earlier choice to leave it disabled and let winners run. Above +25% the
-    trail takes over: the ratcheting floor protects the winner rather than
-    closing it at +2%.
+ACTUAL POLICY (reconciled 2026-11-16):
+  - Take-profit: DISABLED by default — winners run unlimited. The
+    2026-11-06 +2% target ("take trade at any time even if the profit is
+    2%") was reverted by the owner on 2026-11-16 ("no, it should be
+    unlimited"), after the options Time Machine showed a 1:7.5 payoff at
+    a 61% win rate is negative EV per round trip (-$47.53/contract on
+    the live RDDT position). Protection comes from the trail instead:
+    above +25% the ratcheting floor (peak x 0.40) locks the winner in,
+    so a +200% winner can never ride back below +80%. --target-pct still
+    accepts an explicit value for anyone who wants a scalp; 0 disables.
   - Stop loss: -15% from entry (not -25%; the -25% in prior docs was the
-    equity guard's stop, not the options guard's).
+    equity guard's stop, not the options guard's). Gap caveat: a weekend
+    gap can fill far past it — hence the Thursday 15:45 short-premium rule.
   - Trailing: activates at +25% peak. Floor = peak * 0.40 (i.e., a +100%
     winner locks in +40%). Once armed, the stop ratchets from the peak.
   - Gap risk: a -15% (or -25%) stop is NOT a guaranteed max loss. Options
@@ -56,10 +61,13 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Exit guard for long option positions.")
     p.add_argument("--check", action="store_true")
     p.add_argument("--execute", action="store_true")
-    p.add_argument("--target-pct", type=Decimal, default=Decimal("0.02"),
-                   help="take-profit threshold (default 0.02 = +2%); the desk "
-                        "owner plan (+2% take) re-enabled 2026-11-06 after the "
-                        "target had been disabled in favour of a +25% trail")
+    p.add_argument("--target-pct", type=Decimal, default=Decimal("0"),
+                   help="take-profit threshold (default 0 = DISABLED, winners "
+                        "run unlimited; the +25% trail floor protects them). "
+                        "The 2026-11-06 +2% default was reverted by the owner "
+                        "on 2026-11-16 after the options Time Machine showed a "
+                        "1:7.5 payoff at a 61% win rate is negative EV per "
+                        "round trip (-$47.53/contract on the live position)")
     p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.15"))
     p.add_argument("--max-dte", type=int, default=2)
     p.add_argument("--max-hold-days", type=int, default=5)

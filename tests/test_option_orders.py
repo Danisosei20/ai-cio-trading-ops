@@ -283,8 +283,9 @@ class OptionGuardTest(unittest.TestCase):
         expiry (EXPIRE) close it.
 
         Superseded as the *default* by the 2026-11-06 owner decision to take
-        profit at +2%; this pins that an explicit target_pct=0 still means
-        unlimited, and that a winner past the +25% arm rides the trail.
+        profit at +2%, then restored as the default on 2026-11-16 ("no,
+        it should be unlimited"). This pins that target_pct=0 means
+        unlimited and that a winner past the +25% arm rides the trail.
         """
         decide = self.guard.decide
         # +180% held 9 days: no target, so no TARGET; in profit, so no STALE.
@@ -324,15 +325,23 @@ class OptionGuardTest(unittest.TestCase):
         self.assertEqual(decide(D("1000"), D("1100"), 30, 2,
                                 D("0"), D("0.15"), 2, 5, peak_ret=D("0.30"))[0], "TRAIL")
 
-    def test_two_percent_target_takes_ordinary_winners(self):
-        """Owner 2026-11-06: take the trade even at +2%.
+    def test_the_default_target_lets_winners_run(self):
+        """Owner decision 2026-11-16 ("no, it should be unlimited").
 
-        The default target-pct is +2% again, so a small winner is closed
-        rather than held forever waiting for the +25% trail.
+        The 2026-11-06 +2% take-profit was reverted: the default target is
+        DISABLED, so an ordinary winner is held for the +25% trail instead
+        of being scalped. The options Time Machine priced the old policy at
+        -$47.53 per contract per round trip (61% win rate at a 1:7.5
+        payoff), which is why the default changed.
         """
         decide = self.guard.decide
         act, why = decide(Decimal("1000"), Decimal("1030"), 30, 1,
                           self.guard_default_target(), Decimal("0.15"), 2, 5)
+        self.assertEqual(act, "HOLD")
+        self.assertIn("winners run", why)
+        # The escape hatch remains: an explicit target still closes it.
+        act, why = decide(Decimal("1000"), Decimal("1030"), 30, 1,
+                          Decimal("0.02"), Decimal("0.15"), 2, 5)
         self.assertEqual(act, "TARGET")
         self.assertIn("3%", why)
 
@@ -355,8 +364,10 @@ class OptionGuardTest(unittest.TestCase):
         self.assertEqual(act, "TRAIL")
         self.assertIn("floor", why)
 
-    def test_guard_default_target_is_two_percent(self):
-        self.assertEqual(self.guard_default_target(), Decimal("0.02"))
+    def test_guard_default_target_is_disabled(self):
+        """Owner 2026-11-16: winners run unlimited — the take-profit default
+        is 0 (disabled); the +25% trail floor is the protection."""
+        self.assertEqual(self.guard_default_target(), Decimal("0"))
 
     def test_market_clock_closed_blocks_execution(self):
         """Execution guard must refuse when the Alpaca market clock is closed."""

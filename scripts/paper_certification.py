@@ -696,12 +696,22 @@ def group_exits(rec: Recorder) -> None:
     rec.check("exits", "options flat + max hold triggers STALE", action == "STALE",
               f"{action}: {reason}")
 
-    # Owner decision 2026-11-06: take profit at +2%. An ordinary winner (peak
-    # under the +25% trail arm) is closed by the default target.
+    # Owner decision 2026-11-16 ("no, it should be unlimited"): the take-profit
+    # is DISABLED by default and winners run; the +25% trail floor is the
+    # protection. An ordinary winner (peak under the arm) is held.
+    action, reason = decide(D("1.00"), D("1.03"), dte=30, hold_days=1,
+                            target_pct=D("0"), stop_pct=D("0.15"),
+                            max_dte=5, max_hold_days=10)
+    rec.check("exits", "options +3% with the target disabled HOLDs (winners run)",
+              action == "HOLD" and "winners run" in reason,
+              f"{action}: {reason}")
+
+    # ...and the exit is never a loss disguised as a scalp: below the arm the
+    # guard must not invent a target. Only an explicit --target-pct closes it.
     action, reason = decide(D("1.00"), D("1.03"), dte=30, hold_days=1,
                             target_pct=D("0.02"), stop_pct=D("0.15"),
                             max_dte=5, max_hold_days=10)
-    rec.check("exits", "options +3% with the +2% default triggers TARGET",
+    rec.check("exits", "an explicit +2% target still closes a winner",
               action == "TARGET", f"{action}: {reason}")
 
     # ...but a home run past the +25% arm is NOT sold at +2%: the ratcheting
@@ -713,11 +723,20 @@ def group_exits(rec: Recorder) -> None:
               action == "HOLD" and "trail armed" in reason,
               f"{action}: {reason}")
 
-    # The boundary is the arm, not the size of the profit.
+    # The boundary is the arm, not the size of the profit: below the arm the
+    # run continues even at +20% (the target is disabled by default).
     action, reason = decide(D("1.00"), D("1.20"), dte=30, hold_days=1,
-                            target_pct=D("0.02"), stop_pct=D("0.15"),
+                            target_pct=D("0"), stop_pct=D("0.15"),
                             max_dte=5, max_hold_days=10)
-    rec.check("exits", "options +20% (below the arm) with +50% target triggers TARGET",
+    rec.check("exits", "options +20% (below the arm) HOLDs with the target off",
+              action == "HOLD" and "trail armed at" in reason,
+              f"{action}: {reason}")
+
+    # ...while an explicit target below the return still closes below the arm.
+    action, reason = decide(D("1.00"), D("1.20"), dte=30, hold_days=1,
+                            target_pct=D("0.10"), stop_pct=D("0.15"),
+                            max_dte=5, max_hold_days=10)
+    rec.check("exits", "options +20% (below the arm) with a +10% target triggers TARGET",
               action == "TARGET", f"{action}: {reason}")
 
     from scripts.daytrade_engine import _is_flatten_time

@@ -59,48 +59,75 @@ def annualized_vol(closes: list[float]) -> float | None:
 def simulate_option_odds(*, premium0: float, delta: float, spot0: float,
                          sigma: float, days: int, paths: int,
                          target_pct: float, stop_pct: float,
-                         seed: int) -> dict:
-    """Simulated exit-band odds. Pure and seeded: same inputs, same answer."""
-    target = premium0 * (1 + target_pct)
+                         seed: int, arm_pct: float = 0.25,
+                         floor_ratio: float = 0.40) -> dict:
+    """Simulated exit-band odds. Pure and seeded: same inputs, same answer.
+
+    The exit policy as the guard enforces it (owner 2026-11-16):
+      * target_pct <= 0 -> no take-profit; winners run unlimited.
+      * the +25% trail arm locks a floor at peak x floor_ratio, and the
+        guard exits when premium touches it (TRAIL).
+      * -stop_pct always closes (STOP); expiry ends the hold (NEITHER,
+        terminal return reported).
+    """
+    target = premium0 * (1 + target_pct) if target_pct > 0 else None
     stop = premium0 * (1 - stop_pct)
+    arm = premium0 * (1 + arm_pct)
     rng = random.Random(seed)
     dt = 1.0 / 252.0
     drift_step = -0.5 * sigma * sigma * dt
     diff_step = sigma * math.sqrt(dt)
-    target_first = stop_first = neither = 0
+    target_first = stop_first = trail_first = neither = 0
     terminal: list[float] = []
+    returns: list[float] = []
     for _ in range(paths):
         spot = spot0
         premium = premium0
+        peak = premium0
         hit = 0
+        exit_ret = 0.0
         for _day in range(max(days, 1)):
             spot *= math.exp(drift_step + diff_step * rng.gauss(0, 1))
             premium = premium0 + delta * (spot - spot0)
-            if premium >= target:
+            if premium > peak:
+                peak = premium
+            if target is not None and premium >= target:
                 hit = 1
+                exit_ret = target_pct
                 break
             if premium <= stop:
                 hit = -1
+                exit_ret = -stop_pct
+                break
+            if peak >= arm and premium <= peak * floor_ratio:
+                hit = 2
+                exit_ret = peak * floor_ratio / premium0 - 1
                 break
         if hit == 1:
             target_first += 1
         elif hit == -1:
             stop_first += 1
+        elif hit == 2:
+            trail_first += 1
         else:
             neither += 1
             terminal.append(premium)
+            exit_ret = premium / premium0 - 1
+        returns.append(exit_ret)
     p_target, p_stop = target_first / paths, stop_first / paths
-    # Expected value of the exit policy on premium, per round trip. The
-    # guard takes +target_pct or -stop_pct, so a policy pays nothing for
-    # surviving to expiry: EV = pT*target + pS*(-stop).
-    ev_pct = p_target * target_pct - p_stop * stop_pct
+    p_trail = trail_first / paths
+    p_neither = neither / paths
+    ev_pct = sum(returns) / paths
     return {
         "paths": paths,
         "target_first": p_target,
         "stop_first": p_stop,
-        "neither": neither / paths,
+        "trail_first": p_trail,
+        "neither": p_neither,
         "target_pct": target_pct,
         "stop_pct": stop_pct,
+        "arm_pct": arm_pct,
+        "floor_ratio": floor_ratio,
         "ev_pct_on_premium": round(ev_pct, 5),
         "ev_usd_per_contract": round(ev_pct * premium0 * 100, 2),
         "terminal_premium_median": (statistics.median(terminal)
@@ -138,7 +165,7 @@ def fetch_quote(symbol: str, *, max_age_minutes: int = 5):
     return quote, sigma, contract
 
 
-def main(argv=None) -> int:
+def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Options-book Time Machine.")
     ap.add_argument("--symbol", action="append", default=[],
                     help="OCC symbol; repeatable. --book reads the broker.")
@@ -146,8 +173,14 @@ def main(argv=None) -> int:
                     help="simulate every open long option position")
     ap.add_argument("--paths", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--target-pct", type=float, default=0.02)
+    ap.add_argument("--target-pct", type=float, default=0.0,
+                    help="take-profit band (default 0 = disabled, winners run; "
+                         "mirrors the guard's policy)")
     ap.add_argument("--stop-pct", type=float, default=0.15)
+    ap.add_argument("--arm-pct", type=float, default=0.25,
+                    help="trail arm: peak return that locks the floor")
+    ap.add_argument("--floor-ratio", type=float, default=0.40,
+                    help="trail floor as a share of the peak premium")
     ap.add_argument("--days", type=int, default=None,
                     help="horizon in trading days (default: min(DTE, 10)")
     ap.add_argument("--allow-stale", action="store_true",
@@ -155,6 +188,12 @@ def main(argv=None) -> int:
                          "closed (the trading path still fails closed on "
                          "stale quotes; a simulation is not a decision)")
     args = ap.parse_args(argv)
+    max_age = 1440 if args.allow_stale else 5
+    return ap.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
     max_age = 1440 if args.allow_stale else 5
 
     symbols = list(args.symbol)
@@ -194,7 +233,8 @@ def main(argv=None) -> int:
         odds = simulate_option_odds(
             premium0=premium0, delta=delta, spot0=float(quote.underlying_price),
             sigma=sigma, days=days, paths=args.paths,
-            target_pct=args.target_pct, stop_pct=args.stop_pct, seed=args.seed)
+            target_pct=args.target_pct, stop_pct=args.stop_pct, seed=args.seed,
+            arm_pct=args.arm_pct, floor_ratio=args.floor_ratio)
         row = {
             "symbol": symbol, "underlying": contract.underlying,
             "right": contract.right, "strike": str(contract.strike),
