@@ -112,6 +112,35 @@ def check_tasks() -> None:
                f"{len(TASKS)} registered and commands resolve")
 
 
+def check_scenarios() -> None:
+    """The decision matrix: what the desk does in every scenario.
+
+    Distinct from the unit suite (each gate in isolation) and the
+    certification (each execution path): this walks regime x signal x
+    mode, the weekend rule, loss memory, the odds gate, the exit policy
+    and the ledger, and pins the verdict for each. Offline, deterministic,
+    ~1s. A red row means some scenario the desk claims to handle does not
+    behave as documented.
+    """
+    try:
+        from scripts import scenario_test
+
+        scenario_test.results.clear()
+        code = scenario_test.main([])
+        passed = sum(1 for r in scenario_test.results if r["ok"])
+        total = len(scenario_test.results)
+        if code == 0 and total:
+            record("PASS", "scenario matrix",
+                   f"{passed}/{total} scenarios behave as documented")
+        else:
+            bad = [r["scenario"] for r in scenario_test.results if not r["ok"]]
+            record("FAIL", "scenario matrix",
+                   f"{len(bad)} scenario(s) off-spec: {', '.join(bad[:4])}")
+    except Exception as exc:  # noqa: BLE001 - report, never crash preflight
+        record("FAIL", "scenario matrix",
+               f"{type(exc).__name__}: {exc}")
+
+
 def check_office_autostart() -> None:
     """The dashboard must come back after a reboot, not wait for a human.
 
@@ -301,6 +330,7 @@ def main(argv=None) -> int:
     check_broker()
     check_office()
     check_office_autostart()
+    check_scenarios()
     if args.full:
         run_tests()
         run_certification()
