@@ -369,8 +369,13 @@ def scenarios_fail_closed() -> None:
 
         # A stale quote is a refusal, not a trade (get_quote enforces its
         # own freshness; the trading paths pass max_age_minutes=5).
-        from robinhood_tools.market_prices import get_quote
+        # yfinance is patched OUT: without this the scenario depends on
+        # whether the yfinance fallback happens to be fresh (it is, mid-
+        # session, which made this row flip on 2026-11-17).
         from datetime import datetime as _dt, timedelta, timezone
+        from unittest.mock import patch
+
+        from robinhood_tools.market_prices import get_quote
 
         class _StaleClient:
             def get_snapshot(self, symbol, **kw):
@@ -378,11 +383,12 @@ def scenarios_fail_closed() -> None:
                                         "t": (_dt.now(timezone.utc)
                                               - timedelta(minutes=30)).isoformat()}}
 
-        try:
-            get_quote("NVDA", data_client=_StaleClient())
-            stale_blocked = False
-        except PolicyViolation:
-            stale_blocked = True
+        with patch("yfinance.Ticker", side_effect=RuntimeError("no fallback")):
+            try:
+                get_quote("NVDA", data_client=_StaleClient())
+                stale_blocked = False
+            except PolicyViolation:
+                stale_blocked = True
         check(g, "a stale quote fails closed", True, stale_blocked)
 
 

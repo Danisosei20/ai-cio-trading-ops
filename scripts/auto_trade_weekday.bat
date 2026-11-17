@@ -27,6 +27,9 @@ echo === auto trade run started %DATE% %TIME% ===>>%LOG%
 REM Position odds for the dashboard (the simulation is expensive, so it
 REM runs once here and /trading reads the artifact, never re-simulating).
 "%TA_PY%" scripts\options_time_machine.py --book --allow-stale>>%LOG% 2>&1
+REM What the current book does under any market scenario (spot moves,
+REM decay, IV shocks, gaps) - read-only, ~5s, one artifact for the desk.
+"%TA_PY%" scripts\scenario_analysis.py>>%LOG% 2>&1
 REM Certify the execution paths AND the truth against the live broker
 REM (read-only: ledger vs positions, dashboard P/L vs broker). The
 REM --no-broker variant used to skip those two checks forever; after the
