@@ -24,7 +24,27 @@ from decimal import Decimal
 
 # The guard's policy, kept here so the gate prices what the guard enforces.
 DEFAULT_PATHS = 4000
-DEFAULT_MIN_EV_PCT = 0.0     # strictly positive EV required
+# Owner decision 2026-11-17: a positive margin, not zero.
+#
+# This is a VOLUME THROTTLE, not an edge filter, and it must never be described
+# as one. The delta-only simulator (options_odds.py) returns positive EV for
+# every plausible contract under the winners-run policy, and the spread across
+# moneyness is small - a contract struck 30% out of the money scores within a
+# couple of points of an at-the-money one. The metric tracks volatility, not
+# contract quality, so this threshold rejects the low-vol tail and lets the
+# rest through. It buys a fractionally better average contract at the cost of
+# trading less; it does not identify winners.
+#
+# Measured 2026-11-17 over 50 contracts (10 moneyness/strike levels x 5 vol
+# levels, spot 100, 10d horizon, winners-run policy): EV ran +3.7% to +31.3%,
+# positive in every case, with stop-first at 68-73% throughout. At 0.10 this
+# margin blocks about a third of that grid.
+#
+# Setting it to zero leaves the gate doing the two things it genuinely does
+# well - failing closed when no vol estimate exists, and refusing a contract
+# if the +2% scalp policy ever returns. tests/test_options_gate.py pins both
+# the non-discrimination and this reading of the number.
+DEFAULT_MIN_EV_PCT = 0.10
 HORIZON_DAYS = 10            # min(DTE, HORIZON_DAYS)
 
 

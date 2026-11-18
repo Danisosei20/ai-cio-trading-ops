@@ -45,6 +45,7 @@ BLACKOUT_DAYS = 10  # horizon: a position older than this is not "now"
 
 # The model lives in the package so the entry gate, this CLI and the tests
 # all run the same math (re-exported here for backwards compatibility).
+from robinhood_tools.options_gate import DEFAULT_MIN_EV_PCT  # noqa: E402
 from robinhood_tools.options_odds import (  # noqa: E402
     annualized_vol,
     simulate_option_odds,
@@ -106,9 +107,10 @@ def parse_args(argv=None):
     ap.add_argument("--candidates", action="store_true",
                    help="dry-run the ENTRY odds gate over the current "
                         "screener feeds (what the watch would face)")
-    ap.add_argument("--min-ev-pct", type=float, default=0.0,
-                   help="EV bar for --candidates (default 0 = strictly "
-                        "positive; the owner can set a margin)")
+    ap.add_argument("--min-ev-pct", type=float, default=DEFAULT_MIN_EV_PCT,
+                    help="mirrors the live entry gate's margin so this "
+                         "report shows what the 15:10 watch would actually "
+                         "face (owner set +10% on 2026-11-17)")
     return ap.parse_args(argv)
 
 

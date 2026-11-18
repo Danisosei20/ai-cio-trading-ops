@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+from robinhood_tools.options_gate import DEFAULT_MIN_EV_PCT  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -52,7 +53,7 @@ def parse_args(argv=None):
     p.add_argument("--close", default="", help="OCC symbol to sell-to-close")
     p.add_argument("--odds-paths", type=int, default=4000,
                    help="simulation paths for the entry odds gate")
-    p.add_argument("--min-ev-pct", type=float, default=0.0,
+    p.add_argument("--min-ev-pct", type=float, default=DEFAULT_MIN_EV_PCT,
                    help="minimum simulated EV on premium to open "
                         "(default 0 = strictly positive; the owner can "
                         "set a margin - under the winners-run policy a "
@@ -89,7 +90,7 @@ def _odds_verdict(quote, ticker: str, today, args) -> dict:
             spot0=float(quote.underlying_price), sigma=float(sigma),
             expiry=quote.contract.expiry, today=today,
             paths=getattr(args, "odds_paths", 4000),
-            min_ev_pct=getattr(args, "min_ev_pct", 0.0))
+            min_ev_pct=getattr(args, "min_ev_pct", DEFAULT_MIN_EV_PCT))
     except Exception as exc:  # noqa: BLE001 - no odds means no entry
         return {"approved": False,
                 "reason": f"odds gate error: {type(exc).__name__}: {exc}"}
@@ -242,6 +243,7 @@ def main(argv=None) -> int:
     db.update_candidate_status(candidate_id, "approved")
     rec.update({"action": "buy_placed", "order_id": result["order_id"],
                 "status": result["status"], "approval_id": result["approval_id"],
+                "alert": result.get("alert", "unknown"),
                 "candidate_id": candidate_id})
     print(json.dumps(rec, indent=2))
     return 0

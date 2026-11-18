@@ -92,14 +92,16 @@ class RequirePositiveEvTest(unittest.TestCase):
         With the owner's 2026-11-16 policy (no take-profit, -15% stop,
         +25% trail) the simulated EV is POSITIVE across every plausible
         contract in a drift-less delta-only walk - a capped loss against
-        an uncapped win is positive EV by construction. The gate at
-        min_ev_pct=0 therefore approves nearly everything; it earns its
-        keep by failing closed on missing vol and by catching the +2%
-        scalp if that policy ever returns. (A tiny delta with tiny vol
-        prices ~zero EV - indistinguishable from no edge either way -
-        which is why that case is not in the assertion set.) A margin
-        (min_ev_pct>0) is the only version that filters contracts, and
-        that is the owner's parameter to set.
+        an uncapped win is positive EV by construction. At min_ev_pct=0
+        the gate therefore approves nearly everything; it earns its keep
+        by failing closed on missing vol and by catching the +2% scalp if
+        that policy ever returns. (A tiny delta with tiny vol prices
+        ~zero EV - indistinguishable from no edge either way - which is
+        why that case is not in the assertion set.)
+
+        Owner decision 2026-11-17 moved the default to +10%, described
+        everywhere as a VOLUME THROTTLE and never as an edge filter - see
+        the comment on DEFAULT_MIN_EV_PCT and the pairing test below.
         """
         for delta, sigma in (("-0.4788", 0.92), ("-0.20", 0.60), ("-0.60", 1.20)):
             with self.subTest(delta=delta, sigma=sigma):
@@ -112,6 +114,46 @@ class RequirePositiveEvTest(unittest.TestCase):
                                 f"delta {delta} sigma {sigma} priced "
                                 f"EV {v['ev_pct_on_premium']:+.2%}")
 
+    def test_ev_does_not_rank_contracts_by_moneyness(self):
+        """The margin is a throttle, not a selector - pinned so it is never
+        mistaken for one.
+
+        Measured 2026-11-17: over 50 contracts (10 moneyness levels x 5
+        vol levels) EV was positive in every case and the spread across
+        moneyness was small - a contract struck 30% out of the money
+        scored within a couple of points of an at-the-money one, and the
+        ordering inverted depending on vol. The number tracks volatility,
+        not contract quality, so a threshold derived from it rejects the
+        low-vol tail rather than the bad trades.
+
+        If this assertion ever fails because EV started ordering cleanly
+        by moneyness, the model changed - and that is worth a human look
+        before anyone leans on the number harder.
+        """
+        spot = 100.0
+        cases = [
+            ("deep OTM call", 0.05, 0.60),
+            ("near ATM call", 0.52, 5.20),
+            ("ITM call", 0.72, 9.40),
+        ]
+        evs = {}
+        for label, delta, premium in cases:
+            v = entry_odds_verdict(premium0=premium, delta=delta, spot0=spot,
+                                   sigma=0.55, expiry="2027-01-15",
+                                   today=date(2026, 11, 16), paths=1000,
+                                   min_ev_pct=0.0)
+            evs[label] = float(v["ev_pct_on_premium"])
+
+        # Every plausible contract prices positive.
+        for label, ev in evs.items():
+            self.assertGreater(ev, 0.0, f"{label} priced EV {ev:+.2%}")
+        # And the moneyness spread is small enough that ordering is noise.
+        spread = max(evs.values()) - min(evs.values())
+        self.assertLess(spread, 0.15,
+                        f"EV now separates moneyness by {spread:+.1%} - the "
+                        f"model's behaviour changed, re-read it before "
+                        f"treating the bar as selection: {evs}")
+
     def test_no_vol_estimate_fails_closed(self):
         q = self._quote(iv=None)
         with self.assertRaises(PolicyViolation) as ctx:
@@ -120,6 +162,15 @@ class RequirePositiveEvTest(unittest.TestCase):
         self.assertIn("fail closed", str(ctx.exception))
 
     def test_the_provider_is_asked_for_vol_when_sigma_is_absent(self):
+        """Plumbing: the vol provider is consulted when sigma is absent.
+
+        min_ev_pct is pinned to 0 here on purpose. This contract prices
+        about +9% EV under a 200-path run, which the 2026-11-17 default
+        bar of +10% refuses - and that refusal would mask the one thing
+        this test is about. The bar's own behaviour is pinned by
+        test_a_marginal_contract_is_refused_by_the_bar and by
+        test_ev_does_not_rank_contracts_by_moneyness.
+        """
         asked = []
 
         def provider(underlying, iv):
@@ -127,7 +178,8 @@ class RequirePositiveEvTest(unittest.TestCase):
             return 0.9
 
         v = require_positive_ev(quote=self._quote(), today=date(2026, 11, 16),
-                                paths=200, sigma_provider=provider)
+                                paths=200, sigma_provider=provider,
+                                min_ev_pct=0.0)
         self.assertEqual(asked, ["RDDT"])
         self.assertIn("approved", v)
 

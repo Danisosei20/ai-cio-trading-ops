@@ -17,6 +17,7 @@ from .database import CioDatabase
 from .errors import PolicyViolation
 from .models import OptionLeg, OptionOrderRequest
 from .options import OptionSelectionFilters, select_long_option
+from .options_gate import DEFAULT_MIN_EV_PCT
 from .safety import require_earnings_clear
 from .universe import Sp500Snapshot
 
@@ -65,7 +66,7 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                       override_reason: str = "",
                        odds_gate: bool = True,
                        odds_sigma: float | None = None,
-                       min_ev_pct: float = 0.0) -> dict:
+                       min_ev_pct: float = DEFAULT_MIN_EV_PCT) -> dict:
     """Review → ledger → guarded placement of one long option opener."""
     from .runtime import build_paper_options_service as _build
 
@@ -161,17 +162,25 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     # One Slack message per placed order (owner directive 2026-11-16). The
     # end-of-run summary is not a substitute: 13 entries logged today with
     # no per-order alert. Never blocks the order path.
+    #
+    # The outcome is recorded, not discarded. On 2026-11-17 an order reached
+    # the broker with no ledger trace and no alert, and after the fact there
+    # was no way to tell whether the alert had fired or failed - the return
+    # value was thrown away. 'sent'/'failed' now travels in the result dict
+    # and out through the caller's log.
+    alert = "failed"
     try:
         from .order_alerts import option_message, post_order_alert
 
-        post_order_alert(
+        alert = post_order_alert(
             settings=settings,
             message=option_message(side="buy", contract=contract.option_symbol,
                                    qty=contracts, limit=request.limit_price,
                                    premium=premium, order_id=placed.id,
                                    approval_id=auth.approval_id))
     except Exception:  # noqa: BLE001 - alerting is best-effort, never fatal
-        pass
+        alert = "failed"
+    result["alert"] = alert
     return result
 
 
@@ -230,16 +239,19 @@ def close_long_option(*, settings, quote, contracts: int,
               "approval_id": auth.approval_id}
     # One Slack message per placed exit (owner directive 2026-11-16): the
     # guard closes positions all session and the operator only learned about
-    # it from the next run summary.
+    # it from the next run summary. The outcome is recorded, not discarded -
+    # see the note in place_long_option for why that matters.
+    alert = "failed"
     try:
         from .order_alerts import option_message, post_order_alert
 
-        post_order_alert(
+        alert = post_order_alert(
             settings=settings,
             message=option_message(side="sell", contract=contract.option_symbol,
                                    qty=contracts, limit=request.limit_price,
                                    order_id=placed.id,
                                    approval_id=auth.approval_id))
     except Exception:  # noqa: BLE001 - alerting is best-effort, never fatal
-        pass
+        alert = "failed"
+    result["alert"] = alert
     return result
