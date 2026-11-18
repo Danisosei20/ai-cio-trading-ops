@@ -463,6 +463,16 @@ def _run_cycle(args, py: str) -> str | None:
         if '"action": "buy_placed"' in out:
             placed = f"{symbol} {side}"
             print(f"[entry] PLACED {placed} | {detail}")
+            # The per-order Slack alert is best-effort, and the pilot now
+            # records its outcome. On 2026-11-17 an order went in with no
+            # alert and there was no way to tell afterwards whether Slack
+            # had failed or the seam had never been reached. A failed alert
+            # the order path must not raise, so the run log is the only
+            # place it can surface.
+            if '"alert": "failed"' in out.replace('": "', '":"'):
+                print(f"[entry] ALERT FAILED for {symbol} {side} - order is "
+                      f"in the ledger and at the broker, but no Slack message "
+                      f"was delivered; check the bot token and channel")
             break
         if '"action": "dry_run_buy"' in out:
             placed = f"{symbol} {side} (dry-run)"

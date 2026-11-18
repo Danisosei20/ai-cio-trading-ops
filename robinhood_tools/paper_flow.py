@@ -137,11 +137,13 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
               "approval_id": auth.approval_id, "review_id": review.review_id}
     # One Slack message per placed equity order (owner directive 2026-11-16).
     # Covers buys from the research path and every sell (exit/flatten): an
-    # exit the operator cannot see is an exit they cannot audit.
+    # exit the operator cannot see is an exit they cannot audit. The outcome
+    # is recorded, not discarded - see the note in options_flow.
+    alert = "failed"
     try:
         from .order_alerts import equity_message, post_order_alert
 
-        post_order_alert(
+        alert = post_order_alert(
             settings=settings,
             message=equity_message(side=order.side, symbol=symbol,
                                    qty=order.quantity, limit=request.limit_price,
@@ -150,7 +152,8 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
                                    order_id=placed.id,
                                    approval_id=auth.approval_id))
     except Exception:  # noqa: BLE001 - alerting is best-effort, never fatal
-        pass
+        alert = "failed"
+    result["alert"] = alert
     return result
 
 

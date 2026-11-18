@@ -10,10 +10,15 @@ primary behaviour under test is "never raises, always records an outcome".
 from __future__ import annotations
 
 import ast
+import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
 
 from robinhood_tools.order_alerts import (
     equity_message,
@@ -136,6 +141,81 @@ class MessageFormatTests(unittest.TestCase):
             side="buy", symbol="X", qty=1, limit="1.00"))
 
 
+class AlertOutcomeRecordedTest(unittest.TestCase):
+    """The placement path must REPORT the alert outcome, not just attempt it.
+
+    On 2026-11-17 an order reached the broker with no alert and, because the
+    seam's return value was discarded inside a bare try/except, there was no
+    way to tell afterwards whether Slack had failed or the seam had never
+    been reached. These two cases pin the fix at the behavioural level: the
+    order always places, and the outcome always comes back.
+    """
+
+    SYM = "NVDA261120C00240000"
+
+    def _quote(self):
+        from decimal import Decimal as D
+
+        from robinhood_tools.options import OptionContract, OptionQuote
+
+        return OptionQuote(
+            OptionContract("NVDA", "2026-11-20", D("240"), "call", self.SYM),
+            D("3.80"), D("3.95"), D("237.08"),
+            datetime.now(ET).isoformat(), iv=D("0.38"), delta=D("0.46"))
+
+    def _place(self, construct_exc):
+        from datetime import date
+        from decimal import Decimal as D
+
+        from robinhood_tools.database import CioDatabase
+        from robinhood_tools.options_flow import place_long_option
+        from robinhood_tools.runtime import build_settings
+        from robinhood_tools.service import RobinhoodTradingService
+        from robinhood_tools.sim_broker import SimulationBroker
+        from robinhood_tools.universe import Sp500Snapshot
+
+        settings = build_settings()   # before the patch: needs real .env vars
+        with tempfile.TemporaryDirectory() as tmp:
+            db = CioDatabase(Path(tmp) / "cio.db")
+            snap = Sp500Snapshot(frozenset({"NVDA"}),
+                                 datetime.now(ET).isoformat(),
+                                 "https://example.com/sp500")
+            sim = SimulationBroker(option_quotes={self.SYM: self._quote()})
+            svc = RobinhoodTradingService(
+                sim, approval_store=db, sp500_snapshot=snap,
+                broker_environment="paper", require_human_confirmation=False,
+                execution_guard=lambda: None)
+            # The seam reads env_path=".env" to build its notifier; patch only
+            # that read so the notifier itself stays the fake.
+            with patch("robinhood_tools.settings.load_env", return_value={}), \
+                    patch("robinhood_tools.slack_web_api.SlackWebApiNotifier",
+                          FakeNotifier):
+                return place_long_option(
+                    settings=settings, snapshot=snap, quote=self._quote(),
+                    contracts=1, earnings_date=date(2026, 12, 18),
+                    premium_cap=D("500"), database=db, service=svc,
+                    odds_gate=False, today=date(2026, 11, 18))
+
+    def setUp(self):
+        SENT.clear()
+        FakeNotifier.construct_exc = None
+
+    def test_healthy_slack_records_sent(self):
+        result = self._place(None)
+        self.assertEqual(result["action"], "buy_placed")
+        self.assertEqual(result["alert"], "sent")
+        self.assertEqual(len(SENT), 1)
+
+    def test_a_slack_outage_records_failed_and_still_places(self):
+        FakeNotifier.construct_exc = RuntimeError("slack down")
+        result = self._place(RuntimeError("slack down"))
+        # The order must not be blocked by the chat layer.
+        self.assertEqual(result["action"], "buy_placed")
+        self.assertEqual(result["status"], "filled")
+        self.assertEqual(result["alert"], "failed")
+        self.assertEqual(len(SENT), 0)
+
+
 class PlacementPointGuardTests(unittest.TestCase):
     """Every placement point must call the alert seam (source guards)."""
 
@@ -162,6 +242,63 @@ class PlacementPointGuardTests(unittest.TestCase):
     def test_equity_order_alerts(self):
         self.assertIn("post_order_alert",
                       self._calls_in(PAPER_FLOW, "place_signal_order"))
+
+    @staticmethod
+    def _assigns_alert_outcome(source: str, func_name: str) -> bool:
+        """True when the function assigns the alert call's result somewhere."""
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == func_name):
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Assign)
+                            and isinstance(sub.value, ast.Call)
+                            and isinstance(sub.value.func, ast.Name)
+                            and sub.value.func.id == "post_order_alert"):
+                        return True
+        return False
+
+    @staticmethod
+    def _stores_alert_key(source: str, func_name: str) -> bool:
+        """True when the function writes result["alert"]."""
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == func_name):
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Assign)
+                            and any(isinstance(t, ast.Subscript)
+                                    and isinstance(t.value, ast.Name)
+                                    and t.value.id == "result"
+                                    and isinstance(t.slice, ast.Constant)
+                                    and t.slice.value == "alert"
+                                    for t in sub.targets)):
+                        return True
+        return False
+
+    def test_each_placement_point_keeps_the_alert_outcome(self):
+        """The outcome must be KEPT, not merely obtained.
+
+        The original code called post_order_alert and threw the return value
+        away inside a bare try/except, so a Slack failure was invisible. The
+        module docstring claimed the alert 'always records an outcome' while
+        nothing recorded it. On 2026-11-17 an order reached the broker with
+        no alert and afterwards there was no way to tell whether Slack had
+        failed or the seam had never been reached at all.
+
+        This guard pins both halves: the call's result is assigned, and it is
+        written into the result record the caller logs.
+        """
+        for source, func in ((OPTIONS_FLOW, "place_long_option"),
+                             (OPTIONS_FLOW, "close_long_option"),
+                             (PAPER_FLOW, "place_signal_order")):
+            with self.subTest(path=Path(source).name, func=func):
+                self.assertTrue(
+                    self._assigns_alert_outcome(source, func),
+                    f"{func} calls post_order_alert but discards its result")
+                self.assertTrue(
+                    self._stores_alert_key(source, func),
+                    f"{func} does not record the outcome in result['alert']")
 
 
 if __name__ == "__main__":

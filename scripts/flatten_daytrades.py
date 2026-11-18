@@ -91,6 +91,13 @@ def main(argv=None) -> int:
                 env_path=".env")
             print(f"flatten_daytrades: {symbol} sell {held} @ {price} -> "
                   f"{result['status']} (order {result['order_id']})")
+            # The Slack alert is best-effort; its outcome is now recorded by
+            # place_signal_order. A flatten the operator cannot see is a
+            # flatten they cannot audit, so say so plainly when it happens.
+            if result.get("alert") == "failed":
+                print(f"flatten_daytrades: {symbol} ALERT FAILED - the sell "
+                      f"is in the ledger and at the broker, but no Slack "
+                      f"message was delivered")
         except Exception as exc:  # noqa: BLE001 - one failure must not strand the rest
             print(f"flatten_daytrades: {symbol} flatten FAILED "
                   f"({type(exc).__name__}: {exc})")

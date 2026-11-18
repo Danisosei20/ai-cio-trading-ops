@@ -239,11 +239,16 @@ def main(argv=None) -> int:
                 if result["status"] in {"queued", "confirmed", "filled",
                                         "partially_filled", "accepted"}:
                     rec.update({"exit_action": "sell_placed",
-                                "order_id": result["order_id"], "status": result["status"]})
+                                "order_id": result["order_id"], "status": result["status"],
+                                # The Slack alert's outcome, carried through so a
+                                # failed alert on an exit is visible here rather
+                                # than only inferable after the fact.
+                                "alert": result.get("alert", "unknown")})
                     state.pop(symbol, None)
                 else:
                     rec.update({"exit_action": "not_accepted",
-                                "status": result["status"]})
+                                "status": result["status"],
+                                "alert": result.get("alert", "unknown")})
             results.append(rec)
             print(json.dumps(rec))
         except Exception as exc:  # noqa: BLE001 - a broker error must never kill the guard
