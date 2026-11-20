@@ -290,6 +290,29 @@ def test_rejected_chain_candidates_are_persisted_individually(tmp_path):
     ]
 
 
+def test_raw_chain_universe_rejections_are_not_persisted(tmp_path):
+    from types import SimpleNamespace
+    from scripts.options_pilot import persist_rejected_chain_candidates
+
+    rejected = [
+        SimpleNamespace(option_symbol="NVDA261218P00200000",
+                        reasons=["wrong right (put, want call)"]),
+        SimpleNamespace(option_symbol="NVDA260101C00200000",
+                        reasons=["DTE 1 outside 7-60"]),
+        SimpleNamespace(option_symbol="NVDA261218C00210000",
+                        reasons=["spread 20.0% too wide"]),
+    ]
+    persist_rejected_chain_candidates(
+        tmp_path / "autopilot.db", "NVDA", "call", rejected, now=NOW,
+        evidence_root=tmp_path,
+    )
+    with sqlite3.connect(tmp_path / "autopilot.db") as connection:
+        rows = connection.execute(
+            "SELECT action, reason FROM paper_autopilot_attempts ORDER BY id"
+        ).fetchall()
+    assert rows == [("screened", "selection rejected: spread 20.0% too wide")]
+
+
 def test_all_rejected_chain_is_persisted_before_selection_exception(tmp_path):
     from types import SimpleNamespace
     from scripts.options_pilot import persist_rejected_chain_candidates

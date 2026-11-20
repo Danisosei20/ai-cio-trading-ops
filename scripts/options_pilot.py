@@ -295,10 +295,18 @@ def persist_rejected_chain_candidates(
     db_path, symbol: str, side: str, rejected, *, now: datetime,
     evidence_root: Path | None = None,
 ) -> None:
-    """Persist each deterministic chain rejection without claiming it for entry."""
+    """Persist screened/downstream rejections, never raw chain-universe rejects.
+
+    The selector examines the raw chain before a candidate is screened.  A
+    contract with the wrong right or outside the DTE window is therefore a
+    universe rejection, not an attempted candidate.  Only the deterministic
+    liquidity/greeks gates (spread, volume, OI, and delta) are retained.
+    """
     root = Path(evidence_root) if evidence_root is not None else Path(db_path).parent
     for rejection in rejected:
         reasons = list(getattr(rejection, "reasons", ()))
+        if not _is_screened_chain_rejection(reasons):
+            continue
         candidate = {
             "symbol": symbol.strip().upper(),
             "occ_symbol": rejection.option_symbol,
@@ -315,6 +323,22 @@ def persist_rejected_chain_candidates(
         evidence.update({"action": "screened", "status": "screened", "reason": reason})
         record_attempt(db_path, evidence, "screened", reason)
         write_evidence(root, evidence)
+
+
+def _is_screened_chain_rejection(reasons: list[str]) -> bool:
+    """Return whether selector reasons identify a screened candidate.
+
+    This intentionally uses exact deterministic prefixes so adding a new raw
+    universe filter cannot silently create persisted candidate evidence.
+    """
+    raw_universe_prefixes = ("wrong right (", "expired/too close (")
+    return bool(reasons) and not any(
+        str(reason).startswith(prefix) for reason in reasons
+        for prefix in raw_universe_prefixes
+    ) and not any(
+        str(reason).startswith("DTE ") and " outside " in str(reason)
+        for reason in reasons
+    )
 
 
 def _option_quote_payload(quote, *, quantity: int = 1) -> dict:

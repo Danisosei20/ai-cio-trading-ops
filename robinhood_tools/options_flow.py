@@ -165,6 +165,27 @@ def close_long_option(*, settings, quote, contracts: int,
              "qty": contracts, "limit": str(request.limit_price),
              "order_id": placed.id, "status": placed.status,
              "approval_id": auth.approval_id}
+
+    def require_reconciliation(reason: str, *, broker_status=None,
+                               positions=None, error: str | None = None) -> dict:
+        """Record an unresolved close observation without releasing its claim."""
+        metadata = {
+            "required": True,
+            "reason": reason,
+            "order_id": placed.id,
+            "broker_status": str(broker_status if broker_status is not None else placed.status),
+            "position_evidence": positions,
+            "claim_released": False,
+        }
+        if error:
+            metadata["error"] = error
+        # The approval is already terminal/acknowledged at this point, so the
+        # audit event is the durable reconciliation marker.  In particular, do
+        # not turn a bad position observation into a closed OCC claim.
+        db.audit("reconciliation_required", metadata,
+                 correlation_id=auth.approval_id, approval_id=auth.approval_id)
+        result.update({"reconciliation_required": True, "reconciliation": metadata})
+        return result
     # A placement response is only an acknowledgement. Re-read the order from
     # the broker before using it as closure evidence.
     try:
@@ -174,16 +195,42 @@ def close_long_option(*, settings, quote, contracts: int,
         authoritative = get_order(placed.id)
         terminal = str(authoritative.status).lower() in {"filled", "closed", "executed"}
         position_check = lister()
-    except Exception:
-        result["reconciliation_required"] = True
-        return result
+    except Exception as exc:
+        return require_reconciliation(
+            "unable to obtain terminal order and fresh position evidence",
+            error=str(exc) or type(exc).__name__,
+        )
     if terminal:
         from .paper_autopilot import reconcile_candidate_claim
-        result["claim_closed"] = reconcile_candidate_claim(
+        claim_closed = reconcile_candidate_claim(
             db.path if hasattr(db, "path") else settings.database_path,
             contract.option_symbol, order_id=authoritative.id,
             broker_status=authoritative.status, positions=position_check,
         )
+        if not claim_closed:
+            if not isinstance(position_check, list):
+                reason = "fresh position evidence is invalid"
+            else:
+                try:
+                    exact = [item for item in position_check
+                             if str(item.get("symbol", "")).upper() == contract.option_symbol]
+                    quantities = [Decimal(str(item.get("qty", "0"))) for item in exact]
+                    invalid = any(not quantity.is_finite() or quantity < 0
+                                  for quantity in quantities)
+                    reason = ("fresh exact-OCC position evidence is invalid"
+                              if invalid else
+                              "fresh exact-OCC position is non-flat"
+                              if any(quantity != 0 for quantity in quantities)
+                              else "fresh exact-OCC position evidence is invalid")
+                except (ArithmeticError, AttributeError, TypeError, ValueError):
+                    reason = "fresh exact-OCC position evidence is invalid"
+            return require_reconciliation(
+                reason, broker_status=authoritative.status, positions=position_check,
+            )
+        result["claim_closed"] = True
     else:
-        result["reconciliation_required"] = True
+        return require_reconciliation(
+            "close order is not terminal", broker_status=authoritative.status,
+            positions=position_check,
+        )
     return result

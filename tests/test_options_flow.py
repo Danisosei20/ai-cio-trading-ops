@@ -257,6 +257,52 @@ class CloseOptionTest(unittest.TestCase):
         self.assertNotIn("claim_closed", out)
         self.assertTrue(out["reconciliation_required"])
 
+    def test_terminal_close_with_nonflat_position_persists_reconciliation(self):
+        from unittest.mock import patch
+
+        from robinhood_tools.models import Order
+        from robinhood_tools.options_flow import close_long_option, place_long_option
+        import datetime as _dt
+        from robinhood_tools.paper_autopilot import build_evidence, claim_candidate
+        from robinhood_tools.universe import Sp500Snapshot
+
+        snap = Sp500Snapshot(frozenset({"NVDA"}),
+                             _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                             "https://example.com/sp500")
+        place_long_option(settings=self.settings, snapshot=snap, quote=self.quote,
+                          contracts=1, earnings_date=_dt.date(2026, 11, 20),
+                          premium_cap=Decimal("500"), database=self.db,
+                          service=self.service, today=_dt.date(2026, 10, 7))
+        evidence = build_evidence({"candidate_id": "nonflat-close", "symbol": "NVDA",
+                                   "occ_symbol": self.quote.contract.option_symbol},
+                                  now=_dt.datetime(2026, 10, 7, tzinfo=_dt.timezone.utc))
+        self.assertTrue(claim_candidate(self.db.path, evidence))
+        authoritative = Order("close-2", "sim-2", self.quote.contract.option_symbol,
+                              "sell", "filled")
+        with patch.object(self.service.backend, "get_option_order", return_value=authoritative), \
+             patch.object(self.service.backend, "list_positions", side_effect=[
+                 [{"symbol": self.quote.contract.option_symbol, "qty": "1"}],
+                 [{"symbol": self.quote.contract.option_symbol, "qty": "1"}],
+             ]):
+            out = close_long_option(settings=self.settings, quote=self.quote, contracts=1,
+                                    database=self.db, service=self.service,
+                                    today=_dt.date(2026, 10, 8))
+
+        self.assertTrue(out["reconciliation_required"])
+        self.assertFalse(out["reconciliation"]["claim_released"])
+        self.assertEqual(out["reconciliation"]["reason"],
+                         "fresh exact-OCC position is non-flat")
+        self.assertNotIn("claim_closed", out)
+        self.assertFalse(claim_candidate(self.db.path,
+                                          dict(evidence, candidate_id="re-entry")))
+        with self.db.connect() as connection:
+            event = connection.execute(
+                "SELECT event, payload FROM audit_events WHERE approval_id=?",
+                (out["approval_id"],),
+            ).fetchone()
+        self.assertEqual(event[0], "reconciliation_required")
+        self.assertTrue(__import__("json").loads(event[1])["claim_released"] is False)
+
 
 if __name__ == "__main__":
     unittest.main()
