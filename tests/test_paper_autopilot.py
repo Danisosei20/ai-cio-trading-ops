@@ -115,6 +115,44 @@ def test_timestamp_values_are_canonicalized_to_utc():
     assert evidence["quote"]["as_of"] == "2026-11-20T15:30:00+00:00"
 
 
+def test_nested_credential_like_keys_are_rejected_before_persistence(tmp_path):
+    raw = candidate()
+    raw["quote"]["vendor"] = {"credentials": {"api_key": "secret"}}
+
+    with pytest.raises(ValueError, match="credential"):
+        build_evidence(raw, now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+
+def test_legacy_lease_schema_migrates_token_and_generation_columns(tmp_path):
+    db = tmp_path / "legacy.db"
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "CREATE TABLE paper_autopilot_leases "
+            "(name TEXT PRIMARY KEY, owner TEXT NOT NULL, acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO paper_autopilot_leases VALUES (?, ?, ?, ?)",
+            ("entry_cycle", "old-worker", "2026-11-20T15:00:00+00:00", "2026-11-20T15:31:00+00:00"),
+        )
+
+    assert not claim_cycle(db, "new-worker", datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc))
+    with sqlite3.connect(db) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(paper_autopilot_leases)")}
+        assert {"token", "generation"} <= columns
+
+
+def test_sqlite_connections_are_closed_after_success_and_error(tmp_path):
+    db = tmp_path / "closed.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    record_attempt(db, evidence, "blocked", "test")
+    db.unlink()
+
+    broken = tmp_path / "broken.db"
+    with pytest.raises(sqlite3.IntegrityError):
+        record_attempt(broken, {**evidence, "candidate_id": None}, "blocked", "test")
+    broken.unlink()
+
+
 def test_cycle_lease_is_exclusive_then_can_be_reclaimed_after_expiry(tmp_path):
     db = tmp_path / "autopilot.db"
     start = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)

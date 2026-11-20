@@ -10,11 +10,13 @@ import sqlite3
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+import re
 
 
 _EVIDENCE_DEFAULTS: dict[str, Any] = {
@@ -45,11 +47,18 @@ _VOLATILE_FINGERPRINT_FIELDS = {
     "action", "reason", "order", "slack",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
+_CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
 
 
 def _json_value(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
+        normalized = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _CREDENTIAL_KEY.search(key_text.lower().replace(" ", "_")):
+                raise ValueError(f"credential-like key cannot be persisted: {key_text}")
+            normalized[key_text] = _json_value(item)
+        return normalized
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
     if isinstance(value, set):
@@ -77,7 +86,7 @@ def build_evidence(candidate: dict, *, now: datetime) -> dict:
     """Build a JSON-safe, complete pre-entry evidence record."""
     observed_utc = _timestamp(now)
     observed = now.astimezone(ZoneInfo("America/New_York"))
-    normalized = _json_value(candidate)
+    normalized = _json_value({key: value for key, value in candidate.items() if key in _EVIDENCE_DEFAULTS})
     evidence = {
         key: normalized[key] if key in normalized else default
         for key, default in _EVIDENCE_DEFAULTS.items()
@@ -161,27 +170,51 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path, timeout=10, isolation_level=None)
-    connection.execute("PRAGMA busy_timeout=10000")
-    connection.execute(
-        """CREATE TABLE IF NOT EXISTS paper_autopilot_leases (
-            name TEXT PRIMARY KEY, owner TEXT NOT NULL, token TEXT NOT NULL,
-            acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL
-        )"""
-    )
-    connection.execute(
-        """CREATE TABLE IF NOT EXISTS paper_autopilot_attempts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id TEXT NOT NULL,
-            fingerprint TEXT NOT NULL, evidence TEXT NOT NULL, action TEXT NOT NULL,
-            reason TEXT NOT NULL, order_payload TEXT, created_at TEXT NOT NULL
-        )"""
-    )
-    connection.execute(
-        """CREATE TABLE IF NOT EXISTS paper_autopilot_candidate_claims (
-            fingerprint TEXT PRIMARY KEY, occ_symbol TEXT NOT NULL UNIQUE,
-            candidate_id TEXT NOT NULL, claimed_at TEXT NOT NULL
-        )"""
-    )
+    try:
+        connection.execute("PRAGMA busy_timeout=10000")
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS paper_autopilot_leases (
+                name TEXT PRIMARY KEY, owner TEXT NOT NULL, token TEXT NOT NULL,
+                generation INTEGER NOT NULL, acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL
+            )"""
+        )
+        lease_columns = {row[1] for row in connection.execute("PRAGMA table_info(paper_autopilot_leases)")}
+        if "token" not in lease_columns:
+            connection.execute("ALTER TABLE paper_autopilot_leases ADD COLUMN token TEXT")
+        if "generation" not in lease_columns:
+            connection.execute("ALTER TABLE paper_autopilot_leases ADD COLUMN generation INTEGER")
+        connection.execute("UPDATE paper_autopilot_leases SET token=COALESCE(token, ?), generation=COALESCE(generation, 0)", (str(uuid.uuid4()),))
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS paper_autopilot_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL, evidence TEXT NOT NULL, action TEXT NOT NULL,
+                reason TEXT NOT NULL, order_payload TEXT, created_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS paper_autopilot_candidate_claims (
+                fingerprint TEXT PRIMARY KEY, occ_symbol TEXT NOT NULL UNIQUE,
+                candidate_id TEXT NOT NULL, claimed_at TEXT NOT NULL
+            )"""
+        )
+    except Exception:
+        connection.close()
+        raise
     return connection
+
+
+@contextmanager
+def _managed_connection(db_path: Path):
+    connection = _connect(db_path)
+    try:
+        yield connection
+    except Exception:
+        connection.rollback()
+        raise
+    else:
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def claim_cycle(db_path: Path, owner: str, now: datetime, ttl_seconds: int = 900) -> str | None:
@@ -190,13 +223,16 @@ def claim_cycle(db_path: Path, owner: str, now: datetime, ttl_seconds: int = 900
     acquired = _timestamp(now)
     expires = _timestamp(now + timedelta(seconds=ttl_seconds))
     token = str(uuid.uuid4())
-    with _connect(db_path) as connection:
+    with _managed_connection(db_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         connection.execute("DELETE FROM paper_autopilot_leases WHERE name='entry_cycle' AND expires_at <= ?", (acquired,))
+        generation = connection.execute(
+            "SELECT COALESCE(MAX(generation), 0) + 1 FROM paper_autopilot_leases"
+        ).fetchone()[0]
         try:
             connection.execute(
-                "INSERT INTO paper_autopilot_leases(name, owner, token, acquired_at, expires_at) VALUES('entry_cycle', ?, ?, ?, ?)",
-                (owner, token, acquired, expires),
+                "INSERT INTO paper_autopilot_leases(name, owner, token, generation, acquired_at, expires_at) VALUES('entry_cycle', ?, ?, ?, ?, ?)",
+                (owner, token, generation, acquired, expires),
             )
         except sqlite3.IntegrityError:
             return False
@@ -204,7 +240,7 @@ def claim_cycle(db_path: Path, owner: str, now: datetime, ttl_seconds: int = 900
 
 
 def release_cycle(db_path: Path, owner: str, token: str) -> None:
-    with _connect(db_path) as connection:
+    with _managed_connection(db_path) as connection:
         connection.execute(
             "DELETE FROM paper_autopilot_leases WHERE name='entry_cycle' AND owner=? AND token=?",
             (owner, token),
@@ -217,7 +253,7 @@ def claim_candidate(db_path: Path, evidence: dict) -> bool:
     occ_symbol = str(evidence.get("occ_symbol") or "").strip()
     if not occ_symbol:
         raise ValueError("occ_symbol is required for duplicate claims")
-    with _connect(db_path) as connection:
+    with _managed_connection(db_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         try:
             connection.execute(
@@ -244,7 +280,7 @@ def record_attempt(
     order: dict | None = None,
 ) -> None:
     evidence_payload = _persisted_evidence(evidence)
-    with _connect(db_path) as connection:
+    with _managed_connection(db_path) as connection:
         connection.execute(
             """INSERT INTO paper_autopilot_attempts
                (candidate_id, fingerprint, evidence, action, reason, order_payload, created_at)
