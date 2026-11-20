@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from robinhood_tools.paper_autopilot import (
     build_evidence,
     candidate_fingerprint,
     claim_cycle,
+    claim_candidate,
     record_attempt,
     release_cycle,
     write_evidence,
@@ -71,16 +76,88 @@ def test_write_evidence_replaces_atomically_and_returns_json_artifact(tmp_path):
     assert list(path.parent.glob(".*.tmp")) == []
 
 
+def test_concurrent_atomic_writes_leave_one_complete_artifact(tmp_path):
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        paths = list(pool.map(lambda _: write_evidence(tmp_path, evidence), range(4)))
+
+    assert {path.read_text() for path in paths} == {paths[0].read_text()}
+    assert list((tmp_path / "evidence").glob("*.tmp")) == []
+    assert list((tmp_path / "evidence").glob(".*.tmp")) == []
+
+
+def test_write_evidence_rejects_path_traversal_candidate_id(tmp_path):
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    evidence["candidate_id"] = "..\\outside"
+
+    with pytest.raises(ValueError, match="candidate_id"):
+        write_evidence(tmp_path, evidence)
+
+
+def test_persisted_evidence_allowlists_candidate_fields_and_rejects_nonfinite_values(tmp_path):
+    raw = candidate()
+    raw["broker_api_key"] = "secret"
+    evidence = build_evidence(raw, now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    path = write_evidence(tmp_path, evidence)
+    assert "broker_api_key" not in json.loads(path.read_text())
+
+    bad = candidate()
+    bad["iv"] = math.nan
+    with pytest.raises(ValueError, match="finite"):
+        build_evidence(bad, now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+
+def test_timestamp_values_are_canonicalized_to_utc():
+    raw = candidate()
+    raw["quote"]["as_of"] = datetime(2026, 11, 20, 10, 30, tzinfo=timezone(timedelta(hours=-5)))
+    evidence = build_evidence(raw, now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    assert evidence["quote"]["as_of"] == "2026-11-20T15:30:00+00:00"
+
+
 def test_cycle_lease_is_exclusive_then_can_be_reclaimed_after_expiry(tmp_path):
     db = tmp_path / "autopilot.db"
     start = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)
 
-    assert claim_cycle(db, "worker-a", start, ttl_seconds=60)
+    token_a = claim_cycle(db, "worker-a", start, ttl_seconds=60)
+    assert token_a
     assert not claim_cycle(db, "worker-b", start + timedelta(seconds=1), ttl_seconds=60)
-    assert claim_cycle(db, "worker-b", start + timedelta(seconds=61), ttl_seconds=60)
-    release_cycle(db, "worker-b")
+    token_b = claim_cycle(db, "worker-b", start + timedelta(seconds=61), ttl_seconds=60)
+    assert token_b
+    release_cycle(db, "worker-b", token_b)
     with sqlite3.connect(db) as connection:
         assert connection.execute("SELECT count(*) FROM paper_autopilot_leases").fetchone()[0] == 0
+
+
+def test_stale_lease_token_cannot_release_new_generation(tmp_path):
+    db = tmp_path / "autopilot.db"
+    start = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)
+    token_a = claim_cycle(db, "worker-a", start, ttl_seconds=60)
+    token_b = claim_cycle(db, "worker-b", start + timedelta(seconds=61), ttl_seconds=60)
+
+    release_cycle(db, "worker-b", token_a)
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT owner FROM paper_autopilot_leases").fetchone()[0] == "worker-b"
+    release_cycle(db, "worker-b", token_b)
+
+
+def test_candidate_claim_is_atomic_for_fingerprint_and_occ_identity(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: claim_candidate(db, evidence), range(2)))
+    assert sorted(results) == [False, True]
+
+    changed = dict(evidence)
+    changed["candidate_id"] = "different-id"
+    changed["premium"] = 700
+    assert not claim_candidate(db, changed)
+
+    other_contract = dict(evidence)
+    other_contract["candidate_id"] = "different-id-2"
+    other_contract["occ_symbol"] = "AAPL261218P00200000"
+    assert claim_candidate(db, other_contract)
 
 
 def test_record_attempt_persists_before_gate_result(tmp_path):
@@ -95,3 +172,24 @@ def test_record_attempt_persists_before_gate_result(tmp_path):
         ).fetchone()
     assert row[:3] == (evidence["candidate_id"], "blocked", "missing fresh IV evidence")
     assert json.loads(row[3]) is None
+
+
+def test_record_attempt_scrubs_untrusted_metadata_and_order_credentials(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    evidence["broker_token"] = "do-not-store"
+
+    record_attempt(
+        db,
+        evidence,
+        "accepted",
+        "gated",
+        {"id": "order-1", "status": "accepted", "api_key": "do-not-store"},
+    )
+
+    with sqlite3.connect(db) as connection:
+        row = connection.execute(
+            "SELECT evidence, order_payload FROM paper_autopilot_attempts"
+        ).fetchone()
+    assert "do-not-store" not in row[0]
+    assert json.loads(row[1]) == {"id": "order-1", "status": "accepted"}
