@@ -13,6 +13,7 @@ from robinhood_tools.paper_autopilot import (
     candidate_fingerprint,
     claim_cycle,
     claim_candidate,
+    close_candidate_claim,
     record_attempt,
     release_cycle,
     write_evidence,
@@ -196,6 +197,31 @@ def test_candidate_claim_is_atomic_for_fingerprint_and_occ_identity(tmp_path):
     other_contract["candidate_id"] = "different-id-2"
     other_contract["occ_symbol"] = "AAPL261218P00200000"
     assert claim_candidate(db, other_contract)
+
+
+def test_occ_claim_reentry_requires_confirmed_close_and_preserves_generation(tmp_path):
+    db = tmp_path / "autopilot.db"
+    first = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    assert claim_candidate(db, first)
+    assert not close_candidate_claim(db, first["occ_symbol"], order_id="sell-1", confirmed=False)
+    assert not claim_candidate(db, {**first, "candidate_id": "second"})
+    assert close_candidate_claim(db, first["occ_symbol"], order_id="sell-1", confirmed=True)
+    second = {**first, "candidate_id": "second", "premium": 641.0}
+    assert claim_candidate(db, second)
+    with sqlite3.connect(db) as connection:
+        assert connection.execute(
+            "SELECT state, generation, close_order_id FROM paper_autopilot_candidate_claims"
+        ).fetchone() == ("active", 2, None)
+
+
+def test_unknown_occ_claim_cannot_be_reentered(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    assert claim_candidate(db, evidence)
+    from robinhood_tools.paper_autopilot import set_candidate_claim_state
+    assert set_candidate_claim_state(db, evidence["occ_symbol"], "unknown")
+    assert not close_candidate_claim(db, evidence["occ_symbol"], order_id="sell-1", confirmed=True)
+    assert not claim_candidate(db, {**evidence, "candidate_id": "second", "premium": 700})
 
 
 def test_record_attempt_persists_before_gate_result(tmp_path):

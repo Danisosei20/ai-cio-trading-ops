@@ -70,6 +70,10 @@ _STATUS_PRECEDENCE = {
     "screened": 10, "blocked": 20, "intent": 30, "accepted": 40,
     "unknown_submitted": 50, "unknown_reconciliation": 50,
 }
+_BROKER_REJECTED_STATUSES = {"rejected", "failed", "cancelled", "canceled", "error", "denied"}
+_BROKER_ACCEPTED_STATUSES = {
+    "queued", "new", "accepted", "placed", "filled", "partially_filled",
+}
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
 _NON_ENTRY_EVIDENCE_FIELDS = {"order", "thesis", "slack", "paper_only", "mode", "provenance"}
 
@@ -151,10 +155,10 @@ def _valid_broker_result(order: Any) -> bool:
         return False
     status = str(order.get("status", "")).strip().lower()
     action = str(order.get("action", "")).strip().lower()
-    rejected = {"rejected", "failed", "cancelled", "canceled", "error", "denied"}
+    rejected = _BROKER_REJECTED_STATUSES
     if status in rejected or action in rejected:
         return False
-    success_signals = {"accepted", "placed", "buy_placed"}
+    success_signals = _BROKER_ACCEPTED_STATUSES | {"buy_placed"}
     has_success_signal = (
         order.get("accepted") is True
         or status in success_signals
@@ -326,9 +330,22 @@ def _connect(db_path: Path, *, timeout: float = 10, busy_timeout_ms: int = 10000
         connection.execute(
             """CREATE TABLE IF NOT EXISTS paper_autopilot_candidate_claims (
                 fingerprint TEXT PRIMARY KEY, occ_symbol TEXT NOT NULL UNIQUE,
-                candidate_id TEXT NOT NULL, claimed_at TEXT NOT NULL
+                candidate_id TEXT NOT NULL, claimed_at TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'active', closed_at TEXT,
+                close_order_id TEXT, generation INTEGER NOT NULL DEFAULT 1
             )"""
         )
+        claim_columns = {row[1] for row in connection.execute(
+            "PRAGMA table_info(paper_autopilot_candidate_claims)"
+        )}
+        for column, definition in (("state", "TEXT NOT NULL DEFAULT 'active'"),
+                                   ("closed_at", "TEXT"),
+                                   ("close_order_id", "TEXT"),
+                                   ("generation", "INTEGER NOT NULL DEFAULT 1")):
+            if column not in claim_columns:
+                connection.execute(
+                    f"ALTER TABLE paper_autopilot_candidate_claims ADD COLUMN {column} {definition}"
+                )
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_autopilot_claims_fingerprint "
             "ON paper_autopilot_candidate_claims(fingerprint)"
@@ -484,14 +501,29 @@ def lease_is_current(db_path: Path, owner: str, token: str, now: datetime) -> bo
 
 
 def claim_candidate(db_path: Path, evidence: dict) -> bool:
-    """Atomically reserve a fingerprint and exact OCC contract identity."""
+    """Atomically reserve an OCC identity; only a confirmed close permits reuse."""
     fingerprint = candidate_fingerprint(evidence)
     occ_symbol = str(evidence.get("occ_symbol") or "").strip().upper()
     if not occ_symbol:
         raise ValueError("occ_symbol is required for duplicate claims")
     with _managed_connection(db_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        prior = connection.execute(
+            "SELECT fingerprint, state, generation FROM paper_autopilot_candidate_claims "
+            "WHERE occ_symbol=?", (occ_symbol,)
+        ).fetchone()
+        if prior is not None and prior[1] != "closed":
+            return False
         try:
+            if prior is not None:
+                connection.execute(
+                    "UPDATE paper_autopilot_candidate_claims SET fingerprint=?, candidate_id=?, "
+                    "claimed_at=?, state='active', closed_at=NULL, close_order_id=NULL, generation=? "
+                    "WHERE occ_symbol=? AND state='closed'",
+                    (fingerprint, evidence["candidate_id"], datetime.now(timezone.utc).isoformat(),
+                     int(prior[2] or 1) + 1, occ_symbol),
+                )
+                return True
             connection.execute(
                 """INSERT INTO paper_autopilot_candidate_claims
                    (fingerprint, occ_symbol, candidate_id, claimed_at)
@@ -506,6 +538,33 @@ def claim_candidate(db_path: Path, evidence: dict) -> bool:
         except sqlite3.IntegrityError:
             return False
     return True
+
+
+def set_candidate_claim_state(db_path: Path, occ_symbol: str, state: str) -> bool:
+    """Move an exact OCC claim to an auditable broker state."""
+    if state not in {"active", "intent", "accepted", "unknown"}:
+        raise ValueError("claim state must be active, intent, accepted, or unknown")
+    with _managed_connection(db_path) as connection:
+        cursor = connection.execute(
+            "UPDATE paper_autopilot_candidate_claims SET state=? WHERE occ_symbol=? AND state<>?",
+            (state, str(occ_symbol).strip().upper(), "closed"),
+        )
+        return cursor.rowcount == 1
+
+
+def close_candidate_claim(db_path: Path, occ_symbol: str, *, order_id: str,
+                          confirmed: bool, closed_at: datetime | None = None) -> bool:
+    """Release an OCC claim only from authoritative, confirmed closure evidence."""
+    if not confirmed or not str(order_id).strip():
+        return False
+    closed = _timestamp(closed_at or datetime.now(timezone.utc))
+    with _managed_connection(db_path) as connection:
+        cursor = connection.execute(
+            "UPDATE paper_autopilot_candidate_claims SET state='closed', closed_at=?, "
+            "close_order_id=? WHERE occ_symbol=? AND state IN ('active','accepted')",
+            (closed, str(order_id), str(occ_symbol).strip().upper()),
+        )
+        return cursor.rowcount == 1
 
 
 def record_attempt(
@@ -667,6 +726,7 @@ def run_paper_entry(
             evidence["known_fields"] = known
             evidence["unknown_fields"] = sorted(fields - set(known))
         record_attempt(path, evidence, "unknown_reconciliation", reason, order or {})
+        set_candidate_claim_state(path, str(evidence.get("occ_symbol") or ""), "unknown")
         if evidence_root is not None:
             write_evidence(Path(evidence_root), evidence)
         return {"action": "unknown_reconciliation", "status": "unknown_reconciliation",
@@ -744,6 +804,7 @@ def run_paper_entry(
         # marker and cannot treat the screened candidate as retryable.
         evidence.update({"action": "intent", "status": "intent", "reason": "broker execution intent recorded"})
         record_attempt(path, evidence, "intent", "broker execution intent recorded")
+        set_candidate_claim_state(path, occ, "intent")
         if evidence_root is not None:
             write_evidence(Path(evidence_root), evidence)
         try:
@@ -763,6 +824,7 @@ def run_paper_entry(
         evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed",
                          "order": _persisted_order(order)})
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
+        set_candidate_claim_state(path, occ, "accepted")
         if evidence_root is not None:
             write_evidence(Path(evidence_root), evidence)
         return {"action": "accepted", "reason": "gates passed", "candidate_id": evidence.get("candidate_id"),
@@ -823,7 +885,7 @@ def _claim_alert_delivery(
     with _managed_connection(db_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         prior = connection.execute(
-            "SELECT status, attempts, sent_at, message_ts, message_link, lease_owner "
+            "SELECT status, attempts, sent_at, message_ts, message_link, lease_owner, lease_expires_at "
             "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?",
             (str(evidence["candidate_id"]),),
         ).fetchone()
@@ -842,6 +904,7 @@ def _claim_alert_delivery(
 
 def send_entry_alert(
     result: dict, *, notifier: Any, clock: Any, retry_until_seconds: int = 600,
+    reconcile_delivery: Any = None,
 ) -> dict:
     """Send an accepted paper-entry alert without touching broker execution."""
     if str(result.get("action", "")).lower() != "accepted":
@@ -898,6 +961,11 @@ def send_entry_alert(
         return {"sent": False, "attempts": 0, "last_error": error,
                 "sent_at": None, "status": "indeterminate"}
 
+    def indeterminate(code: str, message: str, attempts: int = 0) -> dict:
+        return {"sent": False, "attempts": attempts,
+                "last_error": {"code": code, "message": message},
+                "sent_at": None, "status": "indeterminate"}
+
     def refusal(message: str) -> dict:
         error = {"code": "paper_alert_refused", "message": message}
         evidence["slack"] = {"status": "refused", "attempts": 0, "error": error}
@@ -919,20 +987,60 @@ def send_entry_alert(
     try:
         with _managed_connection(db_path) as connection:
             prior = connection.execute(
-                "SELECT status, attempts, sent_at, message_ts, message_link "
+                "SELECT status, attempts, sent_at, message_ts, message_link, lease_owner, lease_expires_at "
                 "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?", (candidate_id,)
             ).fetchone()
     except Exception as exc:
         return persistence_failure("persistence_read_failed", str(exc) or type(exc).__name__)
+    delivery_owner = None
     if prior and prior[0] == "sent":
         return {"sent": True, "attempts": prior[1], "last_error": None,
                 "sent_at": prior[2], "status": "sent", "message_ts": prior[3],
                 "message_link": prior[4]}
-    if prior and prior[0] in {"intent", "retrying", "pending", "unknown_delivery"}:
-        return persistence_failure(
-            "delivery_state_indeterminate",
-            f"existing delivery state is {prior[0]}; reconciliation is required before retry",
-        )
+    if prior and prior[0] in {"intent", "retrying", "pending", "unknown_delivery", "failed"}:
+        now = _clock_now(clock)
+        expiry = prior[6]
+        if not expiry or datetime.fromisoformat(expiry) > now:
+            return indeterminate(
+                "delivery_state_indeterminate",
+                f"existing delivery state is {prior[0]}; lease has not expired",
+            )
+        if not callable(reconcile_delivery):
+            return indeterminate(
+                "delivery_state_indeterminate",
+                f"existing delivery state is {prior[0]}; reconciliation is required before retry",
+            )
+        try:
+            reconciled = reconcile_delivery(prior)
+        except Exception as exc:
+            return indeterminate("delivery_reconciliation_failed", str(exc) or type(exc).__name__, prior[1])
+        if isinstance(reconciled, dict) and reconciled.get("sent") is True:
+            sent_at = str(reconciled.get("sent_at") or _timestamp(now))
+            _persist_alert_delivery(db_path, evidence, order_id, status="sent",
+                                     attempts=prior[1], last_error=None, sent_at=sent_at,
+                                     message_ts=reconciled.get("message_ts"),
+                                     message_link=reconciled.get("message_link"),
+                                     order_status=str(order.get("status", "accepted")),
+                                     evidence_reference=evidence_reference)
+            return {"sent": True, "attempts": prior[1], "last_error": None,
+                    "sent_at": sent_at, "status": "sent",
+                    "message_ts": reconciled.get("message_ts"),
+                    "message_link": reconciled.get("message_link")}
+        if reconciled != "not_sent":
+            return indeterminate("delivery_state_indeterminate",
+                                 "delivery reconciliation did not prove absence", prior[1])
+        owner = str(uuid.uuid4())
+        delivery_owner = owner
+        new_expiry = _timestamp(now + timedelta(seconds=600))
+        with _managed_connection(db_path) as connection:
+            cursor = connection.execute(
+                "UPDATE paper_autopilot_alert_deliveries SET status='retrying', lease_owner=?, "
+                "lease_expires_at=?, updated_at=? WHERE candidate_id=? AND status=? "
+                "AND lease_expires_at<=?",
+                (owner, new_expiry, _timestamp(now), candidate_id, prior[0], _timestamp(now)),
+            )
+            if cursor.rowcount != 1:
+                return indeterminate("delivery_state_indeterminate", "delivery lease was reclaimed", prior[1])
 
     paper_only = result.get("paper_only", evidence.get("paper_only"))
     mode = result.get("mode", evidence.get("mode"))
@@ -940,7 +1048,7 @@ def send_entry_alert(
     if paper_only is not True or provenance != "paper" or mode != "paper_auto":
         return refusal("accepted order lacks explicit paper-only provenance and paper_auto mode")
     order_status = str(order.get("status", "")).lower()
-    if order_status != "accepted" or str(order.get("order_id") or order.get("id") or "") != order_id:
+    if order_status not in _BROKER_ACCEPTED_STATUSES or str(order.get("order_id") or order.get("id") or "") != order_id:
         return refusal("accepted result has incoherent order id or status")
 
     configured_error = result.get("notifier_error")
@@ -968,13 +1076,16 @@ def send_entry_alert(
     channel_id = (result.get("channel_id") or evidence.get("channel_id") or
                   os.environ.get("SLACK_CHANNEL_ID", "") or
                   getattr(notifier, "_allowed_channel_id", ""))
-    try:
-        owner, claimed_prior = _claim_alert_delivery(
-            db_path, evidence, order_id, order_status=order_status,
-            evidence_reference=evidence_reference,
-        )
-    except Exception as exc:
-        return persistence_failure("persistence_write_failed", str(exc) or type(exc).__name__)
+    if delivery_owner is None:
+        try:
+            owner, claimed_prior = _claim_alert_delivery(
+                db_path, evidence, order_id, order_status=order_status,
+                evidence_reference=evidence_reference,
+            )
+        except Exception as exc:
+            return persistence_failure("persistence_write_failed", str(exc) or type(exc).__name__)
+    else:
+        owner, claimed_prior = delivery_owner, None
     if claimed_prior is not None:
         if claimed_prior[0] == "sent":
             return {"sent": True, "attempts": claimed_prior[1], "last_error": None,
@@ -1004,7 +1115,9 @@ def send_entry_alert(
                 _persist_alert_delivery(db_path, evidence, order_id, status="retrying",
                                         attempts=attempts, last_error=last_error["code"],
                                         order_status=str(order.get("status", "accepted")),
-                                        evidence_reference=evidence_reference)
+                                        evidence_reference=evidence_reference,
+                                        lease_owner=owner,
+                                        lease_expires_at=_timestamp(_clock_now(clock) + timedelta(seconds=600)))
             except Exception as exc:
                 retry_error = {"code": "retry_persistence_failed",
                                "message": str(exc) or type(exc).__name__}
@@ -1044,7 +1157,9 @@ def send_entry_alert(
                 _persist_alert_delivery(db_path, evidence, order_id, status="pending",
                                         attempts=attempts, last_error=last_error["code"],
                                         order_status=str(order.get("status", "accepted")),
-                                        evidence_reference=evidence_reference)
+                                        evidence_reference=evidence_reference,
+                                        lease_owner=owner,
+                                        lease_expires_at=_timestamp(_clock_now(clock) + timedelta(seconds=600)))
             except Exception as db_exc:
                 last_error["database_error"] = str(db_exc) or type(db_exc).__name__
             return persistence_failure("persistence_error", last_error["message"])

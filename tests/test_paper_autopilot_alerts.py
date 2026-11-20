@@ -33,7 +33,7 @@ class Notifier:
         return {"message_ts": "1700000000.1", "message_link": "https://slack.example/p/1"}
 
 
-def accepted_result(tmp_path):
+def accepted_result(tmp_path, *, broker_status="accepted"):
     now = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)
     evidence = build_evidence({
         "candidate_id": "candidate-alert",
@@ -51,7 +51,7 @@ def accepted_result(tmp_path):
     }, now=now)
     result = run_paper_entry(
         evidence, execute=True, db_path=tmp_path / "autopilot.db", now=now,
-        broker_call=lambda: {"status": "accepted", "order_id": "order-1", "price": "2.50", "side": "buy"},
+        broker_call=lambda: {"status": broker_status, "order_id": "order-1", "price": "2.50", "side": "buy"},
         state_checker=lambda: {"validated": True, "held": False, "open_order": False},
         evidence_root=tmp_path,
     )
@@ -105,6 +105,23 @@ def test_accepted_order_alert_has_complete_payload_and_sends_immediately(tmp_pat
     assert artifact_payload["order"] == {"order_id": "order-1", "price": "2.50",
                                            "side": "buy", "status": "accepted"}
     assert artifact_payload["order"]["order_id"] == result["order"]["order_id"]
+
+
+def test_queued_alpaca_paper_submission_sends_one_alert(tmp_path):
+    result = accepted_result(tmp_path, broker_status="queued")
+    notifier = Notifier()
+    delivery = send_entry_alert(
+        result, notifier=notifier,
+        clock=FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)),
+    )
+    repeat = send_entry_alert(result, notifier=None,
+                              clock=FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)))
+    assert delivery["sent"] is True
+    assert repeat["sent"] is True
+    assert len(notifier.messages) == 1
+    with sqlite3.connect(tmp_path / "autopilot.db") as db:
+        assert db.execute("SELECT status, order_status FROM paper_autopilot_alert_deliveries").fetchone() == (
+            "sent", "queued")
 
 
 def test_alert_retries_with_bounded_backoff_and_persists_failure_then_success(tmp_path):
