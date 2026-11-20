@@ -13,9 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -56,16 +57,41 @@ def format_watchlist(rows: list[dict], today: str) -> str:
     return "\n".join(lines)
 
 
-def main(argv=None) -> int:
+def periodic_check_status(now, *, clock, calendar):
+    """Central session gate used before any periodic scan or Slack send."""
+    from robinhood_tools.market_calendar import entry_session_status
+
+    return entry_session_status(now, clock=clock, calendar=calendar)
+
+
+def main(argv=None, *, now=None, clock=None, calendar=None) -> int:
     args = parse_args(argv)
     from robinhood_tools.alpaca_market_data import AlpacaMarketDataHttpClient
     from robinhood_tools.alpaca_options import AlpacaOptionsData
+    from robinhood_tools.alpaca_paper import AlpacaPaperHttpTransport
+    from robinhood_tools.market_calendar import AlpacaExchangeCalendar
     from robinhood_tools.market_prices import get_quote
     from robinhood_tools.options_flow import pick_long_option
     from robinhood_tools.settings import load_env
     import os
 
     env = {**load_env(args.env_file), **os.environ}
+    if now is None:
+        now = datetime.now(ZoneInfo("America/New_York"))
+    if clock is None or calendar is None:
+        try:
+            transport = AlpacaPaperHttpTransport.from_values(env)
+            clock = transport.request("GET", "/v2/clock")
+            calendar = AlpacaExchangeCalendar(transport)
+        except Exception:
+            # A periodic job must fail closed and quietly when its session
+            # dependencies cannot be established.
+            clock = None
+            calendar = None
+    session = periodic_check_status(now, clock=clock, calendar=calendar)
+    if not session["can_periodic_alert"]:
+        print(json.dumps({"periodic_check_skipped": session}, sort_keys=True))
+        return 0
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if not tickers:
         try:
@@ -81,7 +107,7 @@ def main(argv=None) -> int:
 
     data = AlpacaOptionsData.from_values(env)
     md = AlpacaMarketDataHttpClient.from_values(env)
-    today = date.today()
+    today = now.astimezone(ZoneInfo("America/New_York")).date()
     rows = []
     for ticker in tickers:
         row = {"ticker": ticker}
