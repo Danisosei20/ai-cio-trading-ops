@@ -401,9 +401,9 @@ def record_attempt(
             current_action = existing[4] or existing[3]
             current_precedence = _STATUS_PRECEDENCE.get(current_action, 0)
             incoming_precedence = _STATUS_PRECEDENCE.get(action, 0)
-            effective_action = current_action if current_precedence > incoming_precedence else action
-            effective_reason = existing[5] if current_precedence > incoming_precedence else reason
-            effective_order = existing[6] if current_precedence > incoming_precedence else json.dumps(
+            effective_action = current_action if current_precedence >= incoming_precedence else action
+            effective_reason = existing[5] if current_precedence >= incoming_precedence else reason
+            effective_order = existing[6] if current_precedence >= incoming_precedence else json.dumps(
                 _persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False
             )
             if current_action == "accepted" and not effective_order and existing[6]:

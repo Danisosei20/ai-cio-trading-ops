@@ -267,6 +267,32 @@ def test_record_attempt_does_not_downgrade_accepted_terminal_state(tmp_path):
     ]
 
 
+def test_record_attempt_preserves_authoritative_metadata_on_accepted_retry(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+    record_attempt(
+        db, evidence, "accepted", "original order accepted",
+        {"order_id": "paper-original", "status": "accepted", "price": 3.30},
+    )
+    record_attempt(
+        db, evidence, "accepted", "retry accepted",
+        {"order_id": "paper-retry", "status": "filled", "price": 3.45},
+    )
+
+    with sqlite3.connect(db) as connection:
+        action, status, reason, order_payload, encoded = connection.execute(
+            "SELECT action, status, reason, order_payload, evidence FROM paper_autopilot_attempts"
+        ).fetchone()
+    assert (action, status, reason) == ("accepted", "accepted", "original order accepted")
+    assert json.loads(order_payload) == {
+        "order_id": "paper-original", "status": "accepted", "price": 3.30,
+    }
+    assert [event["reason"] for event in json.loads(encoded)["audit_history"]] == [
+        "original order accepted", "retry accepted"
+    ]
+
+
 def test_legacy_duplicate_migration_deduplicates_existing_history(tmp_path):
     db = tmp_path / "legacy.db"
     evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
