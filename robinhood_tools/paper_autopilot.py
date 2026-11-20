@@ -924,6 +924,8 @@ def send_entry_alert(
                               "evidence" / f"{candidate_id}.json"))
     def failure(code: str, message: str) -> dict:
         error = {"code": code, "message": message}
+        recovery_owner = str(uuid.uuid4())
+        recovery_expiry = _timestamp(datetime.now(timezone.utc) + timedelta(seconds=600))
         evidence["slack"] = {"status": "failed", "attempts": 0, "error": error}
         try:
             if result.get("evidence_root") is not None:
@@ -936,6 +938,7 @@ def send_entry_alert(
                 db_path, evidence, order_id, status="failed", attempts=0,
                 last_error=code, order_status=str(order.get("status", "accepted")),
                 evidence_reference=evidence_reference,
+                lease_owner=recovery_owner, lease_expires_at=recovery_expiry,
             )
         except Exception as exc:
             error = {**error, "database_error": str(exc) or type(exc).__name__}
@@ -944,6 +947,8 @@ def send_entry_alert(
 
     def persistence_failure(code: str, message: str) -> dict:
         error = {"code": code, "message": message}
+        recovery_owner = str(uuid.uuid4())
+        recovery_expiry = _timestamp(datetime.now(timezone.utc) + timedelta(seconds=600))
         evidence["slack"] = {"status": "unknown_delivery", "attempts": 0, "error": error}
         try:
             if result.get("evidence_root") is not None:
@@ -955,6 +960,7 @@ def send_entry_alert(
                 db_path, evidence, order_id, status="unknown_delivery", attempts=0,
                 last_error=code, order_status=str(order.get("status", "accepted")),
                 evidence_reference=evidence_reference,
+                lease_owner=recovery_owner, lease_expires_at=recovery_expiry,
             )
         except Exception as exc:
             error["database_error"] = str(exc) or type(exc).__name__

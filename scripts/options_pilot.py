@@ -210,6 +210,23 @@ def persist_candidate_before_gate(
         evidence, now=now, active_policy_version=active_policy_version,
         freshness_limits=freshness_limits,
     )
+
+
+def deliver_accepted_entry_alert(result: dict, *, env: dict, clock, notifier=None) -> dict:
+    """Production handoff: alert only after the paper broker accepted an order."""
+    if result.get("action") != "accepted":
+        return result
+    if notifier is None and env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
+        try:
+            from robinhood_tools.slack_web_api import SlackWebApiNotifier
+            notifier = SlackWebApiNotifier.from_values(env)
+            result["channel_id"] = env["SLACK_CHANNEL_ID"]
+        except Exception as exc:
+            result["notifier_error"] = {
+                "code": "notifier_invalid", "message": str(exc) or type(exc).__name__,
+            }
+    result["alert"] = send_entry_alert(result, notifier=notifier, clock=clock)
+    return result
     if reason:
         _annotate_blocked_evidence(evidence, failure_stage="validation", reason=reason)
         evidence["action"] = "blocked"
@@ -597,18 +614,8 @@ def main(argv=None) -> int:
         state_checker=state_checker,
     )
     if result.get("action") == "accepted":
-        notifier = None
-        if env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
-            try:
-                from robinhood_tools.slack_web_api import SlackWebApiNotifier
-                notifier = SlackWebApiNotifier.from_values(env)
-                result["channel_id"] = env["SLACK_CHANNEL_ID"]
-            except Exception as exc:
-                result["notifier_error"] = {
-                    "code": "notifier_invalid", "message": str(exc) or type(exc).__name__,
-                }
-        result["alert"] = send_entry_alert(
-            result, notifier=notifier, clock=lambda: datetime.now(timezone.utc),
+        deliver_accepted_entry_alert(
+            result, env=env, clock=lambda: datetime.now(timezone.utc),
         )
     if result.get("action") != "accepted":
         # Blocked and unknown-submission states are already durably recorded

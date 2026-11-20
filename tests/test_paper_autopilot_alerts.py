@@ -124,6 +124,46 @@ def test_queued_alpaca_paper_submission_sends_one_alert(tmp_path):
             "sent", "queued")
 
 
+def test_options_pilot_production_handoff_delivers_queued_alert_once(tmp_path):
+    from scripts.options_pilot import deliver_accepted_entry_alert
+
+    result = accepted_result(tmp_path, broker_status="new")
+    notifier = Notifier()
+    deliver_accepted_entry_alert(
+        result, env={}, notifier=notifier,
+        clock=FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)),
+    )
+    deliver_accepted_entry_alert(
+        result, env={}, notifier=None,
+        clock=FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)),
+    )
+    assert len(notifier.messages) == 1
+    assert result["alert"]["status"] == "sent"
+
+
+def test_expired_failed_delivery_requires_reconciliation_before_safe_reclaim(tmp_path):
+    result = accepted_result(tmp_path)
+    first = send_entry_alert(
+        result, notifier=None,
+        clock=FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)),
+    )
+    assert first["status"] == "failed"
+    with sqlite3.connect(tmp_path / "autopilot.db") as db:
+        db.execute(
+            "UPDATE paper_autopilot_alert_deliveries SET lease_expires_at=?",
+            ("2026-11-20T15:00:00+00:00",),
+        )
+        db.commit()
+    notifier = Notifier()
+    recovered = send_entry_alert(
+        result, notifier=notifier,
+        clock=FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)),
+        reconcile_delivery=lambda prior: "not_sent",
+    )
+    assert recovered["sent"] is True
+    assert len(notifier.messages) == 1
+
+
 def test_alert_retries_with_bounded_backoff_and_persists_failure_then_success(tmp_path):
     result = accepted_result(tmp_path)
     notifier = Notifier(failures=2)

@@ -158,7 +158,30 @@ def close_long_option(*, settings, quote, contracts: int,
     db.approve(auth.approval_id)
     placed = service.place_option_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
-    return {"action": "sell_placed", "contract": contract.option_symbol,
-            "qty": contracts, "limit": str(request.limit_price),
-            "order_id": placed.id, "status": placed.status,
-            "approval_id": auth.approval_id}
+    result = {"action": "sell_placed", "contract": contract.option_symbol,
+             "qty": contracts, "limit": str(request.limit_price),
+             "order_id": placed.id, "status": placed.status,
+             "approval_id": auth.approval_id}
+    # A caller cannot release an entry claim by asserting that a close worked.
+    # Require the broker's terminal order status and a fresh exact-OCC position
+    # query proving that the position is flat.
+    terminal = str(placed.status).lower() in {"filled", "closed", "executed"}
+    try:
+        position_check = lister()
+        remaining = sum(
+            abs(Decimal(str(item.get("qty", "0"))))
+            for item in position_check
+            if str(item.get("symbol", "")).upper() == contract.option_symbol
+        )
+    except Exception:
+        result["reconciliation_required"] = True
+        return result
+    if terminal and remaining == 0:
+        from .paper_autopilot import close_candidate_claim
+        result["claim_closed"] = close_candidate_claim(
+            db.path if hasattr(db, "path") else settings.database_path,
+            contract.option_symbol, order_id=placed.id, confirmed=True,
+        )
+    else:
+        result["reconciliation_required"] = True
+    return result

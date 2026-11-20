@@ -188,11 +188,20 @@ class CloseOptionTest(unittest.TestCase):
             premium_cap=Decimal("500"), database=self.db, service=self.service,
             today=_dt.date(2026, 10, 7))
         self.assertEqual(buy["status"], "filled")
+        from robinhood_tools.paper_autopilot import build_evidence, claim_candidate
+        evidence = build_evidence({
+            "candidate_id": "entry-claim", "symbol": "NVDA",
+            "occ_symbol": self.quote.contract.option_symbol,
+        }, now=_dt.datetime(2026, 10, 7, tzinfo=_dt.timezone.utc))
+        self.assertTrue(claim_candidate(self.db.path, evidence))
         out = close_long_option(
             settings=self.settings, quote=self.quote, contracts=1,
             database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
         self.assertEqual(out["action"], "sell_placed")
         self.assertEqual(out["status"], "filled")
+        self.assertTrue(out["claim_closed"])
+        reopened = dict(evidence, candidate_id="re-entry", premium="1")
+        self.assertTrue(claim_candidate(self.db.path, reopened))
 
     def test_zero_bid_refused(self):
         import copy
