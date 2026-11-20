@@ -72,6 +72,9 @@ class AlpacaPaperHttpTransport:
 class AlpacaPaperBackend:
     """Equity-only Alpaca paper broker; it has no Alpaca live endpoint or option path."""
 
+    # Real venue backend: the only kind of order that may page the live channel.
+    is_simulation = False
+
     def __init__(self, transport: AlpacaPaperTransport):
         self.transport = transport
 

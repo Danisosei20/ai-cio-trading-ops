@@ -170,10 +170,11 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
     # and out through the caller's log.
     alert = "failed"
     try:
-        from .order_alerts import option_message, post_order_alert
+        from .order_alerts import is_simulation_service, option_message, post_order_alert
 
         alert = post_order_alert(
             settings=settings,
+            simulated=is_simulation_service(service),
             message=option_message(side="buy", contract=contract.option_symbol,
                                    qty=contracts, limit=request.limit_price,
                                    premium=premium, order_id=placed.id,
@@ -243,10 +244,11 @@ def close_long_option(*, settings, quote, contracts: int,
     # see the note in place_long_option for why that matters.
     alert = "failed"
     try:
-        from .order_alerts import option_message, post_order_alert
+        from .order_alerts import is_simulation_service, option_message, post_order_alert
 
         alert = post_order_alert(
             settings=settings,
+            simulated=is_simulation_service(service),
             message=option_message(side="sell", contract=contract.option_symbol,
                                    qty=contracts, limit=request.limit_price,
                                    order_id=placed.id,

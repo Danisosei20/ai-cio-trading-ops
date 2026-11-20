@@ -22,9 +22,11 @@ ET = ZoneInfo("America/New_York")
 
 from robinhood_tools.order_alerts import (
     equity_message,
+    is_simulation_service,
     option_message,
     post_order_alert,
 )
+from robinhood_tools.sim_broker import SimulationBroker
 
 ROOT = Path(__file__).resolve().parents[1]
 OPTIONS_FLOW = (ROOT / "robinhood_tools" / "options_flow.py").read_text(
@@ -34,6 +36,18 @@ PAPER_FLOW = (ROOT / "robinhood_tools" / "paper_flow.py").read_text(
 
 
 SENT: list[dict] = []
+
+
+class RealLikeBroker(SimulationBroker):
+    """Simulated fills, but deliberately NOT flagged as a simulation.
+
+    The alert seam suppresses orders placed through SimulationBroker so that
+    unit tests and the rehearsal cannot page the live Slack channel. This
+    subclass keeps the outcome tests exercising the real send path with a
+    fake notifier, by opting out of that suppression.
+    """
+
+    is_simulation = False
 
 
 class FakeNotifier:
@@ -106,6 +120,63 @@ class PostOrderAlertTests(unittest.TestCase):
             self.assertEqual(
                 post_order_alert(settings=_settings(), message="x"), "failed")
 
+    def test_simulated_order_is_suppressed_and_sends_nothing(self):
+        # 2026-11-19: a full test-suite run paged the live alerts channel with
+        # synthetic fills. A simulated order must never reach a real notifier.
+        with patch("robinhood_tools.settings.load_env", return_value={}), \
+                patch("robinhood_tools.slack_web_api.SlackWebApiNotifier",
+                      new=FakeNotifier):
+            outcome = post_order_alert(settings=_settings(), message="sim",
+                                       simulated=True)
+        self.assertEqual(outcome, "suppressed")
+        self.assertEqual(SENT, [])
+
+
+class BackendClassificationTests(unittest.TestCase):
+    """Only an explicitly-flagged venue backend may page the live channel."""
+
+    def setUp(self):
+        SENT.clear()
+        FakeNotifier.construct_exc = None
+
+    def test_real_venue_backends_are_not_simulations(self):
+        from robinhood_tools.alpaca_options import AlpacaOptionsBackend
+        from robinhood_tools.alpaca_paper import AlpacaPaperBackend
+
+        self.assertIs(AlpacaPaperBackend.is_simulation, False)
+        self.assertIs(AlpacaOptionsBackend.is_simulation, False)
+
+    def test_in_memory_backends_are_simulations(self):
+        from robinhood_tools.paper import PaperTradingBackend
+
+        self.assertIs(SimulationBroker.is_simulation, True)
+        self.assertIs(PaperTradingBackend.is_simulation, True)
+
+    def test_unknown_backend_fails_closed(self):
+        # A test stub with no flag is suppressed rather than paged.
+        unknown = SimpleNamespace(backend=SimpleNamespace())
+        no_backend = SimpleNamespace(backend=None)
+        self.assertTrue(is_simulation_service(unknown))
+        self.assertTrue(is_simulation_service(no_backend))
+
+    def test_flagged_venue_service_is_allowed(self):
+        venue = SimpleNamespace(backend=SimpleNamespace(is_simulation=False))
+        self.assertFalse(is_simulation_service(venue))
+
+    def test_real_venue_order_still_reaches_the_channel(self):
+        # Suppression must not quietly kill the owner's per-order alert.
+        from robinhood_tools.alpaca_paper import AlpacaPaperBackend
+
+        venue = SimpleNamespace(backend=AlpacaPaperBackend(None))
+        with patch("robinhood_tools.settings.load_env", return_value={}), \
+                patch("robinhood_tools.slack_web_api.SlackWebApiNotifier",
+                      new=FakeNotifier):
+            outcome = post_order_alert(
+                settings=_settings(), message="live order",
+                simulated=is_simulation_service(venue))
+        self.assertEqual(outcome, "sent")
+        self.assertEqual(len(SENT), 1)
+
 
 class MessageFormatTests(unittest.TestCase):
     def test_option_buy_message(self):
@@ -163,7 +234,7 @@ class AlertOutcomeRecordedTest(unittest.TestCase):
             D("3.80"), D("3.95"), D("237.08"),
             datetime.now(ET).isoformat(), iv=D("0.38"), delta=D("0.46"))
 
-    def _place(self, construct_exc):
+    def _place(self, construct_exc, broker_cls=RealLikeBroker):
         from datetime import date
         from decimal import Decimal as D
 
@@ -171,7 +242,6 @@ class AlertOutcomeRecordedTest(unittest.TestCase):
         from robinhood_tools.options_flow import place_long_option
         from robinhood_tools.runtime import build_settings
         from robinhood_tools.service import RobinhoodTradingService
-        from robinhood_tools.sim_broker import SimulationBroker
         from robinhood_tools.universe import Sp500Snapshot
 
         settings = build_settings()   # before the patch: needs real .env vars
@@ -180,7 +250,7 @@ class AlertOutcomeRecordedTest(unittest.TestCase):
             snap = Sp500Snapshot(frozenset({"NVDA"}),
                                  datetime.now(ET).isoformat(),
                                  "https://example.com/sp500")
-            sim = SimulationBroker(option_quotes={self.SYM: self._quote()})
+            sim = broker_cls(option_quotes={self.SYM: self._quote()})
             svc = RobinhoodTradingService(
                 sim, approval_store=db, sp500_snapshot=snap,
                 broker_environment="paper", require_human_confirmation=False,
@@ -214,6 +284,17 @@ class AlertOutcomeRecordedTest(unittest.TestCase):
         self.assertEqual(result["status"], "filled")
         self.assertEqual(result["alert"], "failed")
         self.assertEqual(len(SENT), 0)
+
+    def test_simulation_broker_is_flagged_as_simulation(self):
+        self.assertTrue(SimulationBroker.is_simulation)
+
+    def test_simulated_placement_is_suppressed_and_sends_nothing(self):
+        # A test/rehearsal fill must never page the live alerts channel.
+        result = self._place(None, broker_cls=SimulationBroker)
+        self.assertEqual(result["action"], "buy_placed")
+        self.assertEqual(result["status"], "filled")
+        self.assertEqual(result["alert"], "suppressed")
+        self.assertEqual(SENT, [])
 
 
 class PlacementPointGuardTests(unittest.TestCase):

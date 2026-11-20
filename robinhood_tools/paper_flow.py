@@ -141,10 +141,11 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     # is recorded, not discarded - see the note in options_flow.
     alert = "failed"
     try:
-        from .order_alerts import equity_message, post_order_alert
+        from .order_alerts import equity_message, is_simulation_service, post_order_alert
 
         alert = post_order_alert(
             settings=settings,
+            simulated=is_simulation_service(service),
             message=equity_message(side=order.side, symbol=symbol,
                                    qty=order.quantity, limit=request.limit_price,
                                    stop=request.bracket_stop_price,

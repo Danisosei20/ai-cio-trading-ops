@@ -76,13 +76,34 @@ def equity_message(*, side: str, symbol, qty, limit, stop=None, target=None,
     return "\n".join(lines)
 
 
-def post_order_alert(*, settings, message: str, env_path: str = ".env") -> str:
-    """Send one order alert. Returns 'sent'/'failed'; never raises.
+def is_simulation_service(service) -> bool:
+    """True unless the order came from a backend explicitly marked as a venue.
+
+    Fail closed: only a backend that explicitly sets `is_simulation = False`
+    may page the live channel. Unit tests, the session rehearsal and backtests
+    place through `SimulationBroker` / `PaperTradingBackend`; an unknown stub
+    must be treated the same way. Getting this wrong pages the operator with
+    synthetic fills (2026-11-19), which is far worse than a missing alert on a
+    path that is not a real broker order.
+    """
+    backend = getattr(service, "backend", None)
+    if backend is None:
+        return True
+    return getattr(backend, "is_simulation", True) is not False
+
+
+def post_order_alert(*, settings, message: str, env_path: str = ".env",
+                     simulated: bool = False) -> str:
+    """Send one order alert. Returns 'sent'/'failed'/'suppressed'; never raises.
 
     A failed alert is recorded nowhere critical on purpose: the order is
     already in the ledger, and blocking a trade on a chat message would be
-    exactly backwards.
+    exactly backwards. Simulated orders are suppressed entirely — they are
+    not orders the desk actually placed, and on 2026-11-19 a full test-suite
+    run paged the live alerts channel with synthetic fills.
     """
+    if simulated:
+        return "suppressed"
     try:
         from .settings import load_env
         from .slack_web_api import SlackWebApiNotifier

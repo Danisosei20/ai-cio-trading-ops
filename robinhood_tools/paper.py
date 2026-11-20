@@ -9,6 +9,10 @@ from .models import Account, CancelResult, EquityOrderRequest, Order, OrderRevie
 class PaperTradingBackend:
     """Deterministic simulated broker. It never calls Robinhood."""
 
+    # Capability flag read by the order-alert seam: synthetic fills must never
+    # page the live Slack channel.
+    is_simulation = True
+
     def __init__(self, accounts: list[Account], prices: dict[str, Decimal]):
         self.accounts = accounts
         self.prices = prices

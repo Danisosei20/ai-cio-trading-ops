@@ -182,6 +182,9 @@ class AlpacaOptionsBackend:
     No live endpoint exists here; the transport rejects every non-paper URL.
     """
 
+    # Real venue backend: the only kind of order that may page the live channel.
+    is_simulation = False
+
     def __init__(self, transport):
         self.transport = transport
 
