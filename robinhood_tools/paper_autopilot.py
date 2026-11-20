@@ -825,21 +825,6 @@ def send_entry_alert(
                              evidence.get("evidence_reference") or
                              (Path(result.get("evidence_root") or db_path.parent) /
                               "evidence" / f"{candidate_id}.json"))
-    # Durable state is authoritative: a later invocation must not require a
-    # working notifier before it can recognize an already completed delivery.
-    try:
-        with _managed_connection(db_path) as connection:
-            prior = connection.execute(
-                "SELECT status, attempts, sent_at, message_ts, message_link "
-                "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?", (candidate_id,)
-            ).fetchone()
-    except Exception:
-        prior = None
-    if prior and prior[0] == "sent":
-        return {"sent": True, "attempts": prior[1], "last_error": None,
-                "sent_at": prior[2], "status": "sent", "message_ts": prior[3],
-                "message_link": prior[4]}
-
     def failure(code: str, message: str) -> dict:
         error = {"code": code, "message": message}
         evidence["slack"] = {"status": "failed", "attempts": 0, "error": error}
@@ -859,6 +844,43 @@ def send_entry_alert(
             error = {**error, "database_error": str(exc) or type(exc).__name__}
         return {"sent": False, "attempts": 0, "last_error": error,
                 "sent_at": None, "status": "failed"}
+
+    def persistence_failure(code: str, message: str) -> dict:
+        error = {"code": code, "message": message}
+        evidence["slack"] = {"status": "unknown_delivery", "attempts": 0, "error": error}
+        try:
+            if result.get("evidence_root") is not None:
+                write_evidence(Path(result["evidence_root"]), evidence)
+        except Exception as exc:
+            error["artifact_error"] = str(exc) or type(exc).__name__
+        try:
+            _persist_alert_delivery(
+                db_path, evidence, order_id, status="unknown_delivery", attempts=0,
+                last_error=code, order_status=str(order.get("status", "accepted")),
+                evidence_reference=evidence_reference,
+            )
+        except Exception as exc:
+            error["database_error"] = str(exc) or type(exc).__name__
+        return {"sent": False, "attempts": 0, "last_error": error,
+                "sent_at": None, "status": "indeterminate"}
+
+    try:
+        with _managed_connection(db_path) as connection:
+            prior = connection.execute(
+                "SELECT status, attempts, sent_at, message_ts, message_link "
+                "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?", (candidate_id,)
+            ).fetchone()
+    except Exception as exc:
+        return persistence_failure("persistence_read_failed", str(exc) or type(exc).__name__)
+    if prior and prior[0] == "sent":
+        return {"sent": True, "attempts": prior[1], "last_error": None,
+                "sent_at": prior[2], "status": "sent", "message_ts": prior[3],
+                "message_link": prior[4]}
+    if prior and prior[0] in {"intent", "retrying", "pending", "unknown_delivery"}:
+        return persistence_failure(
+            "delivery_state_indeterminate",
+            f"existing delivery state is {prior[0]}; reconciliation is required before retry",
+        )
 
     configured_error = result.get("notifier_error")
     if configured_error:
@@ -885,6 +907,14 @@ def send_entry_alert(
     channel_id = (result.get("channel_id") or evidence.get("channel_id") or
                   os.environ.get("SLACK_CHANNEL_ID", "") or
                   getattr(notifier, "_allowed_channel_id", ""))
+    try:
+        _persist_alert_delivery(
+            db_path, evidence, order_id, status="intent", attempts=0, last_error=None,
+            order_status=str(order.get("status", "accepted")),
+            evidence_reference=evidence_reference,
+        )
+    except Exception as exc:
+        return persistence_failure("persistence_write_failed", str(exc) or type(exc).__name__)
     attempts, last_error, delay = 0, None, 1
     while attempts == 0 or _clock_now(clock).timestamp() <= deadline:
         attempts += 1
@@ -945,8 +975,7 @@ def send_entry_alert(
                                         evidence_reference=evidence_reference)
             except Exception as db_exc:
                 last_error["database_error"] = str(db_exc) or type(db_exc).__name__
-            return {"sent": False, "attempts": attempts, "last_error": last_error,
-                    "sent_at": None, "status": "pending"}
+            return persistence_failure("persistence_error", last_error["message"])
     evidence["slack"] = {"status": "failed", "attempts": attempts, "error": last_error}
     if result.get("evidence_root") is not None:
         try:

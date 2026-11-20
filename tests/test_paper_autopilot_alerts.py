@@ -188,3 +188,47 @@ def test_already_sent_delivery_is_idempotent_before_notifier_validation(tmp_path
         "message_ts": "1700000000.1",
         "message_link": "https://slack.example/p/1",
     }
+
+
+def test_send_success_persistence_failure_is_unknown_and_not_retryable(tmp_path, monkeypatch):
+    result = accepted_result(tmp_path)
+    notifier = Notifier()
+    original_persist = __import__("robinhood_tools.paper_autopilot", fromlist=["_persist_alert_delivery"])._persist_alert_delivery
+    calls = []
+
+    def fail_after_intent(*args, **kwargs):
+        calls.append(kwargs["status"])
+        if len(calls) > 1:
+            raise OSError("database became unavailable")
+        return original_persist(*args, **kwargs)
+
+    monkeypatch.setattr("robinhood_tools.paper_autopilot._persist_alert_delivery", fail_after_intent)
+    delivery = send_entry_alert(result, notifier=notifier,
+                                clock=FakeClock(datetime(2026, 11, 20, 15, 30,
+                                                         tzinfo=timezone.utc)))
+
+    assert delivery["status"] == "indeterminate"
+    assert delivery["last_error"]["code"] == "persistence_error"
+    assert len(notifier.messages) == 1
+    with sqlite3.connect(tmp_path / "autopilot.db") as db:
+        assert db.execute("SELECT status FROM paper_autopilot_alert_deliveries").fetchone() == ("intent",)
+    retry = send_entry_alert(result, notifier=Notifier(),
+                             clock=FakeClock(datetime(2026, 11, 20, 15, 30,
+                                                      tzinfo=timezone.utc)))
+    assert retry["status"] == "indeterminate"
+    assert retry["last_error"]["code"] == "delivery_state_indeterminate"
+
+
+def test_delivery_state_read_failure_fails_closed_without_sending(tmp_path):
+    result = accepted_result(tmp_path)
+    db_path = tmp_path / "autopilot.db"
+    db_path.write_bytes(b"not a sqlite database")
+    notifier = Notifier()
+
+    delivery = send_entry_alert(result, notifier=notifier,
+                                clock=FakeClock(datetime(2026, 11, 20, 15, 30,
+                                                         tzinfo=timezone.utc)))
+
+    assert delivery["status"] == "indeterminate"
+    assert delivery["last_error"]["code"] == "persistence_read_failed"
+    assert notifier.messages == []
