@@ -412,7 +412,7 @@ def claim_cycle(db_path: Path, owner: str, now: datetime, ttl_seconds: int = 900
                 (owner, token, generation, acquired, expires),
             )
         except sqlite3.IntegrityError:
-            return False
+            return None
     return token
 
 
@@ -815,6 +815,7 @@ def run_paper_entry(
     serialized_claim = _begin_serialized_cycle(path, owner, observed)
     if not serialized_claim:
         return blocked("entry cycle lease is held by another worker")
+    cycle_connection: sqlite3.Connection | None
     cycle_connection, token = serialized_claim
     try:
         if execute:
@@ -1154,7 +1155,8 @@ def send_entry_alert(
             "delivery_state_indeterminate",
             f"delivery was claimed by another worker in state {claimed_prior[0]}",
         )
-    attempts, last_error, delay = 0, None, 1
+    attempts, delay = 0, 1
+    last_error: dict[str, str] = {"code": "not_attempted", "message": "delivery was not attempted"}
     while attempts == 0 or _clock_now(clock).timestamp() <= deadline:
         attempts += 1
         try:
