@@ -25,7 +25,7 @@ from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.paper_autopilot import (  # noqa: E402
-    build_evidence, record_attempt, run_paper_entry, write_evidence,
+    build_evidence, record_attempt, run_paper_entry, send_entry_alert, write_evidence,
 )
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
@@ -594,6 +594,13 @@ def main(argv=None) -> int:
                            "analysis": settings.freshness_max_age_minutes.get("market_regime", 30)},
         state_checker=state_checker,
     )
+    if result.get("action") == "accepted" and env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
+        from robinhood_tools.slack_web_api import SlackWebApiNotifier
+        result["channel_id"] = env["SLACK_CHANNEL_ID"]
+        result["alert"] = send_entry_alert(
+            result, notifier=SlackWebApiNotifier.from_values(env),
+            clock=lambda: datetime.now(timezone.utc),
+        )
     if result.get("action") != "accepted":
         # Blocked and unknown-submission states are already durably recorded
         # by the orchestration layer. Do not assume an order payload exists.

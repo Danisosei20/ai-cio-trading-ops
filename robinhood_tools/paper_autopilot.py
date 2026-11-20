@@ -51,6 +51,8 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "evidence_type": "entry",
     "audit_history": [],
     "rejection_reasons": None,
+    "thesis": None,
+    "slack": None,
 }
 _VOLATILE_FINGERPRINT_FIELDS = {
     "candidate_id", "observed_at_utc", "observed_at_et", "created_at", "updated_at",
@@ -65,6 +67,7 @@ _STATUS_PRECEDENCE = {
     "unknown_submitted": 50, "unknown_reconciliation": 50,
 }
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
+_NON_ENTRY_EVIDENCE_FIELDS = {"thesis", "slack"}
 
 
 def _json_value(value: Any) -> Any:
@@ -329,6 +332,14 @@ def _connect(db_path: Path, *, timeout: float = 10, busy_timeout_ms: int = 10000
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_autopilot_claims_occ_symbol "
             "ON paper_autopilot_candidate_claims(occ_symbol)"
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS paper_autopilot_alert_deliveries (
+                candidate_id TEXT PRIMARY KEY, order_id TEXT NOT NULL,
+                status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT, sent_at TEXT, message_ts TEXT,
+                message_link TEXT, updated_at TEXT NOT NULL
+            )"""
         )
         connection.commit()
     except Exception:
@@ -614,7 +625,7 @@ def run_paper_entry(
         if failure_stage:
             evidence["failure_stage"] = failure_stage
         if evidence.get("known_fields") is None:
-            fields = set(_EVIDENCE_DEFAULTS) - {"action", "status", "reason", "failure_stage",
+            fields = set(_EVIDENCE_DEFAULTS) - _NON_ENTRY_EVIDENCE_FIELDS - {"action", "status", "reason", "failure_stage",
                                                "known_fields", "unknown_fields", "evidence_type",
                                                "audit_history", "rejection_reasons", "gate_results"}
             known = sorted(field for field in fields if evidence.get(field) not in (None, {}, ""))
@@ -633,7 +644,7 @@ def run_paper_entry(
                          "reason": reason, "evidence_type": "unknown_reconciliation",
                          "failure_stage": "broker", "reconciliation_required": True})
         if evidence.get("known_fields") is None:
-            fields = set(_EVIDENCE_DEFAULTS) - {
+            fields = set(_EVIDENCE_DEFAULTS) - _NON_ENTRY_EVIDENCE_FIELDS - {
                 "action", "status", "reason", "failure_stage", "known_fields",
                 "unknown_fields", "evidence_type", "audit_history", "rejection_reasons",
                 "gate_results",
@@ -739,7 +750,132 @@ def run_paper_entry(
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
         if evidence_root is not None:
             write_evidence(Path(evidence_root), evidence)
-        return {"action": "accepted", "reason": "gates passed", "candidate_id": evidence.get("candidate_id"), "order": order}
+        return {"action": "accepted", "reason": "gates passed", "candidate_id": evidence.get("candidate_id"),
+                "order": order, "database_path": str(path),
+                "evidence_root": str(evidence_root) if evidence_root is not None else str(path.parent),
+                "evidence": evidence}
     finally:
         if cycle_connection is not None:
             _finish_serialized_cycle(cycle_connection)
+
+
+def _clock_now(clock: Any) -> datetime:
+    value = clock.now() if callable(getattr(clock, "now", None)) else clock()
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ValueError("clock.now() must return a timezone-aware datetime")
+    return value
+
+
+def _clock_sleep(clock: Any, seconds: float) -> None:
+    sleeper = getattr(clock, "sleep", None)
+    (sleeper or time.sleep)(seconds)
+
+
+def _persist_alert_delivery(
+    db_path: Path, evidence: dict, order_id: str, *, status: str, attempts: int,
+    last_error: str | None, sent_at: str | None = None,
+    message_ts: str | None = None, message_link: str | None = None,
+) -> None:
+    with _managed_connection(db_path) as connection:
+        connection.execute(
+            """INSERT INTO paper_autopilot_alert_deliveries
+               (candidate_id, order_id, status, attempts, last_error, sent_at,
+                message_ts, message_link, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(candidate_id) DO UPDATE SET order_id=excluded.order_id,
+                 status=excluded.status, attempts=excluded.attempts,
+                 last_error=excluded.last_error, sent_at=excluded.sent_at,
+                 message_ts=excluded.message_ts, message_link=excluded.message_link,
+                 updated_at=excluded.updated_at""",
+            (str(evidence["candidate_id"]), order_id, status, attempts, last_error,
+             sent_at, message_ts, message_link, datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def send_entry_alert(
+    result: dict, *, notifier: Any, clock: Any, retry_until_seconds: int = 600,
+) -> dict:
+    """Send an accepted paper-entry alert without touching broker execution."""
+    if retry_until_seconds < 0:
+        raise ValueError("retry_until_seconds must not be negative")
+    if str(result.get("action", "")).lower() != "accepted":
+        return {"sent": False, "attempts": 0, "last_error": None,
+                "sent_at": None, "status": "blocked"}
+    evidence = result.get("evidence") or result
+    order = result.get("order") or {}
+    candidate_id = str(evidence.get("candidate_id") or result.get("candidate_id") or "")
+    order_id = str(order.get("order_id") or order.get("id") or result.get("order_id") or "")
+    if not candidate_id or not order_id:
+        raise ValueError("accepted entry alert requires candidate_id and order_id")
+    db_path = Path(result.get("database_path") or evidence.get("database_path") or
+                   evidence.get("db_path") or "outputs/paper/cio.db")
+    with _managed_connection(db_path) as connection:
+        prior = connection.execute(
+            "SELECT status, attempts, sent_at, message_ts, message_link "
+            "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?", (candidate_id,)
+        ).fetchone()
+    if prior and prior[0] == "sent":
+        return {"sent": True, "attempts": prior[1], "last_error": None,
+                "sent_at": prior[2], "status": "sent", "message_ts": prior[3],
+                "message_link": prior[4]}
+
+    started = _clock_now(clock)
+    deadline = started.timestamp() + retry_until_seconds
+    payload = {
+        "event": "paper_entry_accepted", "timestamp": _timestamp(started),
+        "contract": evidence.get("occ_symbol") or order.get("symbol"),
+        "side": order.get("side") or evidence.get("side"),
+        "price": order.get("price") or evidence.get("reviewed_price") or
+                 (evidence.get("quote") or {}).get("reviewed_price"),
+        "thesis": evidence.get("thesis") or result.get("thesis") or "",
+        "policy_version": evidence.get("policy_version") or result.get("policy_version"),
+        "evidence_reference": str(result.get("evidence_reference") or
+                                   evidence.get("evidence_reference") or
+                                   (Path(result.get("evidence_root") or db_path.parent) /
+                                    "evidence" / f"{candidate_id}.json")),
+        "order_id": order_id,
+    }
+    channel_id = (result.get("channel_id") or evidence.get("channel_id") or
+                  os.environ.get("SLACK_CHANNEL_ID", "") or
+                  getattr(notifier, "_allowed_channel_id", ""))
+    attempts, last_error, delay = 0, None, 1
+    while attempts == 0 or _clock_now(clock).timestamp() <= deadline:
+        attempts += 1
+        try:
+            response = notifier.send_approval(
+                channel_id=channel_id,
+                message=json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            )
+            sent_at = _timestamp(_clock_now(clock))
+            evidence["slack"] = {"status": "sent", "attempts": attempts,
+                                  "message_ts": response.get("message_ts"),
+                                  "message_link": response.get("message_link"),
+                                  "sent_at": sent_at}
+            _persist_alert_delivery(db_path, evidence, order_id, status="sent",
+                                    attempts=attempts, last_error=None, sent_at=sent_at,
+                                    message_ts=response.get("message_ts"),
+                                    message_link=response.get("message_link"))
+            if result.get("evidence_root") is not None:
+                write_evidence(Path(result["evidence_root"]), evidence)
+            return {"sent": True, "attempts": attempts, "last_error": None,
+                    "sent_at": sent_at, "status": "sent",
+                    "message_ts": response.get("message_ts"),
+                    "message_link": response.get("message_link")}
+        except Exception as exc:
+            last_error = str(exc) or type(exc).__name__
+            if _clock_now(clock).timestamp() >= deadline:
+                break
+            sleep_for = min(delay, deadline - _clock_now(clock).timestamp())
+            if sleep_for <= 0:
+                break
+            _persist_alert_delivery(db_path, evidence, order_id, status="retrying",
+                                    attempts=attempts, last_error=last_error)
+            _clock_sleep(clock, sleep_for)
+            delay = min(delay * 2, 60)
+    evidence["slack"] = {"status": "failed", "attempts": attempts, "error": last_error}
+    _persist_alert_delivery(db_path, evidence, order_id, status="failed",
+                            attempts=attempts, last_error=last_error)
+    if result.get("evidence_root") is not None:
+        write_evidence(Path(result["evidence_root"]), evidence)
+    return {"sent": False, "attempts": attempts, "last_error": last_error,
+            "sent_at": None, "status": "failed"}
