@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -23,7 +23,97 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
+from robinhood_tools.paper_autopilot import build_evidence, record_attempt  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
+
+
+EVIDENCE_MAX_AGE_MINUTES = {"quote": 5, "analysis": 15}
+
+
+def _observed_at(value, *, field: str) -> datetime:
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, str):
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    else:
+        raise PolicyViolation(f"missing {field} evidence timestamp")
+    if timestamp.tzinfo is None:
+        raise PolicyViolation(f"{field} evidence timestamp lacks timezone")
+    return timestamp.astimezone(timezone.utc)
+
+
+def collect_entry_evidence(
+    symbol: str, side: str, quote: dict, analysis: dict, *, now: datetime
+) -> dict:
+    """Copy deterministic quote/indicator outputs into the entry snapshot."""
+    if side not in {"call", "put"}:
+        raise PolicyViolation("option side must be call or put")
+    if now.tzinfo is None:
+        raise PolicyViolation("now must include a timezone")
+    quote_time = _observed_at(quote.get("as_of"), field="quote")
+    analysis_time = _observed_at(analysis.get("as_of"), field="analysis")
+    quote_payload = dict(quote)
+    quote_payload["as_of"] = quote_time
+    liquidity = {
+        key: quote.get(key)
+        for key in ("spread", "open_interest", "volume")
+        if quote.get(key) is not None
+    }
+    return {
+        "symbol": symbol.strip().upper(), "occ_symbol": quote.get("occ_symbol"),
+        "side": side, "quantity": quote.get("quantity", 1), "quote": quote_payload,
+        "premium": quote.get("reviewed_price", quote.get("ask")),
+        "vwap": analysis.get("vwap"), "ema": analysis.get("ema"),
+        "poc": analysis.get("poc"), "supply_demand": analysis.get("supply_demand"),
+        "support_resistance": analysis.get("support_resistance"),
+        "regime": analysis.get("regime"), "iv": quote.get("iv", analysis.get("iv")),
+        "liquidity": liquidity, "earnings_date": analysis.get("earnings_date"),
+        "session_status": analysis.get("session_status"),
+        "position_status": analysis.get("position_status"),
+        "policy_version": analysis.get("policy_version"),
+        "freshness": {
+            "quote": {"observed_at_utc": quote_time.isoformat(), "max_age_minutes": 5},
+            "analysis": {"observed_at_utc": analysis_time.isoformat(), "max_age_minutes": 15},
+        },
+    }
+
+
+def _evidence_block_reason(evidence: dict, *, now: datetime) -> str | None:
+    required = (
+        "symbol", "occ_symbol", "side", "quote", "vwap", "ema", "poc",
+        "supply_demand", "support_resistance", "regime", "iv", "liquidity",
+        "earnings_date", "session_status", "position_status", "policy_version", "freshness",
+    )
+    missing = [field for field in required if evidence.get(field) in (None, {}, "")]
+    if missing:
+        return "missing evidence: " + ", ".join(missing)
+    for source, limit in EVIDENCE_MAX_AGE_MINUTES.items():
+        try:
+            observed = _observed_at(evidence["freshness"][source]["observed_at_utc"], field=source)
+        except (KeyError, TypeError, ValueError, PolicyViolation):
+            return f"missing {source} evidence timestamp"
+        age = (now.astimezone(timezone.utc) - observed).total_seconds() / 60
+        if age < 0 or age > limit:
+            return f"stale {source} evidence ({age:.1f}m; limit {limit}m)"
+    return None
+
+
+def persist_candidate_before_gate(db_path, candidate: dict, *, gate, broker_call, now: datetime) -> dict:
+    """Persist the screened candidate, then run gates, never the reverse."""
+    evidence = build_evidence(candidate, now=now)
+    reason = _evidence_block_reason(evidence, now=now)
+    if reason:
+        record_attempt(db_path, evidence, "blocked", reason)
+        raise PolicyViolation(reason)
+    record_attempt(db_path, evidence, "screened", "candidate screened")
+    decision = gate()
+    allowed, gate_reason = (decision, "gate failed") if isinstance(decision, bool) else decision
+    if not allowed:
+        record_attempt(db_path, evidence, "blocked", str(gate_reason))
+        return {"action": "blocked", "reason": str(gate_reason), "candidate_id": evidence["candidate_id"]}
+    order = broker_call()
+    record_attempt(db_path, evidence, "accepted", "gates passed", order)
+    return {"action": "accepted", "candidate_id": evidence["candidate_id"], "order": order}
 
 
 def parse_args(argv=None):

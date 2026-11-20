@@ -38,6 +38,7 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "session_status": None,
     "position_status": None,
     "policy_version": None,
+    "freshness": None,
     "gate_results": None,
     "action": "screened",
     "reason": "",
