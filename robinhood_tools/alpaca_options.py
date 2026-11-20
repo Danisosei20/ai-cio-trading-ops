@@ -21,6 +21,19 @@ from .options import OptionContract, OptionQuote
 ALPACA_OPTIONS_BASE_URL = "https://data.alpaca.markets"
 
 
+def _option_order_status(status: str):
+    normalized = status.lower()
+    if normalized == "filled":
+        return "filled"
+    if normalized == "partially_filled":
+        return "partially_filled"
+    if normalized == "rejected":
+        return "rejected"
+    if normalized in {"canceled", "cancelled", "expired", "replaced"}:
+        return "cancelled"
+    return "confirmed" if normalized in {"accepted", "accepted_for_bidding"} else "queued"
+
+
 def third_friday(year: int, month: int) -> date:
     """Monthly equity-option expiration (third Friday)."""
     month_cal = calendar.monthcalendar(year, month)
@@ -263,7 +276,8 @@ class AlpacaOptionsBackend:
                       account_id=str(result.get("account_id") or ""),
                       symbol=str(result.get("symbol") or ""),
                       side=result.get("side") or "buy",
-                      status="queued", raw=result)
+                      status=_option_order_status(str(result.get("status", "new"))),
+                      raw=result)
 
     # -- equity surface: explicitly refused (venue separation) --------------
     def review_equity_order(self, request):

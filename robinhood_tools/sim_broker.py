@@ -307,6 +307,12 @@ class SimulationBroker:
         except KeyError as exc:
             raise PolicyViolation("Unknown simulation order.") from exc
 
+    def get_option_order(self, order_id: str) -> Order:
+        try:
+            return self._by_id[order_id].order
+        except KeyError as exc:
+            raise PolicyViolation("Unknown simulation order.") from exc
+
     def cancel_equity_order(self, order_id: str) -> CancelResult:
         return self.cancel_order(order_id)
 

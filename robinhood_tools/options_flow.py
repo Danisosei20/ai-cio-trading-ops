@@ -143,7 +143,10 @@ def close_long_option(*, settings, quote, contracts: int,
         raise PolicyViolation("Backend cannot list positions; close refused.")
     for position in lister():
         if str(position.get("symbol", "")).upper() == contract.option_symbol:
-            held += abs(Decimal(str(position.get("qty", "0"))))
+            quantity = Decimal(str(position.get("qty", "0")))
+            if quantity < 0:
+                raise PolicyViolation("Negative exact OCC quantity is invalid for sell-to-close.")
+            held += quantity
     if held < contracts:
         raise PolicyViolation(
             f"Holdings check failed: {held} held vs {contracts} to close; "
@@ -162,26 +165,24 @@ def close_long_option(*, settings, quote, contracts: int,
              "qty": contracts, "limit": str(request.limit_price),
              "order_id": placed.id, "status": placed.status,
              "approval_id": auth.approval_id}
-    # A caller cannot release an entry claim by asserting that a close worked.
-    # Require the broker's terminal order status and a fresh exact-OCC position
-    # query proving that the position is flat.
-    terminal = str(placed.status).lower() in {"filled", "closed", "executed"}
+    # A placement response is only an acknowledgement. Re-read the order from
+    # the broker before using it as closure evidence.
     try:
+        get_order = getattr(service.backend, "get_option_order", None)
+        if get_order is None:
+            raise PolicyViolation("Backend cannot retrieve option order status; close reconciliation required.")
+        authoritative = get_order(placed.id)
+        terminal = str(authoritative.status).lower() in {"filled", "closed", "executed"}
         position_check = lister()
-        remaining = sum(
-            abs(Decimal(str(item.get("qty", "0"))))
-            for item in position_check
-            if str(item.get("symbol", "")).upper() == contract.option_symbol
-        )
     except Exception:
         result["reconciliation_required"] = True
         return result
-    if terminal and remaining == 0:
+    if terminal:
         from .paper_autopilot import reconcile_candidate_claim
         result["claim_closed"] = reconcile_candidate_claim(
             db.path if hasattr(db, "path") else settings.database_path,
-            contract.option_symbol, order_id=placed.id,
-            broker_status=placed.status, positions=position_check,
+            contract.option_symbol, order_id=authoritative.id,
+            broker_status=authoritative.status, positions=position_check,
         )
     else:
         result["reconciliation_required"] = True

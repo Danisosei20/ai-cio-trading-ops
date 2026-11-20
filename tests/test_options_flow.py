@@ -217,6 +217,46 @@ class CloseOptionTest(unittest.TestCase):
                 settings=self.settings, quote=dead, contracts=1,
                 database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
 
+    def test_negative_contracts_are_rejected(self):
+        from robinhood_tools.options_flow import close_long_option
+
+        import datetime as _dt
+
+        with self.assertRaises(PolicyViolation):
+            close_long_option(
+                settings=self.settings, quote=self.quote, contracts=-1,
+                database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
+
+    def test_claim_release_uses_authoritative_order_status(self):
+        from unittest.mock import patch
+
+        from robinhood_tools.models import Order
+        from robinhood_tools.options_flow import close_long_option, place_long_option
+        import datetime as _dt
+        from robinhood_tools.paper_autopilot import build_evidence, claim_candidate
+        from robinhood_tools.universe import Sp500Snapshot
+
+        snap = Sp500Snapshot(frozenset({"NVDA"}),
+                             _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                             "https://example.com/sp500")
+        place_long_option(settings=self.settings, snapshot=snap, quote=self.quote,
+                          contracts=1, earnings_date=_dt.date(2026, 11, 20),
+                          premium_cap=Decimal("500"), database=self.db,
+                          service=self.service, today=_dt.date(2026, 10, 7))
+        evidence = build_evidence({"candidate_id": "authoritative", "symbol": "NVDA",
+                                   "occ_symbol": self.quote.contract.option_symbol},
+                                  now=_dt.datetime(2026, 10, 7, tzinfo=_dt.timezone.utc))
+        self.assertTrue(claim_candidate(self.db.path, evidence))
+        authoritative = Order("close-1", "sim-1", self.quote.contract.option_symbol,
+                              "sell", "queued")
+        with patch.object(self.service.backend, "get_option_order", return_value=authoritative) as get_order:
+            out = close_long_option(settings=self.settings, quote=self.quote, contracts=1,
+                                    database=self.db, service=self.service,
+                                    today=_dt.date(2026, 10, 8))
+        get_order.assert_called_once_with(out["order_id"])
+        self.assertNotIn("claim_closed", out)
+        self.assertTrue(out["reconciliation_required"])
+
 
 if __name__ == "__main__":
     unittest.main()

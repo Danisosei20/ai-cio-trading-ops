@@ -552,10 +552,28 @@ def set_candidate_claim_state(db_path: Path, occ_symbol: str, state: str) -> boo
         return cursor.rowcount == 1
 
 
-def close_candidate_claim(db_path: Path, occ_symbol: str, *, order_id: str,
-                          confirmed: bool, closed_at: datetime | None = None) -> bool:
-    """Release an OCC claim only from authoritative, confirmed closure evidence."""
-    if not confirmed or not str(order_id).strip():
+def close_candidate_claim(
+    db_path: Path, occ_symbol: str, *, order_id: str, broker_status: str,
+    positions: list[dict], closed_at: datetime | None = None,
+) -> bool:
+    """Release an OCC claim only after broker reconciliation.
+
+    This public helper deliberately accepts observations, not a caller-supplied
+    confirmation flag.  Terminal broker status and a fresh flat exact-OCC
+    position are both required before the claim can be released.
+    """
+    return reconcile_candidate_claim(
+        db_path, occ_symbol, order_id=order_id, broker_status=broker_status,
+        positions=positions, closed_at=closed_at,
+    )
+
+
+def _close_candidate_claim_verified(
+    db_path: Path, occ_symbol: str, *, order_id: str,
+    closed_at: datetime | None = None,
+) -> bool:
+    """Apply a claim release after ``reconcile_candidate_claim`` verified it."""
+    if not str(order_id).strip():
         return False
     closed = _timestamp(closed_at or datetime.now(timezone.utc))
     with _managed_connection(db_path) as connection:
@@ -585,17 +603,20 @@ def reconcile_candidate_claim(
     if not symbol:
         return False
     try:
-        remaining = sum(
-            abs(Decimal(str(item.get("qty", "0"))))
-            for item in positions
-            if str(item.get("symbol", "")).upper() == symbol
-        )
+        remaining = Decimal("0")
+        for item in positions:
+            if str(item.get("symbol", "")).upper() != symbol:
+                continue
+            quantity = Decimal(str(item.get("qty", "0")))
+            if quantity < 0:
+                return False
+            remaining += quantity
     except (ArithmeticError, AttributeError, TypeError, ValueError):
         return False
     if remaining != 0:
         return False
-    return close_candidate_claim(
-        db_path, symbol, order_id=str(order_id), confirmed=True, closed_at=closed_at,
+    return _close_candidate_claim_verified(
+        db_path, symbol, order_id=str(order_id), closed_at=closed_at,
     )
 
 

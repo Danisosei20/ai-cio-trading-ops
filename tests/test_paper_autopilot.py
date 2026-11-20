@@ -14,6 +14,7 @@ from robinhood_tools.paper_autopilot import (
     claim_cycle,
     claim_candidate,
     close_candidate_claim,
+    reconcile_candidate_claim,
     record_attempt,
     release_cycle,
     write_evidence,
@@ -203,9 +204,13 @@ def test_occ_claim_reentry_requires_confirmed_close_and_preserves_generation(tmp
     db = tmp_path / "autopilot.db"
     first = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
     assert claim_candidate(db, first)
-    assert not close_candidate_claim(db, first["occ_symbol"], order_id="sell-1", confirmed=False)
     assert not claim_candidate(db, {**first, "candidate_id": "second"})
-    assert close_candidate_claim(db, first["occ_symbol"], order_id="sell-1", confirmed=True)
+    with pytest.raises(TypeError):
+        close_candidate_claim(db, first["occ_symbol"], order_id="sell-1", confirmed=True)
+    assert reconcile_candidate_claim(
+        db, first["occ_symbol"], order_id="sell-1", broker_status="filled",
+        positions=[{"symbol": first["occ_symbol"], "qty": "0"}],
+    )
     second = {**first, "candidate_id": "second", "premium": 641.0}
     assert claim_candidate(db, second)
     with sqlite3.connect(db) as connection:
@@ -220,7 +225,8 @@ def test_unknown_occ_claim_cannot_be_reentered(tmp_path):
     assert claim_candidate(db, evidence)
     from robinhood_tools.paper_autopilot import set_candidate_claim_state
     assert set_candidate_claim_state(db, evidence["occ_symbol"], "unknown")
-    assert not close_candidate_claim(db, evidence["occ_symbol"], order_id="sell-1", confirmed=True)
+    with pytest.raises(TypeError):
+        close_candidate_claim(db, evidence["occ_symbol"], order_id="sell-1", confirmed=True)
     assert not claim_candidate(db, {**evidence, "candidate_id": "second", "premium": 700})
 
 
@@ -239,6 +245,19 @@ def test_authoritative_reconciliation_releases_only_terminal_flat_close(tmp_path
         positions=[{"symbol": first["occ_symbol"], "qty": "0"}],
     )
     assert claim_candidate(db, {**first, "candidate_id": "second"})
+
+
+def test_authoritative_reconciliation_rejects_negative_exact_occ_quantity(tmp_path):
+    from robinhood_tools.paper_autopilot import reconcile_candidate_claim
+
+    db = tmp_path / "autopilot.db"
+    first = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    assert claim_candidate(db, first)
+    assert not reconcile_candidate_claim(
+        db, first["occ_symbol"], order_id="sell-1", broker_status="filled",
+        positions=[{"symbol": first["occ_symbol"], "qty": "-1"}],
+    )
+    assert not claim_candidate(db, {**first, "candidate_id": "second"})
 
 
 def test_record_attempt_persists_before_gate_result(tmp_path):
