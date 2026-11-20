@@ -25,7 +25,7 @@ from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.paper_autopilot import (  # noqa: E402
-    build_evidence, claim_candidate, record_attempt, write_evidence,
+    build_evidence, record_attempt, run_paper_entry, write_evidence,
 )
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
@@ -213,46 +213,16 @@ def persist_candidate_before_gate(
         record_attempt(db_path, evidence, "blocked", reason)
         write_evidence(root, evidence)
         raise PolicyViolation(reason)
-    if not claim_candidate(db_path, evidence):
-        reason = "duplicate candidate or OCC claim"
-        _annotate_blocked_evidence(evidence, failure_stage="claim", reason=reason)
-        evidence["action"] = "blocked"
-        record_attempt(db_path, evidence, "blocked", reason)
-        write_evidence(root, evidence)
-        return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
-    evidence.update({"action": "screened", "reason": "candidate screened"})
-    record_attempt(db_path, evidence, "screened", "candidate screened")
-    write_evidence(root, evidence)
-    try:
-        decision = gate()
-    except Exception as exc:
-        reason = str(exc) or type(exc).__name__
-        _annotate_blocked_evidence(evidence, failure_stage="gate", reason=reason)
-        evidence["action"] = "blocked"
-        record_attempt(db_path, evidence, "blocked", reason)
-        write_evidence(root, evidence)
-        raise
-    allowed, gate_reason = (decision, "gate failed") if isinstance(decision, bool) else decision
-    if not allowed:
-        reason = str(gate_reason)
-        _annotate_blocked_evidence(evidence, failure_stage="gate", reason=reason)
-        evidence["action"] = "blocked"
-        record_attempt(db_path, evidence, "blocked", reason)
-        write_evidence(root, evidence)
-        return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
-    try:
-        order = broker_call()
-    except Exception as exc:
-        reason = str(exc) or type(exc).__name__
-        _annotate_blocked_evidence(evidence, failure_stage="broker", reason=reason)
-        evidence["action"] = "blocked"
-        record_attempt(db_path, evidence, "blocked", reason)
-        write_evidence(root, evidence)
-        raise
-    evidence.update({"action": "accepted", "reason": "gates passed"})
-    record_attempt(db_path, evidence, "accepted", "gates passed", order)
-    write_evidence(root, evidence)
-    return {"action": "accepted", "candidate_id": evidence["candidate_id"], "order": order}
+    return run_paper_entry(
+        evidence,
+        execute=True,
+        owner=str(evidence.get("owner") or "options-pilot"),
+        broker_call=broker_call,
+        db_path=db_path,
+        now=now,
+        gate=gate,
+        evidence_root=root,
+    )
 
 
 def record_preentry_block(

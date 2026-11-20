@@ -356,7 +356,7 @@ def release_cycle(db_path: Path, owner: str, token: str) -> None:
 def claim_candidate(db_path: Path, evidence: dict) -> bool:
     """Atomically reserve a fingerprint and exact OCC contract identity."""
     fingerprint = candidate_fingerprint(evidence)
-    occ_symbol = str(evidence.get("occ_symbol") or "").strip()
+    occ_symbol = str(evidence.get("occ_symbol") or "").strip().upper()
     if not occ_symbol:
         raise ValueError("occ_symbol is required for duplicate claims")
     with _managed_connection(db_path) as connection:
@@ -458,3 +458,112 @@ def attempt_exists(db_path: Path, evidence: dict, action: str, reason: str) -> b
             "SELECT 1 FROM paper_autopilot_attempts WHERE fingerprint=? AND action=? AND reason=? LIMIT 1",
             (fingerprint, action, reason),
         ).fetchone() is not None
+
+
+def run_paper_entry(
+    evidence: dict,
+    execute: bool = False,
+    owner: str = "paper-autopilot",
+    broker_call=None,
+    *,
+    db_path: Path | None = None,
+    now: datetime | None = None,
+    lease_ttl_seconds: int = 900,
+    gate=None,
+    evidence_root: Path | None = None,
+) -> dict:
+    """Coordinate one duplicate-safe paper entry attempt.
+
+    ``broker_call`` is deliberately injected by the caller so this seam cannot
+    manufacture an order or bypass ``place_long_option``.  The production
+    options flow supplies that callback after it has constructed its existing
+    paper review/ledger path; tests can supply a small recording callback.
+    Private orchestration values in ``evidence`` are never persisted.
+    """
+    path = Path(db_path or evidence.get("database_path") or evidence.get("db_path") or "outputs/paper/cio.db")
+    observed = now
+    if observed is None:
+        raw_now = evidence.get("observed_at_utc")
+        observed = datetime.fromisoformat(raw_now) if raw_now else datetime.now(timezone.utc)
+    if observed.tzinfo is None:
+        raise ValueError("now must include a timezone")
+
+    def blocked(reason: str, *, duplicate: bool = False, failure_stage: str | None = None) -> dict:
+        evidence.update({"action": "blocked", "status": "blocked", "reason": reason,
+                         "evidence_type": "blocked"})
+        if failure_stage:
+            evidence["failure_stage"] = failure_stage
+        if evidence.get("known_fields") is None:
+            fields = set(_EVIDENCE_DEFAULTS) - {"action", "status", "reason", "failure_stage",
+                                               "known_fields", "unknown_fields", "evidence_type",
+                                               "audit_history", "rejection_reasons", "gate_results"}
+            known = sorted(field for field in fields if evidence.get(field) not in (None, {}, ""))
+            evidence["known_fields"] = known
+            evidence["unknown_fields"] = sorted(fields - set(known))
+        record_attempt(path, evidence, "blocked", reason)
+        if evidence_root is not None:
+            write_evidence(Path(evidence_root), evidence)
+        result = {"action": "blocked", "reason": reason, "candidate_id": evidence.get("candidate_id")}
+        if duplicate:
+            result["duplicate"] = True
+        return result
+
+    settings = evidence.get("settings")
+    settings_live = bool(getattr(settings, "trading_enabled", False)) if settings is not None else False
+    settings_paper_disabled = settings is not None and getattr(settings, "paper_trading_enabled", True) is False
+    if evidence.get("trading_enabled") is True or settings_live or settings_paper_disabled or evidence.get("paper_only") is False:
+        return blocked("paper-only refusal: live trading is enabled or paper mode is disabled")
+    if str(evidence.get("mode", "")).lower() == "live":
+        return blocked("paper-only refusal: live mode is not accepted")
+    if evidence.get("held") or evidence.get("position_held"):
+        return blocked("candidate already held; entry refused")
+    held_symbols = {str(item).upper() for item in (evidence.get("held_positions") or [])}
+    open_symbols = {str(item).upper() for item in (evidence.get("open_orders") or [])}
+    occ = str(evidence.get("occ_symbol") or "").upper()
+    if occ in held_symbols:
+        return blocked("candidate already held; entry refused")
+    if occ in open_symbols:
+        return blocked("matching open order already exists; entry refused")
+    if evidence.get("open_order") or evidence.get("open_order_exists"):
+        return blocked("matching open order already exists; entry refused")
+    position_status = str(evidence.get("position_status") or "").lower()
+    if position_status in {"held", "open", "long", "pending", "buy_pending"}:
+        return blocked(f"candidate position status is {position_status}; entry refused")
+
+    token = claim_cycle(path, owner, observed, ttl_seconds=lease_ttl_seconds)
+    if not token:
+        return blocked("entry cycle lease is held by another worker")
+    try:
+        if not claim_candidate(path, evidence):
+            return blocked("duplicate candidate or OCC claim", duplicate=True)
+        evidence.update({"action": "screened", "status": "screened", "reason": "candidate screened"})
+        record_attempt(path, evidence, "screened", "candidate screened")
+        if evidence_root is not None:
+            write_evidence(Path(evidence_root), evidence)
+        if gate is not None:
+            try:
+                decision = gate()
+            except Exception as exc:
+                blocked(str(exc) or type(exc).__name__, failure_stage="gate")
+                raise
+            allowed, gate_reason = (decision, "gate failed") if isinstance(decision, bool) else decision
+            if not allowed:
+                return blocked(str(gate_reason), failure_stage="gate")
+        if not execute:
+            return {"action": "screened", "reason": "execution disabled", "candidate_id": evidence.get("candidate_id")}
+        if broker_call is None:
+            broker_call = evidence.get("_broker_call")
+        if not callable(broker_call):
+            return blocked("paper entry executor is not configured")
+        try:
+            order = broker_call()
+        except Exception as exc:
+            blocked(str(exc) or type(exc).__name__, failure_stage="broker")
+            raise
+        evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed"})
+        record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
+        if evidence_root is not None:
+            write_evidence(Path(evidence_root), evidence)
+        return {"action": "accepted", "reason": "gates passed", "candidate_id": evidence.get("candidate_id"), "order": order}
+    finally:
+        release_cycle(path, owner, token)
