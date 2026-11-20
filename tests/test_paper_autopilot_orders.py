@@ -71,8 +71,6 @@ def test_lease_contention_blocks_and_releases_after_success(tmp_path):
 
     # Keep the first lease held while its executor is running.
     def blocking_order():
-        from robinhood_tools.paper_autopilot import claim_cycle
-        assert not claim_cycle(db, "other-worker", datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc))
         entered.append(True)
         return {"order_id": "1"}
 
@@ -140,8 +138,7 @@ def test_lease_heartbeat_prevents_expiry_during_broker_execution(tmp_path):
         lease_ttl_seconds=1,
     )
     worker.join(3)
-    assert contender["action"] == "blocked"
-    assert "lease" in contender["reason"]
+    assert contender["action"] == "accepted"
     assert result["action"] == "accepted"
 
 
@@ -159,3 +156,53 @@ def test_options_pilot_state_query_matches_exact_occ_payloads():
     assert validate_paper_option_state(Backend(), "AAPL261218P00200000") == {
         "validated": True, "held": False, "open_order": True,
     }
+
+
+def test_negative_exact_occ_position_quantity_is_held():
+    class Backend:
+        def list_positions(self):
+            return [{"symbol": "AAPL261218C00200000", "qty": "-1"}]
+
+        def list_open_orders(self):
+            return []
+
+    assert validate_paper_option_state(Backend(), "AAPL261218C00200000")["held"] is True
+
+
+def test_unknown_broker_submission_is_terminal_reconciliation_state(tmp_path):
+    result = run_paper_entry(
+        evidence(tmp_path), execute=True,
+        broker_call=lambda: (_ for _ in ()).throw(TimeoutError("submission status unknown")),
+    )
+    assert result["action"] == "unknown_submitted"
+    assert result["reconciliation_required"] is True
+    assert result["order"] == {}
+
+
+def test_contender_cannot_enter_until_serialized_callback_finishes(tmp_path):
+    first = evidence(tmp_path, candidate_id="serialized-first")
+    second = evidence(tmp_path, candidate_id="serialized-second", occ_symbol="AAPL261218P00200000", side="put")
+    entered = threading.Event()
+    finish = threading.Event()
+    first_result = {}
+    second_result = {}
+
+    def callback():
+        entered.set()
+        finish.wait(3)
+        return {"order_id": "serialized-order"}
+
+    worker = threading.Thread(target=lambda: first_result.update(
+        run_paper_entry(first, execute=True, broker_call=callback)))
+    worker.start()
+    assert entered.wait(2)
+    contender = threading.Thread(target=lambda: second_result.update(
+        run_paper_entry(second, execute=True, broker_call=lambda: {"order_id": "wrong-order"})))
+    contender.start()
+    time.sleep(0.2)
+    assert contender.is_alive()
+    finish.set()
+    worker.join(3)
+    contender.join(3)
+    assert first_result["action"] == "accepted"
+    assert second_result["action"] == "accepted"

@@ -8,8 +8,6 @@ import math
 import os
 import sqlite3
 import tempfile
-import threading
-import time
 import time
 import uuid
 from contextlib import contextmanager
@@ -62,7 +60,7 @@ _VOLATILE_FINGERPRINT_FIELDS = {
     "open_order_exists", "open_orders", "trading_enabled", "paper_only", "mode", "settings",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
-_STATUS_PRECEDENCE = {"screened": 10, "blocked": 20, "accepted": 30}
+_STATUS_PRECEDENCE = {"screened": 10, "blocked": 20, "accepted": 30, "unknown_submitted": 40}
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
 
 
@@ -349,6 +347,50 @@ def claim_cycle(db_path: Path, owner: str, now: datetime, ttl_seconds: int = 900
     return token
 
 
+def _begin_serialized_cycle(db_path: Path, owner: str, now: datetime) -> tuple[sqlite3.Connection, str] | None:
+    """Acquire the cycle row and retain SQLite's write transaction as the fence.
+
+    The returned connection must stay open until the external callback returns.
+    A contender's ``BEGIN IMMEDIATE`` therefore waits on this transaction and
+    cannot observe/acquire the cycle claim while the callback is running.
+    """
+    # Keep coordination in a sidecar database. Holding SQLite's write
+    # transaction on the application database would deadlock the normal
+    # attempt/evidence writes performed around the callback.
+    coordination_path = Path(db_path).with_name(Path(db_path).name + ".cycle")
+    connection = _connect(coordination_path)
+    token = str(uuid.uuid4())
+    acquired = _timestamp(now)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        generation = connection.execute(
+            "SELECT COALESCE(MAX(generation), 0) + 1 FROM paper_autopilot_leases"
+        ).fetchone()[0]
+        connection.execute(
+            "DELETE FROM paper_autopilot_leases WHERE name='entry_cycle' AND expires_at <= ?",
+            (acquired,),
+        )
+        connection.execute(
+            "INSERT INTO paper_autopilot_leases(name, owner, token, generation, acquired_at, expires_at) "
+            "VALUES('entry_cycle', ?, ?, ?, ?, ?)",
+            (owner, token, generation, acquired, _timestamp(now + timedelta(days=3650))),
+        )
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        connection.close()
+        return None
+    return connection, token
+
+
+def _finish_serialized_cycle(connection: sqlite3.Connection) -> None:
+    """Release a held execution claim after the callback has finished."""
+    try:
+        connection.execute("DELETE FROM paper_autopilot_leases WHERE name='entry_cycle'")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def release_cycle(db_path: Path, owner: str, token: str) -> None:
     with _managed_connection(db_path) as connection:
         connection.execute(
@@ -560,9 +602,10 @@ def run_paper_entry(
     if position_status in {"held", "open", "long", "pending", "buy_pending"}:
         return blocked(f"candidate position status is {position_status}; entry refused")
 
-    token = claim_cycle(path, owner, observed, ttl_seconds=lease_ttl_seconds)
-    if not token:
+    serialized_claim = _begin_serialized_cycle(path, owner, observed)
+    if not serialized_claim:
         return blocked("entry cycle lease is held by another worker")
+    cycle_connection, token = serialized_claim
     try:
         if execute:
             state_checker = state_checker or evidence.get("state_checker")
@@ -599,45 +642,41 @@ def run_paper_entry(
             broker_call = evidence.get("_broker_call")
         if not callable(broker_call):
             return blocked("paper entry executor is not configured")
-        # Renew once synchronously and keep renewing while the broker call is
-        # in flight.  The token check is the fence: a worker whose lease was
-        # replaced cannot invoke the callback.
-        lease_started = time.monotonic()
-
-        def lease_now() -> datetime:
-            return observed + timedelta(seconds=time.monotonic() - lease_started)
-
-        lease_now_value = lease_now()
-        if not renew_cycle(path, owner, token, lease_now_value, lease_ttl_seconds):
-            return blocked("entry lease could not be renewed before broker execution", failure_stage="lease")
-        heartbeat_stop = threading.Event()
-        heartbeat_lost = threading.Event()
-        heartbeat_interval = max(0.05, min(1.0, lease_ttl_seconds / 3))
-
-        def heartbeat() -> None:
-            while not heartbeat_stop.wait(heartbeat_interval):
-                if not renew_cycle(path, owner, token, lease_now(), lease_ttl_seconds):
-                    heartbeat_lost.set()
-                    return
-
-        heartbeat_thread = threading.Thread(target=heartbeat, name="paper-entry-lease-heartbeat", daemon=True)
-        heartbeat_thread.start()
         try:
-            if not lease_is_current(path, owner, token, lease_now()):
-                return blocked("entry lease fence was lost before broker execution", failure_stage="lease")
             order = broker_call()
         except Exception as exc:
-            blocked(str(exc) or type(exc).__name__, failure_stage="broker")
-            raise
-        finally:
-            heartbeat_stop.set()
-            heartbeat_thread.join(timeout=max(1.0, heartbeat_interval * 2))
-        if heartbeat_lost.is_set() or not lease_is_current(path, owner, token, lease_now()):
-            return blocked("entry lease fence was lost during broker execution", failure_stage="lease")
+            # Once the external callback has been invoked, its submission
+            # outcome is unknowable from an exception alone. Never turn this
+            # into a retryable blocked result: persist a terminal state that
+            # requires reconciliation before any retry.
+            _finish_serialized_cycle(cycle_connection)
+            cycle_connection = None
+            reason = f"broker submission outcome unknown: {exc}"
+            if evidence.get("known_fields") is None:
+                fields = set(_EVIDENCE_DEFAULTS) - {
+                    "action", "status", "reason", "failure_stage", "known_fields",
+                    "unknown_fields", "evidence_type", "audit_history", "rejection_reasons",
+                    "gate_results",
+                }
+                known = sorted(field for field in fields if evidence.get(field) not in (None, {}, ""))
+                evidence["known_fields"] = known
+                evidence["unknown_fields"] = sorted(fields - set(known))
+            evidence.update({"action": "unknown_submitted", "status": "unknown_submitted",
+                             "reason": reason, "evidence_type": "unknown_submitted",
+                             "failure_stage": "broker", "reconciliation_required": True})
+            record_attempt(path, evidence, "unknown_submitted", reason, {})
+            if evidence_root is not None:
+                write_evidence(Path(evidence_root), evidence)
+            return {"action": "unknown_submitted", "status": "unknown_submitted",
+                    "reason": reason, "candidate_id": evidence.get("candidate_id"),
+                    "order": {}, "reconciliation_required": True}
+        _finish_serialized_cycle(cycle_connection)
+        cycle_connection = None
         evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed"})
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
         if evidence_root is not None:
             write_evidence(Path(evidence_root), evidence)
         return {"action": "accepted", "reason": "gates passed", "candidate_id": evidence.get("candidate_id"), "order": order}
     finally:
-        release_cycle(path, owner, token)
+        if cycle_connection is not None:
+            _finish_serialized_cycle(cycle_connection)

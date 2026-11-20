@@ -206,17 +206,17 @@ def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path
     assert '"action": "screened"' in observed["artifact"]
 
 
-def test_broker_exception_is_structured_blocked_evidence(tmp_path):
+def test_broker_exception_is_structured_unknown_submission(tmp_path):
     evidence = collect_entry_evidence("NVDA", "call", quote(), analysis(), now=NOW)
-    with pytest.raises(RuntimeError, match="paper broker down"):
-        persist_candidate_before_gate(
-            tmp_path / "autopilot.db", evidence, gate=lambda: True,
-            broker_call=lambda: (_ for _ in ()).throw(RuntimeError("paper broker down")),
-            now=NOW, evidence_root=tmp_path,
-            state_checker=STATE_OK,
-        )
+    result = persist_candidate_before_gate(
+        tmp_path / "autopilot.db", evidence, gate=lambda: True,
+        broker_call=lambda: (_ for _ in ()).throw(RuntimeError("paper broker down")),
+        now=NOW, evidence_root=tmp_path, state_checker=STATE_OK,
+    )
+    assert result["action"] == "unknown_submitted"
+    assert result["reconciliation_required"] is True
     artifact = json.loads(next((tmp_path / "evidence").glob("*.json")).read_text())
-    assert artifact["evidence_type"] == "blocked"
+    assert artifact["evidence_type"] == "unknown_submitted"
     assert artifact["failure_stage"] == "broker"
     assert artifact["known_fields"]
     assert artifact["unknown_fields"] == []

@@ -310,7 +310,9 @@ def validate_paper_option_state(backend, occ_symbol: str) -> dict:
         if str(position.get("symbol", "")).upper() != symbol:
             continue
         try:
-            held = Decimal(str(position.get("qty", "0"))) > 0
+            # Any non-zero exact OCC quantity means the contract is held;
+            # negative quantities are short exposure and must also block.
+            held = Decimal(str(position.get("qty", "0"))) != 0
         except (ArithmeticError, TypeError, ValueError) as exc:
             raise PolicyViolation("paper position quantity was invalid") from exc
         break
@@ -593,7 +595,24 @@ def main(argv=None) -> int:
                            "analysis": settings.freshness_max_age_minutes.get("market_regime", 30)},
         state_checker=state_checker,
     )
-    order_result = result["order"]
+    if result.get("action") != "accepted":
+        # Blocked and unknown-submission states are already durably recorded
+        # by the orchestration layer. Do not assume an order payload exists.
+        rec.update({"action": result.get("action", "blocked"),
+                    "status": result.get("status", result.get("action", "blocked")),
+                    "reason": result.get("reason", "entry was not accepted"),
+                    "candidate_id": candidate_id})
+        if result.get("reconciliation_required"):
+            rec["reconciliation_required"] = True
+        print(json.dumps(rec, indent=2))
+        return 0
+    order_result = result.get("order") or {}
+    if not order_result.get("order_id"):
+        rec.update({"action": "blocked", "status": "blocked",
+                    "reason": "accepted result did not include an order id",
+                    "candidate_id": candidate_id})
+        print(json.dumps(rec, indent=2))
+        return 0
     db.update_candidate_status(candidate_id, "approved")
     rec.update({"action": "buy_placed", "order_id": order_result["order_id"],
                 "status": order_result["status"], "approval_id": order_result["approval_id"],
