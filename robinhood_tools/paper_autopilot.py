@@ -401,9 +401,10 @@ def record_attempt(
             current_action = existing[4] or existing[3]
             current_precedence = _STATUS_PRECEDENCE.get(current_action, 0)
             incoming_precedence = _STATUS_PRECEDENCE.get(action, 0)
-            effective_action = current_action if current_precedence >= incoming_precedence else action
-            effective_reason = existing[5] if current_precedence >= incoming_precedence else reason
-            effective_order = existing[6] if current_precedence >= incoming_precedence else json.dumps(
+            preserve_existing = current_precedence >= incoming_precedence
+            effective_action = current_action if preserve_existing else action
+            effective_reason = existing[5] if preserve_existing else reason
+            effective_order = existing[6] if preserve_existing else json.dumps(
                 _persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False
             )
             if current_action == "accepted" and not effective_order and existing[6]:
@@ -419,10 +420,15 @@ def record_attempt(
             "at": datetime.now(timezone.utc).isoformat(),
         }
         history.append(event)
-        evidence.update({
-            "action": effective_action, "status": effective_action,
-            "reason": effective_reason, "audit_history": history,
-        })
+        if existing and preserve_existing:
+            evidence.clear()
+            evidence.update(existing_evidence)
+            evidence["audit_history"] = history
+        else:
+            evidence.update({
+                "action": effective_action, "status": effective_action,
+                "reason": effective_reason, "audit_history": history,
+            })
         evidence_payload = _persisted_evidence(evidence)
         order_payload = effective_order
         encoded_evidence = json.dumps(evidence_payload, sort_keys=True, separators=(",", ":"), allow_nan=False)

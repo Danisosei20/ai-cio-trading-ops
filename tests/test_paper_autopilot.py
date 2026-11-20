@@ -293,6 +293,41 @@ def test_record_attempt_preserves_authoritative_metadata_on_accepted_retry(tmp_p
     ]
 
 
+def test_accepted_retry_preserves_sql_and_artifact_canonical_evidence(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence_root = tmp_path / "artifacts"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    original = dict(evidence)
+    original["quote"] = {"reviewed_price": 3.30, "source": "alpaca-options"}
+
+    order = {"order_id": "paper-original", "status": "accepted", "price": 3.30}
+    record_attempt(db, original, "accepted", "original order accepted", order)
+    first_path = write_evidence(evidence_root, original)
+    first_artifact = json.loads(first_path.read_text(encoding="utf-8"))
+    first_sql_evidence = first_artifact.copy()
+
+    retry = dict(original)
+    retry["observed_at_utc"] = "2026-11-20T16:00:00+00:00"
+    retry["observed_at_et"] = "2026-11-20T11:00:00-05:00"
+    record_attempt(db, retry, "blocked", "duplicate after accepted", {"order_id": "retry-order"})
+    retry_path = write_evidence(evidence_root, retry)
+    retry_artifact = json.loads(retry_path.read_text(encoding="utf-8"))
+
+    assert retry_artifact["observed_at_utc"] == first_sql_evidence["observed_at_utc"]
+    assert retry_artifact["observed_at_et"] == first_sql_evidence["observed_at_et"]
+    assert retry_artifact["quote"] == first_sql_evidence["quote"]
+    assert retry_artifact["audit_history"][-1]["action"] == "blocked"
+    with sqlite3.connect(db) as connection:
+        action, status, reason, order_payload, encoded = connection.execute(
+            "SELECT action, status, reason, order_payload, evidence FROM paper_autopilot_attempts"
+        ).fetchone()
+    assert (action, status, reason) == ("accepted", "accepted", "original order accepted")
+    assert json.loads(order_payload) == order
+    persisted = json.loads(encoded)
+    assert persisted["observed_at_utc"] == first_sql_evidence["observed_at_utc"]
+    assert persisted["quote"] == first_sql_evidence["quote"]
+
+
 def test_legacy_duplicate_migration_deduplicates_existing_history(tmp_path):
     db = tmp_path / "legacy.db"
     evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
