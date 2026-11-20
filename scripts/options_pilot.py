@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -23,7 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
-from robinhood_tools.paper_autopilot import build_evidence, record_attempt  # noqa: E402
+from robinhood_tools.paper_autopilot import (  # noqa: E402
+    build_evidence, record_attempt, write_evidence,
+)
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
 
@@ -50,8 +52,14 @@ def collect_entry_evidence(
         raise PolicyViolation("option side must be call or put")
     if now.tzinfo is None:
         raise PolicyViolation("now must include a timezone")
-    quote_time = _observed_at(quote.get("as_of"), field="quote")
-    analysis_time = _observed_at(analysis.get("as_of"), field="analysis")
+    try:
+        quote_time = _observed_at(quote.get("as_of"), field="quote")
+    except (PolicyViolation, TypeError, ValueError):
+        quote_time = None
+    try:
+        analysis_time = _observed_at(analysis.get("as_of"), field="analysis")
+    except (PolicyViolation, TypeError, ValueError):
+        analysis_time = None
     quote_payload = dict(quote)
     quote_payload["as_of"] = quote_time
     liquidity = {
@@ -68,26 +76,73 @@ def collect_entry_evidence(
         "support_resistance": analysis.get("support_resistance"),
         "regime": analysis.get("regime"), "iv": quote.get("iv", analysis.get("iv")),
         "liquidity": liquidity, "earnings_date": analysis.get("earnings_date"),
+        "earnings_provenance": analysis.get("earnings_provenance"),
         "session_status": analysis.get("session_status"),
         "position_status": analysis.get("position_status"),
         "policy_version": analysis.get("policy_version"),
         "freshness": {
-            "quote": {"observed_at_utc": quote_time.isoformat(), "max_age_minutes": 5},
-            "analysis": {"observed_at_utc": analysis_time.isoformat(), "max_age_minutes": 15},
+            "quote": {"observed_at_utc": quote_time.isoformat() if quote_time else None, "max_age_minutes": 5},
+            "analysis": {"observed_at_utc": analysis_time.isoformat() if analysis_time else None, "max_age_minutes": 15},
         },
     }
 
 
-def _evidence_block_reason(evidence: dict, *, now: datetime) -> str | None:
+def _positive_number(value) -> bool:
+    try:
+        number = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return False
+    return number.is_finite() and number > 0
+
+
+def _evidence_block_reason(
+    evidence: dict, *, now: datetime, active_policy_version: str = "paper-options-v1",
+    freshness_limits: dict[str, int] | None = None,
+) -> str | None:
+    limits = {**EVIDENCE_MAX_AGE_MINUTES, **(freshness_limits or {})}
     required = (
         "symbol", "occ_symbol", "side", "quote", "vwap", "ema", "poc",
         "supply_demand", "support_resistance", "regime", "iv", "liquidity",
-        "earnings_date", "session_status", "position_status", "policy_version", "freshness",
+        "earnings_date", "earnings_provenance", "session_status", "position_status",
+        "policy_version", "freshness",
     )
     missing = [field for field in required if evidence.get(field) in (None, {}, "")]
     if missing:
         return "missing evidence: " + ", ".join(missing)
-    for source, limit in EVIDENCE_MAX_AGE_MINUTES.items():
+    quote = evidence["quote"]
+    if not isinstance(quote, dict) or not all(_positive_number(quote.get(key)) for key in ("bid", "ask", "reviewed_price")):
+        return "invalid quote evidence: bid, ask, and reviewed price must be positive"
+    if quote["bid"] > quote["ask"]:
+        return "invalid quote evidence: bid exceeds ask"
+    if not _positive_number(evidence["iv"]):
+        return "invalid IV evidence"
+    liquidity = evidence["liquidity"]
+    if not isinstance(liquidity, dict) or not all(_positive_number(liquidity.get(key)) for key in ("spread", "volume", "open_interest")):
+        return "invalid liquidity evidence"
+    if not _positive_number(evidence["vwap"]) or not _positive_number(evidence["poc"]):
+        return "invalid indicator evidence: VWAP and POC must be positive"
+    ema = evidence["ema"]
+    if not isinstance(ema, dict) or not ema or not all(_positive_number(value) for value in ema.values()):
+        return "invalid indicator evidence: EMA values must be positive"
+    for field in ("supply_demand", "support_resistance"):
+        levels = evidence[field]
+        if not isinstance(levels, dict) or not levels or not all(
+            isinstance(values, (list, tuple)) and values and all(_positive_number(value) for value in values)
+            for values in levels.values()
+        ):
+            return f"invalid indicator evidence: {field} levels"
+    try:
+        datetime.fromisoformat(str(evidence["earnings_date"]))
+    except ValueError:
+        try:
+            datetime.strptime(str(evidence["earnings_date"]), "%Y-%m-%d")
+        except ValueError:
+            return "invalid earnings date evidence"
+    if not str(evidence["earnings_provenance"]).strip():
+        return "invalid earnings provenance evidence"
+    if evidence["policy_version"] != active_policy_version:
+        return f"policy version mismatch: expected {active_policy_version}"
+    for source, limit in limits.items():
         try:
             observed = _observed_at(evidence["freshness"][source]["observed_at_utc"], field=source)
         except (KeyError, TypeError, ValueError, PolicyViolation):
@@ -98,22 +153,85 @@ def _evidence_block_reason(evidence: dict, *, now: datetime) -> str | None:
     return None
 
 
-def persist_candidate_before_gate(db_path, candidate: dict, *, gate, broker_call, now: datetime) -> dict:
+def persist_candidate_before_gate(
+    db_path, candidate: dict, *, gate, broker_call, now: datetime,
+    evidence_root: Path | None = None, active_policy_version: str = "paper-options-v1",
+    freshness_limits: dict[str, int] | None = None,
+) -> dict:
     """Persist the screened candidate, then run gates, never the reverse."""
     evidence = build_evidence(candidate, now=now)
-    reason = _evidence_block_reason(evidence, now=now)
+    root = Path(evidence_root) if evidence_root is not None else Path(db_path).parent
+    reason = _evidence_block_reason(
+        evidence, now=now, active_policy_version=active_policy_version,
+        freshness_limits=freshness_limits,
+    )
     if reason:
+        evidence.update({"action": "blocked", "reason": reason})
+        write_evidence(root, evidence)
         record_attempt(db_path, evidence, "blocked", reason)
         raise PolicyViolation(reason)
+    evidence.update({"action": "screened", "reason": "candidate screened"})
+    write_evidence(root, evidence)
     record_attempt(db_path, evidence, "screened", "candidate screened")
-    decision = gate()
+    try:
+        decision = gate()
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        evidence.update({"action": "blocked", "reason": reason})
+        write_evidence(root, evidence)
+        record_attempt(db_path, evidence, "blocked", reason)
+        raise
     allowed, gate_reason = (decision, "gate failed") if isinstance(decision, bool) else decision
     if not allowed:
+        evidence.update({"action": "blocked", "reason": str(gate_reason)})
+        write_evidence(root, evidence)
         record_attempt(db_path, evidence, "blocked", str(gate_reason))
         return {"action": "blocked", "reason": str(gate_reason), "candidate_id": evidence["candidate_id"]}
-    order = broker_call()
+    try:
+        order = broker_call()
+    except Exception as exc:
+        reason = str(exc) or type(exc).__name__
+        evidence.update({"action": "blocked", "reason": reason})
+        write_evidence(root, evidence)
+        record_attempt(db_path, evidence, "blocked", reason)
+        raise
+    evidence.update({"action": "accepted", "reason": "gates passed"})
+    write_evidence(root, evidence)
     record_attempt(db_path, evidence, "accepted", "gates passed", order)
     return {"action": "accepted", "candidate_id": evidence["candidate_id"], "order": order}
+
+
+def collect_market_analysis(symbol: str, market_data, *, now: datetime, earnings_date) -> dict:
+    """Build technical evidence from read-only bars and existing math helpers."""
+    from robinhood_tools.market_prices import market_regime
+    from robinhood_tools.signal_engine import ema
+
+    start = (now.astimezone(timezone.utc) - timedelta(days=5)).isoformat()
+    bars = market_data.stock_bars(symbol, timeframe="5Min", start=start, limit=1000)
+    spy_bars = market_data.stock_bars("SPY", timeframe="5Min", start=start, limit=1000)
+    if len(bars) < 50 or len(spy_bars) < 51:
+        raise PolicyViolation("insufficient fresh bars for technical evidence")
+    closes = [float(item["c"]) for item in bars]
+    highs = [float(item["h"]) for item in bars]
+    lows = [float(item["l"]) for item in bars]
+    volumes = [float(item["v"]) for item in bars]
+    recent = list(zip(highs[-20:], lows[-20:], closes[-20:], volumes[-20:]))
+    vwap = sum(((high + low + close) / 3) * volume for high, low, close, volume in recent) / max(sum(item[3] for item in recent), 1e-9)
+    volume_peak = max(recent, key=lambda item: item[3])
+    return {
+        "as_of": bars[-1].get("t"),
+        "vwap": vwap,
+        "ema": {"ema_9": ema(closes, 9)[-1], "ema_21": ema(closes, 21)[-1]},
+        "poc": volume_peak[2],
+        "supply_demand": {"supply": [max(highs[-20:])], "demand": [min(lows[-20:])]},
+        "support_resistance": {"support": [min(lows[-20:])], "resistance": [max(highs[-20:])]},
+        "regime": market_regime([float(item["c"]) for item in spy_bars]),
+        "earnings_date": earnings_date,
+        "earnings_provenance": "paper_flow.lookup_earnings_date",
+        "session_status": "OPEN",
+        "position_status": "unknown",
+        "policy_version": "paper-options-v1",
+    }
 
 
 def parse_args(argv=None):
@@ -159,7 +277,8 @@ def main(argv=None) -> int:
 
     env = {**load_env(args.env_file), **os.environ}
     ticker = args.ticker.strip().upper()
-    today = date.today()
+    now = datetime.now(timezone.utc)
+    today = now.date()
 
     if args.close:
         print(json.dumps({"mode": "close", "action": "manual-close",
@@ -167,7 +286,8 @@ def main(argv=None) -> int:
         return 0
 
     data = AlpacaOptionsData.from_values(env)
-    spot_q = get_quote(ticker, data_client=AlpacaMarketDataHttpClient.from_values(env),
+    market_data = AlpacaMarketDataHttpClient.from_values(env)
+    spot_q = get_quote(ticker, data_client=market_data,
                        max_age_minutes=args.max_age_minutes)
     spot = spot_q.price
     print(f"{ticker} spot {spot} ({spot_q.source} {spot_q.as_of})")
@@ -246,14 +366,44 @@ def main(argv=None) -> int:
             override = (start, end)
         except ValueError as exc:
             raise PolicyViolation(f"Bad --override-window: {exc}") from exc
-    result = place_long_option(
-        settings=settings, snapshot=snapshot, quote=quote, contracts=contracts,
-        earnings_date=lookup_earnings_date(ticker), premium_cap=args.premium_cap,
-        database=db, session_override=override,
-        override_reason="owner-directed CLI execution" if override else "")
+    earnings_date = lookup_earnings_date(ticker)
+    try:
+        analysis = collect_market_analysis(
+            ticker, market_data, now=now, earnings_date=earnings_date)
+    except Exception as exc:
+        # Preserve a durable blocked attempt when technical collection itself
+        # cannot complete; never synthesize an indicator or bypass the gate.
+        analysis = {
+            "as_of": now, "earnings_date": earnings_date,
+            "earnings_provenance": "paper_flow.lookup_earnings_date",
+            "session_status": "OPEN", "position_status": "unknown",
+            "policy_version": "paper-options-v1", "collection_error": str(exc),
+        }
+    option_payload = {
+        "occ_symbol": quote.contract.option_symbol, "bid": quote.bid,
+        "ask": quote.ask, "reviewed_price": quote.ask, "as_of": quote.quoted_at,
+        "source": "alpaca-options", "iv": quote.iv,
+        "open_interest": quote.open_interest, "volume": quote.volume,
+        "spread": quote.ask - quote.bid, "quantity": contracts,
+    }
+    candidate = collect_entry_evidence(
+        ticker, args.direction, option_payload, analysis, now=now)
+    result = persist_candidate_before_gate(
+        settings.database_path, candidate, gate=lambda: True,
+        broker_call=lambda: place_long_option(
+            settings=settings, snapshot=snapshot, quote=quote, contracts=contracts,
+            earnings_date=earnings_date, premium_cap=args.premium_cap,
+            database=db, session_override=override,
+            override_reason="owner-directed CLI execution" if override else ""),
+        now=now, evidence_root=settings.database_path.parent,
+        active_policy_version="paper-options-v1",
+        freshness_limits={"quote": args.max_age_minutes,
+                          "analysis": settings.freshness_max_age_minutes.get("market_regime", 30)},
+    )
+    order_result = result["order"]
     db.update_candidate_status(candidate_id, "approved")
-    rec.update({"action": "buy_placed", "order_id": result["order_id"],
-                "status": result["status"], "approval_id": result["approval_id"],
+    rec.update({"action": "buy_placed", "order_id": order_result["order_id"],
+                "status": order_result["status"], "approval_id": order_result["approval_id"],
                 "candidate_id": candidate_id})
     print(json.dumps(rec, indent=2))
     return 0

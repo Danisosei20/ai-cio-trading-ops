@@ -35,6 +35,7 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "iv": None,
     "liquidity": None,
     "earnings_date": None,
+    "earnings_provenance": None,
     "session_status": None,
     "position_status": None,
     "policy_version": None,

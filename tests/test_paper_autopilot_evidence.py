@@ -40,6 +40,7 @@ def analysis(as_of: datetime = NOW) -> dict:
         "support_resistance": {"support": [195.0], "resistance": [200.0]},
         "regime": "RISK_ON",
         "earnings_date": "2026-12-01",
+        "earnings_provenance": "SEC/company-calendar",
         "session_status": "OPEN",
         "position_status": "flat",
         "policy_version": "paper-options-v1",
@@ -121,3 +122,65 @@ def test_screened_candidate_and_downstream_gate_failure_persist_before_order(tmp
         ).fetchall()
     assert rows[0][0] == "screened"
     assert rows[1] == ("blocked", "risk gate failed")
+
+
+@pytest.mark.parametrize("field,value", [("bid", 0), ("ask", 0), ("reviewed_price", 0), ("iv", -0.1), ("volume", 0)])
+def test_structurally_invalid_quote_evidence_blocks(field, value, tmp_path):
+    raw_quote = quote()
+    raw_quote[field] = value
+    evidence = collect_entry_evidence("NVDA", "put", raw_quote, analysis(), now=NOW)
+
+    with pytest.raises(PolicyViolation, match="invalid"):
+        persist_candidate_before_gate(
+            tmp_path / "autopilot.db", evidence, gate=lambda: True,
+            broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
+            evidence_root=tmp_path,
+        )
+    assert list((tmp_path / "evidence").glob("*.json"))
+
+
+def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = collect_entry_evidence("NVDA", "call", quote(), analysis(), now=NOW)
+    with pytest.raises(PolicyViolation, match="policy version"):
+        persist_candidate_before_gate(
+            db, evidence, gate=lambda: True, broker_call=lambda: None, now=NOW,
+            active_policy_version="desk-v2", evidence_root=tmp_path,
+        )
+
+    evidence = collect_entry_evidence("NVDA", "put", quote(), analysis(), now=NOW)
+    with pytest.raises(PolicyViolation, match="downstream failure"):
+        persist_candidate_before_gate(
+            db, evidence, gate=lambda: (_ for _ in ()).throw(PolicyViolation("downstream failure")),
+            broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
+            evidence_root=tmp_path,
+        )
+    with sqlite3.connect(db) as connection:
+        rows = connection.execute("SELECT action, reason FROM paper_autopilot_attempts ORDER BY id").fetchall()
+    assert rows[0][0] == "blocked"
+    assert rows[1] == ("screened", "candidate screened")
+    assert rows[2] == ("blocked", "downstream failure")
+
+
+def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = collect_entry_evidence("NVDA", "put", quote(), analysis(), now=NOW)
+    observed = {}
+
+    def broker_call():
+        with sqlite3.connect(db) as connection:
+            observed["sqlite"] = connection.execute(
+                "SELECT action FROM paper_autopilot_attempts ORDER BY id"
+            ).fetchall()
+        artifacts = list((tmp_path / "evidence").glob("*.json"))
+        observed["artifact"] = artifacts[0].read_text(encoding="utf-8")
+        return {"order_id": "paper-1", "status": "accepted"}
+
+    result = persist_candidate_before_gate(
+        db, evidence, gate=lambda: True, broker_call=broker_call, now=NOW,
+        evidence_root=tmp_path,
+    )
+
+    assert result["action"] == "accepted"
+    assert observed["sqlite"] == [("screened",)]
+    assert '"action": "screened"' in observed["artifact"]
