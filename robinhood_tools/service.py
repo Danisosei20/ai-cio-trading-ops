@@ -145,6 +145,11 @@ class RobinhoodTradingService:
             if reconcile:
                 reconcile(approval_id, str(exc))
             raise
+        # Sell-to-close requires authoritative order and position reconciliation
+        # before its OCC claim can be released.  Keep the ledger executing so an
+        # uncertain close is never reported as a completed execution.
+        if is_exit:
+            return order
         try:
             self.approval_store.mark_executed(approval_id, order.id)
         except TypeError:

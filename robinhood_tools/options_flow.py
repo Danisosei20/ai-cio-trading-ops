@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+import json
 
 from .alpaca_options import AlpacaOptionsData
 from .database import CioDatabase
@@ -179,9 +180,13 @@ def close_long_option(*, settings, quote, contracts: int,
         }
         if error:
             metadata["error"] = error
-        # The approval is already terminal/acknowledged at this point, so the
-        # audit event is the durable reconciliation marker.  In particular, do
-        # not turn a bad position observation into a closed OCC claim.
+        # Keep the authoritative approval unresolved until reconciliation.  The
+        # JSON failure payload is durable recovery metadata for restart plans and
+        # dashboards; in particular, do not turn a bad position observation into
+        # a closed OCC claim.
+        db.mark_reconciliation_required(
+            auth.approval_id, json.dumps(metadata, default=str), order_id=placed.id,
+        )
         db.audit("reconciliation_required", metadata,
                  correlation_id=auth.approval_id, approval_id=auth.approval_id)
         result.update({"reconciliation_required": True, "reconciliation": metadata})
@@ -228,6 +233,7 @@ def close_long_option(*, settings, quote, contracts: int,
                 reason, broker_status=authoritative.status, positions=position_check,
             )
         result["claim_closed"] = True
+        db.mark_executed(auth.approval_id, authoritative.id)
     else:
         return require_reconciliation(
             "close order is not terminal", broker_status=authoritative.status,

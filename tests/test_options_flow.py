@@ -280,7 +280,7 @@ class CloseOptionTest(unittest.TestCase):
         authoritative = Order("close-2", "sim-2", self.quote.contract.option_symbol,
                               "sell", "filled")
         with patch.object(self.service.backend, "get_option_order", return_value=authoritative), \
-             patch.object(self.service.backend, "list_positions", side_effect=[
+             patch.object(self.service.backend, "get_positions", side_effect=[
                  [{"symbol": self.quote.contract.option_symbol, "qty": "1"}],
                  [{"symbol": self.quote.contract.option_symbol, "qty": "1"}],
              ]):
@@ -295,6 +295,19 @@ class CloseOptionTest(unittest.TestCase):
         self.assertNotIn("claim_closed", out)
         self.assertFalse(claim_candidate(self.db.path,
                                           dict(evidence, candidate_id="re-entry")))
+        from robinhood_tools.operations import build_recovery_plan
+        self.assertEqual(self.db.get(out["approval_id"]).status,
+                         "reconciliation_required")
+        self.assertIn(out["approval_id"],
+                      build_recovery_plan(self.db).reconciliation_approval_ids)
+        with self.db.connect() as connection:
+            approval = connection.execute(
+                "SELECT order_id, failure FROM approvals WHERE approval_id=?",
+                (out["approval_id"],),
+            ).fetchone()
+        self.assertEqual(approval[0], out["order_id"])
+        self.assertEqual(__import__("json").loads(approval[1])["reason"],
+                         "fresh exact-OCC position is non-flat")
         with self.db.connect() as connection:
             event = connection.execute(
                 "SELECT event, payload FROM audit_events WHERE approval_id=?",
