@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
 
 from robinhood_tools.paper_autopilot import build_evidence, run_paper_entry
+from scripts.options_pilot import validate_paper_option_state
 
 
 def evidence(tmp_path, **extra):
@@ -19,6 +22,7 @@ def evidence(tmp_path, **extra):
     raw.update(extra)
     built = build_evidence(raw, now=datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc))
     built.update({key: value for key, value in raw.items() if key not in built})
+    built.setdefault("state_checker", lambda: {"validated": True, "held": False, "open_order": False})
     return built
 
 
@@ -88,3 +92,70 @@ def test_paper_only_refusal_never_executes(tmp_path):
     assert result["action"] == "blocked"
     assert "paper" in result["reason"].lower()
     assert calls == []
+
+
+def test_authoritative_state_checker_blocks_exact_held_or_open_occ(tmp_path):
+    for state, expected in (({"validated": True, "held": True}, "held"),
+                            ({"validated": True, "open_order": True}, "open order")):
+        calls = []
+        result = run_paper_entry(
+            evidence(tmp_path, candidate_id=expected, state_checker=lambda state=state: state),
+            execute=True, owner="worker-a", broker_call=lambda: calls.append(True),
+        )
+        assert result["action"] == "blocked"
+        assert expected in result["reason"]
+        assert calls == []
+
+
+def test_unvalidated_account_state_fails_closed_before_broker(tmp_path):
+    calls = []
+    result = run_paper_entry(
+        evidence(tmp_path, state_checker=lambda: (_ for _ in ()).throw(RuntimeError("state unavailable"))),
+        execute=True, owner="worker-a", broker_call=lambda: calls.append(True),
+    )
+    assert result["action"] == "blocked"
+    assert "state" in result["reason"]
+    assert calls == []
+
+
+def test_lease_heartbeat_prevents_expiry_during_broker_execution(tmp_path):
+    first = evidence(tmp_path, candidate_id="heartbeat-first")
+    second = evidence(tmp_path, candidate_id="heartbeat-second", occ_symbol="AAPL261218P00200000", side="put")
+    entered = threading.Event()
+    result = {}
+
+    def slow_order():
+        entered.set()
+        time.sleep(1.5)
+        return {"order_id": "heartbeat-order"}
+
+    worker = threading.Thread(target=lambda: result.update(
+        run_paper_entry(first, execute=True, owner="worker-a", broker_call=slow_order,
+                        lease_ttl_seconds=1)))
+    worker.start()
+    assert entered.wait(2)
+    time.sleep(1.1)
+    contender = run_paper_entry(
+        second, execute=True, owner="worker-b", broker_call=lambda: {"order_id": "must-not-place"},
+        lease_ttl_seconds=1,
+    )
+    worker.join(3)
+    assert contender["action"] == "blocked"
+    assert "lease" in contender["reason"]
+    assert result["action"] == "accepted"
+
+
+def test_options_pilot_state_query_matches_exact_occ_payloads():
+    class Backend:
+        def list_positions(self):
+            return [{"symbol": "AAPL261218C00200000", "qty": "1"}]
+
+        def list_open_orders(self):
+            return [{"symbol": "AAPL261218P00200000", "status": "open"}]
+
+    assert validate_paper_option_state(Backend(), "AAPL261218C00200000") == {
+        "validated": True, "held": True, "open_order": False,
+    }
+    assert validate_paper_option_state(Backend(), "AAPL261218P00200000") == {
+        "validated": True, "held": False, "open_order": True,
+    }

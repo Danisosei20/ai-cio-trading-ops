@@ -14,6 +14,7 @@ from scripts.options_pilot import (
 
 
 NOW = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)
+STATE_OK = lambda: {"validated": True, "held": False, "open_order": False}
 
 
 def quote(as_of: datetime = NOW) -> dict:
@@ -74,8 +75,9 @@ def test_missing_evidence_is_rejected_before_any_broker_call(tmp_path):
             tmp_path / "autopilot.db",
             collect_entry_evidence("NVDA", "call", quote(), missing, now=NOW),
             gate=lambda: True,
-            broker_call=lambda: called.append(True),
+        broker_call=lambda: called.append(True),
             now=NOW,
+            state_checker=STATE_OK,
         )
     assert called == []
 
@@ -93,6 +95,7 @@ def test_stale_evidence_is_rejected_and_persisted_before_gate(tmp_path):
             gate=lambda: True,
             broker_call=lambda: called.append(True),
             now=NOW,
+            state_checker=STATE_OK,
         )
     assert called == []
     with sqlite3.connect(db) as connection:
@@ -121,6 +124,7 @@ def test_screened_candidate_and_downstream_gate_failure_persist_before_order(tmp
         gate=lambda: (False, "risk gate failed"),
         broker_call=lambda: called.append(True),
         now=NOW,
+        state_checker=STATE_OK,
     )
 
     assert result["action"] == "blocked"
@@ -143,6 +147,7 @@ def test_structurally_invalid_quote_evidence_blocks(field, value, tmp_path):
             tmp_path / "autopilot.db", evidence, gate=lambda: True,
             broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
             evidence_root=tmp_path,
+            state_checker=STATE_OK,
         )
     assert list((tmp_path / "evidence").glob("*.json"))
 
@@ -154,6 +159,7 @@ def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
         persist_candidate_before_gate(
             db, evidence, gate=lambda: True, broker_call=lambda: None, now=NOW,
             active_policy_version="desk-v2", evidence_root=tmp_path,
+            state_checker=STATE_OK,
         )
 
     put_quote = quote()
@@ -164,6 +170,7 @@ def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
             db, evidence, gate=lambda: (_ for _ in ()).throw(PolicyViolation("downstream failure")),
             broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
             evidence_root=tmp_path,
+            state_checker=STATE_OK,
         )
     with sqlite3.connect(db) as connection:
         rows = connection.execute("SELECT action, reason, evidence FROM paper_autopilot_attempts ORDER BY id").fetchall()
@@ -191,6 +198,7 @@ def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path
     result = persist_candidate_before_gate(
         db, evidence, gate=lambda: True, broker_call=broker_call, now=NOW,
         evidence_root=tmp_path,
+        state_checker=STATE_OK,
     )
 
     assert result["action"] == "accepted"
@@ -205,6 +213,7 @@ def test_broker_exception_is_structured_blocked_evidence(tmp_path):
             tmp_path / "autopilot.db", evidence, gate=lambda: True,
             broker_call=lambda: (_ for _ in ()).throw(RuntimeError("paper broker down")),
             now=NOW, evidence_root=tmp_path,
+            state_checker=STATE_OK,
         )
     artifact = json.loads(next((tmp_path / "evidence").glob("*.json")).read_text())
     assert artifact["evidence_type"] == "blocked"
@@ -244,12 +253,12 @@ def test_valid_candidate_claim_is_before_gate_and_duplicate_is_blocked(tmp_path)
     first_result = persist_candidate_before_gate(
         db, first, gate=lambda: (gate_calls.append(True) or (False, "risk gate failed")),
         broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
-        evidence_root=tmp_path,
+        evidence_root=tmp_path, state_checker=STATE_OK,
     )
     second_result = persist_candidate_before_gate(
         db, second, gate=lambda: pytest.fail("duplicate must not reach gate"),
         broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
-        evidence_root=tmp_path,
+        evidence_root=tmp_path, state_checker=STATE_OK,
     )
 
     assert first_result["action"] == "blocked"

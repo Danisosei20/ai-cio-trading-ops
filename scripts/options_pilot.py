@@ -198,7 +198,7 @@ def _evidence_block_reason(
 def persist_candidate_before_gate(
     db_path, candidate: dict, *, gate, broker_call, now: datetime,
     evidence_root: Path | None = None, active_policy_version: str = "paper-options-v1",
-    freshness_limits: dict[str, int] | None = None,
+    freshness_limits: dict[str, int] | None = None, state_checker=None,
 ) -> dict:
     """Persist the screened candidate, then run gates, never the reverse."""
     evidence = build_evidence(candidate, now=now)
@@ -222,6 +222,9 @@ def persist_candidate_before_gate(
         now=now,
         gate=gate,
         evidence_root=root,
+        # The checker owns the authoritative broker query and is intentionally
+        # kept out of the persisted evidence/fingerprint.
+        state_checker=state_checker,
     )
 
 
@@ -293,6 +296,31 @@ def _option_quote_payload(quote, *, quantity: int = 1) -> dict:
         "open_interest": quote.open_interest, "volume": quote.volume,
         "spread": quote.ask - quote.bid, "quantity": quantity,
     }
+
+
+def validate_paper_option_state(backend, occ_symbol: str) -> dict:
+    """Return authoritative exact-OCC held/open-order state or fail closed."""
+    positions = backend.list_positions()
+    open_orders = backend.list_open_orders()
+    if not isinstance(positions, list) or not isinstance(open_orders, list):
+        raise PolicyViolation("paper broker returned unverifiable position/order state")
+    symbol = str(occ_symbol).upper()
+    held = False
+    for position in positions:
+        if str(position.get("symbol", "")).upper() != symbol:
+            continue
+        try:
+            held = Decimal(str(position.get("qty", "0"))) > 0
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise PolicyViolation("paper position quantity was invalid") from exc
+        break
+    open_order = any(
+        str(order.get("symbol", "")).upper() == symbol
+        and str(order.get("status", "open")).lower()
+        not in {"canceled", "cancelled", "rejected", "filled", "expired"}
+        for order in open_orders
+    )
+    return {"validated": True, "held": held, "open_order": open_order}
 
 
 def collect_market_analysis(symbol: str, market_data, *, now: datetime, earnings_date) -> dict:
@@ -485,6 +513,10 @@ def main(argv=None) -> int:
         print(json.dumps({"ticker": ticker, "action": "skip", "reason": reason}))
         record_block(reason, quote_payload)
         return 0
+    option_symbol = quote.contract.option_symbol.upper()
+
+    def state_checker() -> dict:
+        return validate_paper_option_state(_backend, option_symbol)
     rec = {"ticker": ticker, "contract": quote.contract.option_symbol,
            "expiry": quote.contract.expiry, "strike": str(quote.contract.strike),
            "bid": str(quote.bid), "ask": str(quote.ask), "delta": str(quote.delta),
@@ -558,7 +590,8 @@ def main(argv=None) -> int:
         now=now, evidence_root=settings.database_path.parent,
         active_policy_version="paper-options-v1",
         freshness_limits={"quote": args.max_age_minutes,
-                          "analysis": settings.freshness_max_age_minutes.get("market_regime", 30)},
+                           "analysis": settings.freshness_max_age_minutes.get("market_regime", 30)},
+        state_checker=state_checker,
     )
     order_result = result["order"]
     db.update_candidate_status(candidate_id, "approved")

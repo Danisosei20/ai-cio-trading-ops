@@ -8,6 +8,8 @@ import math
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 import time
 import uuid
 from contextlib import contextmanager
@@ -55,7 +57,9 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
 _VOLATILE_FINGERPRINT_FIELDS = {
     "candidate_id", "observed_at_utc", "observed_at_et", "created_at", "updated_at",
     "action", "status", "reason", "failure_stage", "known_fields", "unknown_fields",
-    "evidence_type", "audit_history", "order", "slack",
+    "evidence_type", "audit_history", "order", "slack", "state_checker", "_broker_call",
+    "database_path", "db_path", "held", "position_held", "held_positions", "open_order",
+    "open_order_exists", "open_orders", "trading_enabled", "paper_only", "mode", "settings",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
 _STATUS_PRECEDENCE = {"screened": 10, "blocked": 20, "accepted": 30}
@@ -353,6 +357,31 @@ def release_cycle(db_path: Path, owner: str, token: str) -> None:
         )
 
 
+def renew_cycle(db_path: Path, owner: str, token: str, now: datetime, ttl_seconds: int = 900) -> bool:
+    """Extend a lease only when its owner and fencing token still match."""
+    if ttl_seconds <= 0:
+        raise ValueError("ttl_seconds must be positive")
+    acquired = _timestamp(now)
+    expires = _timestamp(now + timedelta(seconds=ttl_seconds))
+    with _managed_connection(db_path) as connection:
+        cursor = connection.execute(
+            "UPDATE paper_autopilot_leases SET expires_at=? "
+            "WHERE name='entry_cycle' AND owner=? AND token=? AND expires_at>?",
+            (expires, owner, token, acquired),
+        )
+        return cursor.rowcount == 1
+
+
+def lease_is_current(db_path: Path, owner: str, token: str, now: datetime) -> bool:
+    """Check the fencing token immediately before entering an external side effect."""
+    with _managed_connection(db_path) as connection:
+        return connection.execute(
+            "SELECT 1 FROM paper_autopilot_leases "
+            "WHERE name='entry_cycle' AND owner=? AND token=? AND expires_at>?",
+            (owner, token, _timestamp(now)),
+        ).fetchone() is not None
+
+
 def claim_candidate(db_path: Path, evidence: dict) -> bool:
     """Atomically reserve a fingerprint and exact OCC contract identity."""
     fingerprint = candidate_fingerprint(evidence)
@@ -471,6 +500,7 @@ def run_paper_entry(
     lease_ttl_seconds: int = 900,
     gate=None,
     evidence_root: Path | None = None,
+    state_checker=None,
 ) -> dict:
     """Coordinate one duplicate-safe paper entry attempt.
 
@@ -534,6 +564,20 @@ def run_paper_entry(
     if not token:
         return blocked("entry cycle lease is held by another worker")
     try:
+        if execute:
+            state_checker = state_checker or evidence.get("state_checker")
+            if not callable(state_checker):
+                return blocked("authoritative paper position/order state is unavailable", failure_stage="state")
+            try:
+                state = state_checker()
+            except Exception as exc:
+                return blocked(f"paper position/order state validation failed: {exc}", failure_stage="state")
+            if not isinstance(state, dict) or state.get("validated") is not True:
+                return blocked("paper position/order state validation failed", failure_stage="state")
+            if state.get("held"):
+                return blocked("candidate already held; entry refused", failure_stage="state")
+            if state.get("open_order"):
+                return blocked("matching open order already exists; entry refused", failure_stage="state")
         if not claim_candidate(path, evidence):
             return blocked("duplicate candidate or OCC claim", duplicate=True)
         evidence.update({"action": "screened", "status": "screened", "reason": "candidate screened"})
@@ -555,11 +599,41 @@ def run_paper_entry(
             broker_call = evidence.get("_broker_call")
         if not callable(broker_call):
             return blocked("paper entry executor is not configured")
+        # Renew once synchronously and keep renewing while the broker call is
+        # in flight.  The token check is the fence: a worker whose lease was
+        # replaced cannot invoke the callback.
+        lease_started = time.monotonic()
+
+        def lease_now() -> datetime:
+            return observed + timedelta(seconds=time.monotonic() - lease_started)
+
+        lease_now_value = lease_now()
+        if not renew_cycle(path, owner, token, lease_now_value, lease_ttl_seconds):
+            return blocked("entry lease could not be renewed before broker execution", failure_stage="lease")
+        heartbeat_stop = threading.Event()
+        heartbeat_lost = threading.Event()
+        heartbeat_interval = max(0.05, min(1.0, lease_ttl_seconds / 3))
+
+        def heartbeat() -> None:
+            while not heartbeat_stop.wait(heartbeat_interval):
+                if not renew_cycle(path, owner, token, lease_now(), lease_ttl_seconds):
+                    heartbeat_lost.set()
+                    return
+
+        heartbeat_thread = threading.Thread(target=heartbeat, name="paper-entry-lease-heartbeat", daemon=True)
+        heartbeat_thread.start()
         try:
+            if not lease_is_current(path, owner, token, lease_now()):
+                return blocked("entry lease fence was lost before broker execution", failure_stage="lease")
             order = broker_call()
         except Exception as exc:
             blocked(str(exc) or type(exc).__name__, failure_stage="broker")
             raise
+        finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=max(1.0, heartbeat_interval * 2))
+        if heartbeat_lost.is_set() or not lease_is_current(path, owner, token, lease_now()):
+            return blocked("entry lease fence was lost during broker execution", failure_stage="lease")
         evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed"})
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
         if evidence_root is not None:
