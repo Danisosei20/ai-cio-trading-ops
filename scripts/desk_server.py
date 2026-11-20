@@ -33,6 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from robinhood_tools.desk_policy import policy_snapshot, policy_status  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
 UI_DIR = Path(__file__).resolve().parent / "desk_ui"
 PAGES = {"", "index", "desk", "backtests", "positions", "logs", "health", "triggers"}
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; "
@@ -156,13 +159,52 @@ def load_log(lines: int = 80) -> str:
 
 
 def load_guard() -> dict:
-    f = Path("outputs/paper/guard.json")
+    f = ROOT / "outputs/paper/guard.json"
     if not f.exists():
         return {}
     try:
         return json.loads(f.read_text())
     except Exception:
         return {}
+
+
+def _load_artifact(path: Path) -> dict:
+    try:
+        if not path.is_file():
+            return {"available": False, "path": str(path), "reason": "not found"}
+        return {"available": True, "path": str(path), "updated_at":
+                datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(),
+                "data": json.loads(path.read_text())}
+    except Exception as exc:  # noqa: BLE001 - status endpoint must degrade safely
+        return {"available": False, "path": str(path), "reason": f"unreadable: {type(exc).__name__}"}
+
+
+def policy_payload(*, paper_safe: bool = True) -> dict:
+    """Return the read-only policy and normalized guard/report status."""
+    snapshot = policy_snapshot()
+    paths = snapshot["paths"]
+    equity = _load_artifact(Path(paths["equity_guard"]))
+    options = _load_artifact(Path(paths["options_guard"]))
+    report = _load_artifact(Path(paths["paper_report"]))
+    source_times = {}
+    for name, item in (("guard", equity), ("report", report)):
+        if item.get("updated_at"):
+            source_times[name] = item["updated_at"]
+    status = policy_status(paper_safe=paper_safe, source_times=source_times)
+    missing = [name for name, item in (("equity_guard", equity),
+                                       ("options_guard", options),
+                                       ("report", report)) if not item.get("available")]
+    if missing and status["status"] != "BLOCKED":
+        status["status"] = "DEGRADED"
+        status["reasons"].append("unavailable artifacts: " + ", ".join(missing))
+    return {"policy": snapshot, "status": status,
+            "equity_guard": equity, "options_guard": options, "report": report}
+
+
+def validate_bind_host(host: str) -> None:
+    """Permit only loopback binds until an authenticated remote mode exists."""
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("refusing non-loopback bind; authenticated remote mode is not implemented")
 
 
 def load_target(settings) -> dict:
@@ -311,6 +353,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"tail": load_log()})
             elif parsed.path == "/api/guard":
                 self._send(200, load_guard())
+            elif parsed.path == "/api/policy":
+                self._send(200, policy_payload(
+                    paper_safe=bool(settings.paper_trading_enabled and not settings.trading_enabled)))
             elif parsed.path == "/api/triggers":
                 self._send(200, load_triggers())
             elif parsed.path == "/api/lessons":
@@ -362,6 +407,7 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--database", default="outputs/paper/cio.db")
     a = ap.parse_args()
+    validate_bind_host(a.host)
     Handler.database_path = a.database
     server = ThreadingHTTPServer((a.host, a.port), Handler)
     print(f"Desk console on http://{a.host}:{a.port}/  (db {a.database})")

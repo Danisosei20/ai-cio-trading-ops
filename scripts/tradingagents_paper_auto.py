@@ -6,7 +6,7 @@ Paper-only. Never touches Robinhood live or Alpaca live.
 - Session gate enforced by the paper service execution guard
   (10:15-15:45 ET weekdays + Alpaca market clock open). Outside the
   window it researches and exits with a skip reason, no order.
-- Per ticker: TradingAgents (default nvidia/kimi-k3, proven working) ->
+- Per ticker: TradingAgents (default nvidia/nemotron-3.5-lightning-30b-a3b) ->
   Buy/Overweight => buy, Sell/Underweight => sell held position, else hold.
 - Gates per buy: S&P500 member (<24h Wikipedia snapshot), earnings >5d
   away (yfinance, fail-closed), $500 order/symbol cap, buying-power check,
@@ -36,6 +36,8 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+from robinhood_tools.desk_policy import POLICY  # noqa: E402
+from robinhood_tools.market_prices import market_regime  # noqa: E402
 from robinhood_tools.paper_flow import (SignalOrder, lookup_earnings_date,  # noqa: E402
                                         place_signal_order)
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -45,9 +47,68 @@ from robinhood_tools.universe import Sp500Snapshot  # noqa: E402
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 BUY_SIGNALS = {"buy", "overweight"}
 SELL_SIGNALS = {"sell", "underweight"}
+
+
+def regime_gate_passes(*, regime: str, circuit_broken: bool, sig: str,
+                       options_mode: bool) -> bool:
+    """Does this signal pass the desk-wide regime gate?
+
+    Owner decision 2026-11-16 (Friday review): research-driven shorts may
+    trade a down tape. A bearish analyst signal in options mode now opens a
+    put when the regime is RISK_OFF - the same verdict the 15:10 watch has
+    always traded puts on, so the research path and the watch finally
+    agree. Everything else keeps the old, conservative rule:
+
+    - RISK_ON and no breaker: everything passes.
+    - Equity-mode sells are exits: passes in any regime (never block an
+      exit).
+    - Options-mode bearish: passes ONLY in RISK_OFF. CHOP/UNKNOWN still
+      block new risk desk-wide - missing evidence is not permission.
+    - Any buy while the circuit breaker is tripped: blocked.
+    """
+    if circuit_broken:
+        return False
+    if regime == "RISK_ON":
+        return True
+    if sig in SELL_SIGNALS and (not options_mode or regime == "RISK_OFF"):
+        return True
+    return False
+
+
+def regime_for_options(spy_closes: list[float], *, options_mode: bool) -> str:
+    """Use the stricter SPY trend confirmation only for options entries."""
+    return market_regime(spy_closes, require_long_term=options_mode)
+
+
 ET = ZoneInfo("America/New_York")
 STATUS_FILE = Path("outputs/paper/tradingagents/status.json")
 RUN_LOG = Path("outputs/paper/tradingagents/live.log")
+
+
+def _load_llm_env() -> None:
+    """Export LLM keys from ../TradingAgents/.env (if present) into os.environ.
+
+    Mirrors scripts/tradingagents_research.py: LLM clients read API keys from
+    the process environment, and the desk keeps them in the sibling
+    TradingAgents checkout. Existing environment values win.
+    """
+    import os
+    from pathlib import Path as _Path
+
+    dotenv = _Path(__file__).resolve().parents[1].parent / "TradingAgents" / ".env"
+    if not dotenv.exists():
+        return
+    try:
+        for line in dotenv.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if key and value:
+                os.environ.setdefault(key, value)
+    except OSError:
+        pass
 
 
 def set_stage(ticker: str, stage: str, detail: str = "") -> None:
@@ -89,15 +150,44 @@ def parse_args(argv=None):
                    help="how many screened tickers to trade (bounds LLM cost)")
     p.add_argument("--date", default=None, help="analysis date YYYY-MM-DD, default today ET")
     p.add_argument("--provider", default="nvidia")
-    p.add_argument("--quick-model", default="moonshotai/kimi-k3")
-    p.add_argument("--deep-model", default="moonshotai/kimi-k3")
-    p.add_argument("--analysts", default="market,news,fundamentals")
-    p.add_argument("--max-notional", type=Decimal, default=Decimal("500"))
+    # Judgment tier per the desk's model policy. moonshotai/kimi-k3 was the old
+    # default but hit end of life on 2026-10-15 and now returns HTTP 410, so
+    # any run relying on the default failed outright.
+    p.add_argument("--quick-model", default="nvidia/nemotron-3.5-lightning-30b-a3b")
+    p.add_argument("--deep-model", default="nvidia/nemotron-3.5-lightning-30b-a3b")
+    p.add_argument("--analysts", default="market,news")
+    p.add_argument("--max-tool-rounds", type=int, default=10,
+                   help="cap tool rounds per analyst (default 10)")
+    p.add_argument("--ticker-timeout", type=int, default=1200,
+                   help="per-ticker research timeout in seconds (default 1200). "
+                        "Measured 2026-11-06: one nemotron call costs ~35s "
+                        "(1-token call 0.5s, so the endpoint is healthy - it is "
+                        "the number of calls, not a stall) and a full research "
+                        "run costs ~544s with one analyst. The old 300s default "
+                        "made every ticker fail at the budget: ABNB, AXON, "
+                        "CHTR, FISV, HRL, MRNA, PFE all timed out on 2026-11-06 "
+                        "and the desk recorded no research decisions.")
+    p.add_argument("--llm-timeout", type=float, default=90.0,
+                   help="per-request LLM timeout in seconds (default 90; the SDK "
+                        "default is 600 and a single stalled call can eat the "
+                        "whole ticker budget). 90s leaves ~2.5x headroom over "
+                        "the measured 35s completion.")
+    p.add_argument("--llm-max-retries", type=int, default=1,
+                   help="SDK retries per LLM request (default 1). With 2 retries "
+                        "a stalled call burns 3 x 90s = 270s of the budget "
+                        "before the ticker even reaches its later stages.")
+    p.add_argument("--max-notional", type=Decimal, default=Decimal("500"),
+                   help="max notional per order (default 500)")
     p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.08"),
                    help="bracket stop below entry (0 to disable brackets)")
     p.add_argument("--target-pct", type=Decimal, default=Decimal("0.20"),
                    help="bracket target above entry")
     p.add_argument("--dry-run", action="store_true", help="research + gates only, never place")
+    p.add_argument("--day-trade", action="store_true",
+                   help="day-trade mode: candidates from outputs/daytrade/<date>.json, "
+                        "placements tagged for a flat-by-15:45 flatten")
+    p.add_argument("--daytrade-file", default=None,
+                   help="scout file (default outputs/daytrade/<today ET>.json)")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
@@ -135,6 +225,21 @@ def current_quote(symbol: str, data_client=None) -> tuple[Decimal, str, str]:
     return quote.price, quote.source, quote.as_of
 
 
+def _is_nim_toolcall_parse_error(exc: BaseException) -> bool:
+    """True when NIM 400s on the model's own tool-call emission.
+
+    Seen live on PTC 2026-10-28, HII 2026-10-29 and QQQ/TSLA 2026-11-02:
+    ``ValueError: {'message': 'unexpected tokens remaining in message header:
+    Some("to=functions.get_indicators")', 'type': 'BadRequestError',
+    'code': 400}``. NIM parses the assistant message with a function-call
+    grammar and the model emitted something it could not read, so the whole
+    propagate raises and the ticker records no decision at all.
+    """
+    text = str(exc)
+    return ("unexpected tokens remaining in message header" in text
+            or ("BadRequestError" in text and "to=functions." in text))
+
+
 def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -143,15 +248,49 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     config["llm_provider"] = args.provider
     config["quick_think_llm"] = args.quick_model
     config["deep_think_llm"] = args.deep_model
+    # Self-learning: pin the memory log inside our outputs so decisions,
+    # settlements, and reflections live with the desk (and settle_memory.py).
+    memory_path = Path(__file__).resolve().parents[1] / "outputs" / "learning" / "trading_memory.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    config["memory_log_path"] = str(memory_path)
     config["max_debate_rounds"] = 1
     config["max_risk_discuss_rounds"] = 1
     if config.get("llm_max_retries") is None:
         config["llm_max_retries"] = 6
-    if config.get("max_tool_rounds", 20) > 10:
-        config["max_tool_rounds"] = 10
+    # Bound each provider call. Without an explicit timeout the OpenAI SDK
+    # waits 600s (read) per request, so one stalled NIM call burns the whole
+    # per-ticker research budget (observed on APP/CPAY/HD/TPR/ZTS 2026-11-05).
+    config["timeout"] = args.llm_timeout
+    config["llm_max_retries"] = args.llm_max_retries
+    if config.get("max_tool_rounds", 20) > args.max_tool_rounds:
+        config["max_tool_rounds"] = args.max_tool_rounds
     selected = [a.strip() for a in args.analysts.split(",") if a.strip()]
-    ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
-    state, decision = ta.propagate(ticker, trade_date)
+    try:
+        ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
+        try:
+            state, decision = ta.propagate(ticker, trade_date)
+        except Exception as exc:  # noqa: BLE001 - one bounded retry, then out
+            if not _is_nim_toolcall_parse_error(exc):
+                raise
+            # NIM's parser choked on the model's tool-call emission, which
+            # killed the ticker with no decision. The emission is stochastic,
+            # so re-roll the same evidence path exactly once; a second failure
+            # propagates to the outer handler and still fails closed.
+            print(f"  NIM tool-call parse error for {ticker}; retrying once",
+                  flush=True)
+            ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
+            state, decision = ta.propagate(ticker, trade_date)
+    except Exception as exc:  # noqa: BLE001 - degrade, never lose the ticker
+        # Hosted judgment-tier endpoints 504/429 under the Research Manager's
+        # heavy prompt (Step 5 on free NIM did it 3/3 on 2026-10-27). Fall back
+        # to the proven quick model for the whole debate rather than skipping.
+        if config["deep_think_llm"] == config["quick_think_llm"]:
+            raise
+        print(f"  deep tier failed for {ticker} ({type(exc).__name__}); "
+              f"retrying with the quick model")
+        config["deep_think_llm"] = config["quick_think_llm"]
+        ta = TradingAgentsGraph(selected_analysts=selected, debug=False, config=config)
+        state, decision = ta.propagate(ticker, trade_date)
     reports = {}
     if isinstance(state, dict):
         for key, value in state.items():
@@ -164,7 +303,7 @@ def run_research(ticker: str, trade_date: str, args) -> tuple[str, dict]:
     return str(decision), {
         "provider": args.provider,
         "quick_model": args.quick_model,
-        "deep_model": args.deep_model,
+        "deep_model": config["deep_think_llm"],
         "analysts": selected,
         "analyst_reports": reports,
     }
@@ -184,16 +323,40 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
     from robinhood_tools.alpaca_options import AlpacaOptionsData
     from robinhood_tools.database import CioDatabase
     from robinhood_tools.market_prices import get_quote
+    from robinhood_tools.option_entry_risk import (
+        current_vix, realized_pnl_today, validate_option_entry,
+        validate_quoted_iv)
     from robinhood_tools.options_flow import pick_long_option, place_long_option
     from robinhood_tools.paper_flow import lookup_earnings_date
 
     direction = "bullish" if sig in BUY_SIGNALS else "bearish"
     set_stage(ticker, "scouting", f"{direction} chain for {ticker}")
+    # Zone confluence gate (POC + supply/demand): confirm/block only.
+    zone_ok, zone_note = _zone_gate(ticker, "long" if direction == "bullish" else "short")
+    rec["zone"] = zone_note
+    if not zone_ok:
+        rec["reason"] = f"zone: {zone_note}"
+        set_stage(ticker, "skip", rec["reason"])
+        return
     data = AlpacaOptionsData.from_values(env)
+    daily_pnl = realized_pnl_today(settings.database_path, _date.today())
+    try:
+        validate_option_entry(vix=current_vix(), premium=Decimal("0"),
+                              contracts=1, realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        rec["reason"] = str(exc)
+        set_stage(ticker, "skip", rec["reason"])
+        return
     spot_q = get_quote(ticker, data_client=data_client)
     quote, rejected = pick_long_option(
         data=data, underlying=ticker, spot=spot_q.price,
         direction=direction, today=_date.today())
+    try:
+        validate_quoted_iv(float(quote.iv) if quote.iv is not None else None)
+    except PolicyViolation as exc:
+        rec["reason"] = str(exc)
+        set_stage(ticker, "skip", rec["reason"])
+        return
     rec.update({"spot": str(spot_q.price), "spot_source": spot_q.source,
                 "contract": quote.contract.option_symbol,
                 "expiry": quote.contract.expiry, "strike": str(quote.contract.strike),
@@ -221,6 +384,14 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
         set_stage(ticker, "skip", rec["reason"])
         return
     premium = (quote.ask * contracts * 100).quantize(Decimal("0.01"))
+    try:
+        validate_option_entry(vix=current_vix(), premium=premium,
+                              contracts=contracts,
+                              realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        rec["reason"] = str(exc)
+        set_stage(ticker, "skip", rec["reason"])
+        return
     if args.dry_run:
         rec.update({"action": "dry_run_buy", "qty": contracts,
                     "premium": str(premium)})
@@ -244,12 +415,108 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
                 "premium": result["premium"], "order_id": result["order_id"],
                 "status": result["status"], "approval_id": result["approval_id"],
                 "candidate_id": candidate_id})
+    _post_buy_rationale(rec, f"*BUY {ticker} {rec.get('contract', '')}* "
+                             f"{contracts} contract(s), premium ${result['premium']}")
     set_stage(ticker, "placing", f"approval {result['approval_id']}")
     log_line(f"[{ticker}] PLACED long {direction} {contracts}x{quote.contract.option_symbol} "
              f"status={result['status']} order={result['order_id']}")
 
 
+def _record_shadow_outcome(settings, trade_date: str, rec: dict,
+                           regime: str, args) -> None:
+    """One shadow-equity row per ticker/run — the track record while gated.
+
+    Blocked ideas (CHOP regime, closed session, stale quote, desk
+    disagreement) still tell us what the desk WOULD have done; that is what
+    the learning machinery later scores against the S&P 500 at 1/5/20 days.
+    Never raises: shadow logging must not break a trading run.
+    """
+    if str(rec.get("action", "")).endswith("_placed"):
+        return  # a real order exists in the ledger; no shadow row needed
+    try:
+        from robinhood_tools.database import CioDatabase
+
+        decision = str(rec.get("decision", "") or "")
+        sig = decision.strip().lower()
+        reason = str(rec.get("reason", ""))
+        desk_disagreed = "desk disagrees" in reason
+        desk_failed = str(rec.get("desk_outcome", "")).startswith("record-failed")
+        qualified = ((sig in BUY_SIGNALS or sig in SELL_SIGNALS)
+                     and not desk_disagreed and not desk_failed)
+        action = "paper_candidate" if qualified else "no_action"
+        payload = {
+            "decision": decision,
+            "desk_verdict": rec.get("desk_verdict", ""),
+            "desk_outcome": rec.get("desk_outcome", ""),
+            "action": rec.get("action", ""),
+            "reason": reason,
+            "source": "tradingagents-paper-auto",
+            "models": f"{args.provider}/{args.quick_model}",
+            "execution_eligible": bool(qualified),
+            "blocked_reason": reason,
+        }
+        CioDatabase(settings.database_path).record_shadow_recommendation(
+            recommendation_id=f"shadow:{rec['ticker']}:{trade_date}",
+            run_key=f"auto:{rec['ticker']}:{trade_date}",
+            symbol=rec["ticker"], score=None,
+            action=action, market_regime=regime, payload=payload)
+        log_line(f"[{rec['ticker']}] shadow recorded: {action} (regime {regime})")
+    except Exception as exc:  # noqa: BLE001 - shadow logging never blocks a run
+        log_line(f"[{rec.get('ticker', '?')}] shadow record failed: {exc}")
+
+
+def _zone_gate(ticker: str, direction: str) -> tuple[bool, str]:
+    """Zone confluence gate: POC / value area / supply-demand confirm or block.
+
+    Confirm/block only - it never decides the trade (the LLM judgment tier
+    does). Fails open: a broken zone feed must not block the desk; the LLM
+    decision and the risk gates still stand.
+    """
+    try:
+        from scripts.zone_analysis import analyze
+
+        report = analyze(ticker)
+        if "error" in report:
+            return True, f"zone unavailable ({report['error']}) - fail open"
+        verdict = report.get("verdict", {})
+        code = verdict.get("verdict", "neutral")
+        reasons = "; ".join(verdict.get("reasons", []))
+        blocked = ((code == "long_blocked" and direction == "long")
+                   or (code == "short_blocked" and direction == "short"))
+        return (not blocked), f"zone {code}: {reasons}"
+    except Exception as exc:  # noqa: BLE001 - fail open, never block on a zone bug
+        return True, f"zone check failed ({type(exc).__name__}) - fail open"
+
+
+def _post_buy_rationale(rec: dict, headline: str) -> None:
+    """Slack: why this buy happened (owner directive 2026-10-30).
+
+    Posts the decision, the desk cross-check verdict, the zone confluence,
+    and the market analyst's reasoning. A failed post never blocks trading.
+    """
+    try:
+        from scripts.notify import send
+
+        pieces = [headline,
+                  f"Decision: {rec.get('decision', '?')} | desk cross-check: "
+                  f"{rec.get('desk_verdict', 'n/a')} ({rec.get('desk_outcome', 'n/a')})",
+                  f"Regime: RISK_ON | {rec.get('zone', 'zone: n/a')}"]
+        reports = rec.get("analyst_reports") or {}
+        for key, label in (("market_report", "Market view"),
+                           ("fundamentals_report", "Fundamentals view")):
+            text = str(reports.get(key, "")).strip()
+            if text:
+                pieces.append(f"{label}: {text[:400]}")
+                break
+        record = send("\n".join(pieces))
+        log_line(f"[{rec.get('ticker', '?')}] buy rationale posted "
+                 f"({record['status']} ts={record['message_ts']})")
+    except Exception as exc:  # noqa: BLE001 - a failed post never blocks trading
+        log_line(f"[{rec.get('ticker', '?')}] buy rationale post failed: {exc}")
+
+
 def main(argv=None) -> int:
+    _load_llm_env()
     args = parse_args(argv)
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if args.screen:
@@ -262,6 +529,22 @@ def main(argv=None) -> int:
             return 0
     today_et = datetime.now(ET).date().isoformat()
     trade_date = args.date or today_et
+    if args.day_trade:
+        scout_file = Path(args.daytrade_file) if args.daytrade_file else \
+            Path(f"outputs/daytrade/{trade_date}.json")
+        if not scout_file.exists():
+            print(f"day-trade: scout file {scout_file} missing; run "
+                  "scripts/daytrade_scout.py first.")
+            return 2
+        scout = json.loads(scout_file.read_text(encoding="utf-8"))
+        tickers = [r["ticker"] for r in scout.get("setups", [])
+                   if r.get("setup") in ("long_reclaim", "short_breakdown")]
+        scout_odds = {r["ticker"]: r.get("odds") or {}
+                      for r in scout.get("setups", [])}
+        print(f"day-trade: scout {scout_file} -> {tickers}")
+        if not tickers:
+            print("day-trade: no live intraday setups; nothing to do.")
+            return 0
 
     settings = build_settings(args.config, args.env_file)
     if settings.trading_enabled:
@@ -301,22 +584,46 @@ def main(argv=None) -> int:
 
     positions = {p.get("symbol", "").upper(): Decimal(str(p.get("qty", "0"))) for p in backend.list_positions()}
 
-    from robinhood_tools.market_prices import market_regime  # noqa: E402
-
     try:
         import yfinance as _yf  # noqa: E402,PLC0415
 
         _spy = _yf.Ticker("SPY").history(period="1y", interval="1d")
-        regime = market_regime([float(v) for v in _spy["Close"].dropna()])
+        regime = regime_for_options(
+            [float(v) for v in _spy["Close"].dropna()],
+            options_mode=args.options)
     except Exception:
         regime = "UNKNOWN"
-    log_line(f"market regime: {regime} (SPY 50d trend)")
+    log_line(f"market regime: {regime} (SPY 50/200d trend)")
     if regime != "RISK_ON":
         print(f"RISK {regime}: buys blocked desk-wide, sells only.")
 
+    # Daily circuit breaker: if equity is down >2% from previous close,
+    # block all new buys for the rest of the session (fail-closed).
+    circuit_broken = False
+    try:
+        acct = backend.transport.request("GET", "/v2/account")
+        equity_now = float(acct.get("equity", 0))
+        last_eq = float(acct.get("last_equity", 0))
+        if last_eq > 0 and (equity_now - last_eq) / last_eq < -0.02:
+            circuit_broken = True
+            log_line(f"CIRCUIT BREAKER: equity down {(equity_now-last_eq)/last_eq*100:.1f}% "
+                     f"from prev close (${last_eq:,.0f} -> ${equity_now:,.0f}) - buys blocked")
+            print("CIRCUIT BROKEN: equity down >2% from prev close - buys blocked desk-wide")
+    except Exception:  # noqa: BLE001
+        pass
+
     results = []
+    # Per-order notional cap for sizing AND for the risk gate. Defined once
+    # before the loop: referencing it earlier inside the loop made it an
+    # unbound local on the first ticker (MAA 2026-11-05).
+    cap = min(args.max_notional, settings.risk_limits.max_order_value)
+    _ctrl = None
     for ticker in tickers:
-        rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": ""}
+        rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": "",
+                     "policy_version": POLICY.version, "paper_only": POLICY.paper_only}
+        if args.day_trade:
+            rec["trade_style"] = "day_trade"
+            rec["flatten_by"] = "15:45 ET"
         set_stage(ticker, "researching", "TradingAgents analysts running")
         log_line(f"[{ticker}] researching ({trade_date}) via {args.provider}/{args.quick_model}")
         try:
@@ -327,7 +634,29 @@ def main(argv=None) -> int:
                 _snap = _dc.replace(snapshot, index_etfs=frozenset(settings.index_etf_allowlist))
             _snap.require_eligible_purchase(ticker)
             set_stage(ticker, "researching", "S&P500 OK, LLM debate running")
-            decision, meta = run_research(ticker, trade_date, args)
+
+            # Per-ticker timeout: a hung LLM debate (NIM under load has done
+            # it) must not stall the whole session. The daemon thread is
+            # abandoned on timeout; the outer except records the skip and the
+            # loop moves on. llm_max_retries=6 already covers transient errors.
+            import threading as _threading
+
+            _box = {"d": None, "m": None, "e": None}
+
+            def _run_research():
+                try:
+                    _box["d"], _box["m"] = run_research(ticker, trade_date, args)
+                except Exception as _exc:  # noqa: BLE001
+                    _box["e"] = _exc
+
+            _t = _threading.Thread(target=_run_research, daemon=True)
+            _t.start()
+            _t.join(timeout=args.ticker_timeout)
+            if _t.is_alive():
+                raise TimeoutError(f"research exceeded {args.ticker_timeout}s for {ticker}")
+            if _box["e"] is not None:
+                raise _box["e"]
+            decision, meta = _box["d"], _box["m"]
             rec.update(meta)
             rec["decision"] = decision
             log_line(f"[{ticker}] decision: {decision}")
@@ -368,10 +697,18 @@ def main(argv=None) -> int:
                                  f"{rec.get('desk_verdict')} ({rec.get('desk_outcome')})")
                 set_stage(ticker, "skip", rec["reason"])
             else:
-                # Regime gates every premium buy (stock AND long puts/calls).
-                # Only equity sells (exits) pass in CHOP/UNKNOWN.
-                if regime != "RISK_ON" and not (sig in SELL_SIGNALS and not args.options):
-                    rec["reason"] = f"regime {regime}: new risk blocked desk-wide"
+                # Regime gates every premium buy (stock AND long puts/calls). Equity
+                # sells are exits and always pass; options-mode bearish passes
+                # in RISK_OFF (owner decision 2026-11-16). CHOP/UNKNOWN still
+                # block new risk desk-wide.
+                if not regime_gate_passes(regime=regime,
+                                          circuit_broken=circuit_broken,
+                                          sig=sig,
+                                          options_mode=args.options):
+                    if circuit_broken and regime == "RISK_ON":
+                        rec["reason"] = "circuit breaker: equity down >2% from prev close - buys blocked"
+                    else:
+                        rec["reason"] = f"regime {regime}: new risk blocked desk-wide"
                     set_stage(ticker, "skip", rec["reason"])
                 elif args.options:
                     trade_option_leg(ticker=ticker, sig=sig, decision=decision,
@@ -379,62 +716,129 @@ def main(argv=None) -> int:
                                      snapshot=snapshot, env=env, args=args, rec=rec,
                                      data_client=data_client)
                 else:
-                    set_stage(ticker, "gating", f"decision={decision}, checking price/earnings/risk")
-                    price, price_source, price_as_of = current_quote(ticker, data_client)
-                    rec["price"] = str(price)
-                    rec["price_source"] = price_source
-                    rec["price_as_of"] = price_as_of
-                    cap = min(args.max_notional, settings.risk_limits.max_order_value)
-                    if sig in BUY_SIGNALS:
-                        earnings = lookup_earnings_date(ticker)
-                        qty = int((cap // price)) if price > 0 else 0
-                        limit = price.quantize(Decimal("0.01"))
-                        stop_px, target_px = None, None
-                        if args.stop_pct and args.stop_pct > 0 and args.target_pct and args.target_pct > 0:
-                            stop_px = (limit * (1 - args.stop_pct)).quantize(Decimal("0.01"))
-                            target_px = (limit * (1 + args.target_pct)).quantize(Decimal("0.01"))
-                        if qty < 1:
-                            rec["reason"] = f"price {price} exceeds ${cap} cap"
-                        elif buying_power < qty * price:
-                            rec["reason"] = f"insufficient buying power {buying_power} for ~${qty * price}"
-                        elif args.dry_run:
-                            rec.update({"action": "dry_run_buy", "qty": qty, "limit": str(limit),
-                                        "stop": str(stop_px), "target": str(target_px)})
-                        else:
-                            set_stage(ticker, "reviewing", f"buy {qty} @ {limit}")
-                            log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
-                            if stop_px is not None:
-                                log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
-                            result = place_signal_order(
-                                settings=settings, snapshot=snapshot,
-                                order=SignalOrder(symbol=ticker, side="buy",
-                                                  quantity=Decimal(qty), limit_price=limit,
-                                                  earnings_date=earnings,
-                                                  max_order_value=cap,
-                                                  take_profit_price=target_px,
-                                                  bracket_stop_price=stop_px),
-                                env_path=args.env_file)
-                            set_stage(ticker, "placing", f"approval {result['approval_id']}")
-                            rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
-                                        "stop": str(stop_px), "target": str(target_px),
-                                        "order_id": result["order_id"], "status": result["status"],
-                                        "approval_id": result["approval_id"]})
-                            log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
-                    elif sig in SELL_SIGNALS:
-                        held = positions.get(ticker, Decimal("0"))
-                        if held <= 0:
-                            rec["reason"] = f"bearish ({decision}) but no position held"
-                        elif args.dry_run:
-                            rec.update({"action": "dry_run_sell", "qty": str(held)})
-                        else:
-                            result = place_signal_order(
-                                settings=settings, snapshot=snapshot,
-                                order=SignalOrder(symbol=ticker, side="sell",
-                                                  quantity=held,
-                                                  limit_price=price.quantize(Decimal("0.01"))),
-                                env_path=args.env_file)
-                            rec.update({"action": "sell_placed", "qty": str(held),
-                                    "order_id": result["order_id"], "status": result["status"]})
+                    # Zone confluence gate (owner directive 2026-10-27: day-trade
+                    # with POC + supply/demand). Confirm/block only. Equity
+                    # exits are never zone-blocked: blocking an exit traps risk.
+                    if sig in SELL_SIGNALS:
+                        zone_ok, zone_note = True, "zone: exit - never blocked"
+                    else:
+                        zone_ok, zone_note = _zone_gate(ticker, "long")
+                        rec["zone"] = zone_note
+                    if not zone_ok:
+                        rec["reason"] = f"zone: {zone_note}"
+                        set_stage(ticker, "skip", rec["reason"])
+                    else:
+                        odds = scout_odds.get(ticker) or {} if args.day_trade else {}
+                        if odds.get("available"):
+                            rec["odds"] = (f"target first {odds['target_first']:.0%} / "
+                                           f"stop first {odds['stop_first']:.0%} / "
+                                           f"neither {odds['neither']:.0%} "
+                                           f"({odds.get('verdict', '')})")
+                            # Block only clearly losing odds: >=40% stop-first or
+                            # <20% target-first. Fail-open on anything else.
+                            if (odds["stop_first"] >= 0.40
+                                    or odds["target_first"] < 0.20):
+                                rec["reason"] = f"time machine: {odds.get('verdict', 'odds against entry')}"
+                                set_stage(ticker, "skip", rec["reason"])
+                        elif odds.get("error"):
+                            # Fail-closed: missing evidence is not permission to trade.
+                            rec["reason"] = f"time machine unavailable (fail-closed): {odds.get('reason', 'unknown')}"
+                            set_stage(ticker, "skip", rec["reason"])
+                            log_line(f"[{ticker}] TIME MACHINE FAILED - blocking (fail-closed): {odds.get('reason', '')}")
+                        if not rec.get("reason") and sig in BUY_SIGNALS:
+                            # Central portfolio risk gate for NEW risk (atomic,
+                            # fail-closed). Exits are never gated here: closing
+                            # a position must always be allowed.
+                            try:
+                                from robinhood_tools.portfolio_risk import PortfolioRiskController
+                                _ctrl = PortfolioRiskController(settings, env)
+                                _verdict = _ctrl.check(
+                                    ticker, "buy", cap, rec.get("trade_style", "swing"),
+                                    data_age_sec=0, current_equity=float(
+                                        backend.transport.request("GET", "/v2/account").get("equity", 0)))
+                                if not _verdict.approved:
+                                    rec["reason"] = f"portfolio risk: {_verdict.reason}"
+                                    set_stage(ticker, "skip", rec["reason"])
+                                    log_line(f"[{ticker}] PORTFOLIO RISK BLOCKED: {_verdict.reason}")
+                            except Exception as _exc:  # noqa: BLE001
+                                rec["reason"] = f"portfolio risk check failed: {type(_exc).__name__}"
+                                set_stage(ticker, "skip", rec["reason"])
+                                log_line(f"[{ticker}] portfolio risk check error: {_exc}")
+                        if not rec.get("reason"):
+                            price, price_source, price_as_of = current_quote(ticker, data_client)
+                            rec["price"] = str(price)
+                            rec["price_source"] = price_source
+                            rec["price_as_of"] = price_as_of
+                            if sig in BUY_SIGNALS:
+                                earnings = lookup_earnings_date(ticker)
+                                qty = int((cap // price)) if price > 0 else 0
+                                limit = price.quantize(Decimal("0.01"))
+                                stop_px, target_px = None, None
+                                if args.stop_pct and args.stop_pct > 0 and args.target_pct and args.target_pct > 0:
+                                    stop_px = (limit * (1 - args.stop_pct)).quantize(Decimal("0.01"))
+                                    target_px = (limit * (1 + args.target_pct)).quantize(Decimal("0.01"))
+                                if qty < 1:
+                                    rec["reason"] = f"price {price} exceeds ${cap} cap"
+                                elif buying_power < qty * price:
+                                    rec["reason"] = f"insufficient buying power {buying_power} for ~${qty * price}"
+                                elif args.dry_run:
+                                    rec.update({"action": "dry_run_buy", "qty": qty, "limit": str(limit),
+                                                "stop": str(stop_px), "target": str(target_px)})
+                                else:
+                                    set_stage(ticker, "reviewing", f"buy {qty} @ {limit}")
+                                    log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
+                                    if stop_px is not None:
+                                        log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
+                                    result = place_signal_order(
+                                        settings=settings, snapshot=snapshot,
+                                        order=SignalOrder(symbol=ticker, side="buy",
+                                                          quantity=Decimal(qty), limit_price=limit,
+                                                          earnings_date=earnings,
+                                                          max_order_value=cap,
+                                                          take_profit_price=target_px,
+                                                          bracket_stop_price=stop_px),
+                                        env_path=args.env_file)
+                                    set_stage(ticker, "placing", f"approval {result['approval_id']}")
+                                    rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
+                                                "stop": str(stop_px), "target": str(target_px),
+                                                "order_id": result["order_id"], "status": result["status"],
+                                                "approval_id": result["approval_id"]})
+                                    log_line(f"[{ticker}] PLACED buy {qty} @ {limit} status={result['status']} order={result['order_id']}")
+                                    # Track exposure only after the order actually
+                                    # reached the broker (never for a rejected order).
+                                    if _ctrl is not None:
+                                        try:
+                                            _ctrl.record_order(ticker, "buy",
+                                                               rec.get("trade_style", "swing"), cap)
+                                        except Exception as _rec_exc:  # noqa: BLE001
+                                            log_line(f"[{ticker}] risk record failed: {_rec_exc}")
+                                    _post_buy_rationale(
+                                        rec, f"*BUY {ticker}* {qty} @ ${limit} "
+                                             f"(day trade, flat by 15:45 ET)"
+                                             if rec.get("trade_style") == "day_trade"
+                                             else f"*BUY {ticker}* {qty} @ ${limit}")
+                            elif sig in SELL_SIGNALS:
+                                held = positions.get(ticker, Decimal("0"))
+                                if held <= 0:
+                                    rec["reason"] = f"bearish ({decision}) but no position held"
+                                elif args.dry_run:
+                                    rec.update({"action": "dry_run_sell", "qty": str(held)})
+                                else:
+                                    result = place_signal_order(
+                                        settings=settings, snapshot=snapshot,
+                                        order=SignalOrder(symbol=ticker, side="sell",
+                                                          quantity=held,
+                                                          limit_price=price.quantize(Decimal("0.01"))),
+                                        env_path=args.env_file)
+                                    rec.update({"action": "sell_placed", "qty": str(held),
+                                            "order_id": result["order_id"], "status": result["status"]})
+                                    # Release tracked exposure for the closed position.
+                                    try:
+                                        from robinhood_tools.portfolio_risk import PortfolioRiskController as _PRC
+                                        _PRC(settings, env).record_order(ticker, "sell",
+                                                                        rec.get("trade_style", "swing"), 0)
+                                    except Exception as _rel_exc:  # noqa: BLE001
+                                        log_line(f"[{ticker}] risk release failed: {_rel_exc}")
         except PolicyViolation as exc:
             rec["reason"] = f"gate blocked: {exc}"
         except InvalidOperation as exc:
@@ -445,6 +849,7 @@ def main(argv=None) -> int:
         set_stage(ticker, final_stage, rec.get("reason", rec.get("order_id", rec.get("decision", ""))))
         log_line(f"[{ticker}] done: {rec.get('action')} {rec.get('reason', '')}")
         results.append(rec)
+        _record_shadow_outcome(settings, trade_date, rec, regime, args)
         print(json.dumps(rec))
         out_dir = Path("outputs/paper/tradingagents") / ticker / trade_date
         out_dir.mkdir(parents=True, exist_ok=True)

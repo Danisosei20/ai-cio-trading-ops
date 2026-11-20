@@ -11,7 +11,7 @@ AI research → backtests → incubation → alert webhooks → auto-execution �
 
 | Component | File | Job |
 |---|---|---|
-| Research | `scripts/tradingagents_research.py` | TradingAgents multi-agent LLM debate per ticker (market/news/fundamentals → researchers → trader → risk). Research only, never orders. Working provider: `nvidia` + `moonshotai/kimi-k3`. Last call: NVDA 2026-10-02 → Overweight, entry 227.80, stop 215.86. |
+| Research | `scripts/tradingagents_research.py` | TradingAgents multi-agent LLM debate per ticker (market/news/fundamentals → researchers → trader → risk). Research only, never orders. Working provider: `nvidia` + `nvidia/nemotron-3.5-lightning-30b-a3b`. Last call: NVDA 2026-10-02 → Overweight, entry 227.80, stop 215.86. |
 | Auto-trader | `scripts/tradingagents_paper_auto.py` | Research → Buy/Overweight buys (≤$500), Sell/Underweight sells held positions, else holds. Session window 10:15–15:45 ET + market clock, S&P500 check, earnings blackout, review fingerprint, ledger. Refuses to run if `TRADING_ENABLED=true`. Writes `status.json` + `live.log` for the UI. |
 | Alert webhook | `scripts/alert_webhook.py` | TradingKit equivalent. `POST /alert` JSON → same gates → paper order. Port 8090, shared-secret auth. Verified: bad secrets and non-S&P500 symbols rejected. |
 | Backtest loop | `scripts/strategy_backtest.py` | Strategy grid (SMA cross, RSI mean-reversion, Donchian breakout) with commission + slippage, min-trades gate, 70/30 walk-forward incubation. First run: NVDA `sma20/50` +139% IS → −61% OOS → verdict: trade nothing. |
@@ -32,7 +32,7 @@ AI research → backtests → incubation → alert webhooks → auto-execution �
 - No stop-loss/take-profit brackets yet (plain limits only).
 - Single-bot (NVDA) only; no multi-strategy roster.
 - No FRED key → macro analysis proceeds without macro data.
-- NVIDIA NIM models vary in tool/structured-output support; `kimi-k3` works, `llama-3.3-70b` is EOL, `nemotron-70b` fails structured output.
+- NVIDIA NIM models vary in tool/structured-output support; `nvidia/nemotron-3.5-lightning-30b-a3b` works, `moonshotai/kimi-k3` is EOL (HTTP 410 since 2026-10-15), `llama-3.3-70b` is EOL, `nemotron-70b` fails structured output.
 - Stooq CSV now requires JS verification → backtests use yfinance (TradingAgents venv).
 
 ## Key commands

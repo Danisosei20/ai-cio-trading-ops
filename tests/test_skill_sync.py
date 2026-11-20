@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -73,6 +74,8 @@ class SkillSyncTests(unittest.TestCase):
             first_line = (installed / "SKILL.md").read_text(encoding="utf-8").splitlines()[0]
             self.assertEqual(first_line, "repository:SKILL.md")
 
+    @unittest.skipIf(os.name == "nt",
+                     "os.symlink on Windows requires Developer Mode/admin")
     def test_sync_refuses_a_symlinked_destination(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

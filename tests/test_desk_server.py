@@ -143,6 +143,23 @@ class DeskServerTest(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             self.assertEqual(exc.code, 400)
 
+    def test_policy_payload_exposes_both_guards(self):
+        from scripts import desk_server
+        payload = desk_server.policy_payload()
+        self.assertIn("policy", payload)
+        self.assertIn("equity_guard", payload)
+        self.assertIn("options_guard", payload)
+
+    def test_non_loopback_host_is_rejected(self):
+        from scripts import desk_server
+        with self.assertRaises(ValueError):
+            desk_server.validate_bind_host("0.0.0.0")
+
+    def test_loopback_hosts_are_allowed(self):
+        from scripts import desk_server
+        for host in ("127.0.0.1", "localhost", "::1"):
+            desk_server.validate_bind_host(host)
+
 
 if __name__ == "__main__":
     unittest.main()

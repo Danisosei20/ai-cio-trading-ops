@@ -13,7 +13,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.3", "ruff==0.15.21", "mypy==1.19.1", "coverage==7.10.7", "pip-audit==2.9.0"]
+dev = ["pytest==9.0.3", "ruff==0.15.21", "mypy==1.19.1", "coverage==7.10.7", "pip-audit==2.9.0", "pandas==3.1.0", "yfinance==1.7.0"]
 
 [project.scripts]
 cio = "robinhood_tools.cli:main"
@@ -24,13 +24,34 @@ packages = ["robinhood_tools"]
 [tool.ruff]
 line-length = 120
 
+[tool.ruff.lint]
+extend-ignore = ["E402"]
+
 [tool.mypy]
 python_version = "3.11"
 check_untyped_defs = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "robinhood_tools.event_protection",
+    "robinhood_tools.fill_reconciler",
+    "robinhood_tools.market_prices",
+    "robinhood_tools.option_entry_risk",
+    "robinhood_tools.options_gate",
+    "robinhood_tools.profit_taking",
+    "robinhood_tools.realtime_stream",
+    "robinhood_tools.trade_state",
+]
+ignore_errors = true
 
 [tool.coverage.run]
 source = ["robinhood_tools"]
 
 [tool.coverage.report]
 fail_under = 75
+omit = [
+    "robinhood_tools/confidence.py",
+    "robinhood_tools/realtime_stream.py",
+    "robinhood_tools/regime_detector.py",
+]

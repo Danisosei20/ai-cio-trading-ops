@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation
+from robinhood_tools.desk_policy import POLICY
 from robinhood_tools.paper_flow import SignalOrder, place_signal_order
 from robinhood_tools.position_guard import GuardPolicy, evaluate
 from robinhood_tools.runtime import build_settings
@@ -110,8 +111,10 @@ def main(argv=None) -> int:
     trail_file.write_text(json.dumps(peaks))
     out = Path("outputs/paper/guard.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"policy": {"stop_pct": str(policy.stop_pct),
-                                           "target_pct": str(policy.target_pct)},
+    out.write_text(json.dumps({"policy_version": POLICY.version,
+                               "paper_only": POLICY.paper_only,
+                               "policy": {"stop_pct": str(policy.stop_pct),
+                                            "target_pct": str(policy.target_pct)},
                                "positions": results}, indent=2))
     return 0
 

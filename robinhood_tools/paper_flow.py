@@ -68,6 +68,11 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
     db.require_no_symbol_cooldown(order.symbol, today=today.isoformat())
+    if order.side == "buy":
+        # Per-symbol loss memory: a loser gets a rest before it gets
+        # re-bought (RDDT lost 40% and was re-bought the same session).
+        # Entries only - a sell is an exit, and exits are never blocked.
+        db.require_no_symbol_loss_streak(order.symbol, today=today.isoformat())
     if snapshot is not None and settings.index_etf_allowlist:
         import dataclasses as _dc
 
@@ -124,12 +129,33 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     db.approve(auth.approval_id)
     placed = service.place_equity_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
-    return {"action": f"{order.side}_placed", "symbol": symbol,
-            "qty": str(order.quantity), "limit": str(request.limit_price),
-            "take_profit": str(request.take_profit_price),
-            "bracket_stop": str(request.bracket_stop_price),
-            "order_id": placed.id, "status": placed.status,
-            "approval_id": auth.approval_id, "review_id": review.review_id}
+    result = {"action": f"{order.side}_placed", "symbol": symbol,
+              "qty": str(order.quantity), "limit": str(request.limit_price),
+              "take_profit": str(request.take_profit_price),
+              "bracket_stop": str(request.bracket_stop_price),
+              "order_id": placed.id, "status": placed.status,
+              "approval_id": auth.approval_id, "review_id": review.review_id}
+    # One Slack message per placed equity order (owner directive 2026-11-16).
+    # Covers buys from the research path and every sell (exit/flatten): an
+    # exit the operator cannot see is an exit they cannot audit. The outcome
+    # is recorded, not discarded - see the note in options_flow.
+    alert = "failed"
+    try:
+        from .order_alerts import equity_message, is_simulation_service, post_order_alert
+
+        alert = post_order_alert(
+            settings=settings,
+            simulated=is_simulation_service(service),
+            message=equity_message(side=order.side, symbol=symbol,
+                                   qty=order.quantity, limit=request.limit_price,
+                                   stop=request.bracket_stop_price,
+                                   target=request.take_profit_price,
+                                   order_id=placed.id,
+                                   approval_id=auth.approval_id))
+    except Exception:  # noqa: BLE001 - alerting is best-effort, never fatal
+        alert = "failed"
+    result["alert"] = alert
+    return result
 
 
 def lookup_earnings_date(symbol: str) -> date | None:

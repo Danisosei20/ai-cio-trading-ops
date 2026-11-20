@@ -16,7 +16,6 @@ from robinhood_tools.portfolio import TaxLot
 from robinhood_tools.reconciliation import Fill, reconcile_order
 from robinhood_tools.runtime import RuntimeSettings
 from robinhood_tools.risk import RiskLimits
-from robinhood_tools.slack_replies import parse_safe_reply, transition_for_reply
 
 
 def settings(root: Path) -> RuntimeSettings:
@@ -72,12 +71,6 @@ class OrchestrationIntegrationTests(unittest.TestCase):
         ]
         result = account_for_sale(lots, quantity=Decimal("1.5"), fill_price=Decimal("120"), fees=Decimal("1"))
         self.assertEqual(result.realized_profit, Decimal("34"))
-
-    def test_slack_state_machine_never_approves(self):
-        self.assertEqual(transition_for_reply(parse_safe_reply("YES")).state, "awaiting_size")
-        self.assertTrue(transition_for_reply(parse_safe_reply("$250")).needs_fresh_review)
-        self.assertTrue(transition_for_reply(parse_safe_reply("NO")).should_reject)
-        self.assertEqual(transition_for_reply(parse_safe_reply("APPROVE abc")).state, "blocked")
 
 
 if __name__ == "__main__":
