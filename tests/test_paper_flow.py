@@ -140,7 +140,7 @@ class PaperFlowTest(unittest.TestCase):
             settings=self.settings, snapshot=snapshot(),
             order=SignalOrder(symbol="NVDA", side="buy", quantity=Decimal("2"),
                               limit_price=Decimal("231.00"),
-                              earnings_date=date(2026, 11, 20),
+                              earnings_date=date(2026, 12, 20),
                               take_profit_price=Decimal("276.00"),
                               bracket_stop_price=Decimal("211.60")),
             database=self.db, service=service)
@@ -169,7 +169,7 @@ class PaperFlowTest(unittest.TestCase):
             settings=self.settings, snapshot=snapshot(),
             order=SignalOrder(symbol="NVDA", side="buy", quantity=Decimal("2"),
                               limit_price=Decimal("231.00"),
-                              earnings_date=date(2026, 11, 20),
+                              earnings_date=date(2026, 12, 20),
                               take_profit_price=Decimal("276.00"),
                               bracket_stop_price=Decimal("211.60")),
             database=self.db, service=service)
