@@ -31,8 +31,8 @@ def test_exact_occ_duplicate_is_rejected_without_execution(tmp_path):
     second = evidence(tmp_path, candidate_id="candidate-2", premium=99)
     calls = []
 
-    assert run_paper_entry(first, execute=True, owner="worker-a", broker_call=lambda: calls.append(1) or {"order_id": "1"})["action"] == "accepted"
-    result = run_paper_entry(second, execute=True, owner="worker-a", broker_call=lambda: calls.append(2) or {"order_id": "2"})
+    assert run_paper_entry(first, execute=True, owner="worker-a", broker_call=lambda: calls.append(1) or {"status": "accepted", "order_id": "1"})["action"] == "accepted"
+    result = run_paper_entry(second, execute=True, owner="worker-a", broker_call=lambda: calls.append(2) or {"status": "accepted", "order_id": "2"})
 
     assert result["action"] == "blocked"
     assert "duplicate" in result["reason"]
@@ -44,8 +44,8 @@ def test_fingerprint_duplicate_is_rejected_without_execution(tmp_path):
     second = evidence(tmp_path)
     calls = []
 
-    run_paper_entry(first, execute=True, owner="worker-a", broker_call=lambda: calls.append(1) or {"order_id": "1"})
-    result = run_paper_entry(second, execute=True, owner="worker-a", broker_call=lambda: calls.append(2) or {"order_id": "2"})
+    run_paper_entry(first, execute=True, owner="worker-a", broker_call=lambda: calls.append(1) or {"status": "accepted", "order_id": "1"})
+    result = run_paper_entry(second, execute=True, owner="worker-a", broker_call=lambda: calls.append(2) or {"status": "accepted", "order_id": "2"})
 
     assert result["action"] == "blocked"
     assert calls == [1]
@@ -72,7 +72,7 @@ def test_lease_contention_blocks_and_releases_after_success(tmp_path):
     # Keep the first lease held while its executor is running.
     def blocking_order():
         entered.append(True)
-        return {"order_id": "1"}
+        return {"status": "accepted", "order_id": "1"}
 
     assert run_paper_entry(first, execute=True, owner="worker-a", broker_call=blocking_order)["action"] == "accepted"
     assert entered == [True]
@@ -125,7 +125,7 @@ def test_lease_heartbeat_prevents_expiry_during_broker_execution(tmp_path):
     def slow_order():
         entered.set()
         time.sleep(1.5)
-        return {"order_id": "heartbeat-order"}
+        return {"status": "accepted", "order_id": "heartbeat-order"}
 
     worker = threading.Thread(target=lambda: result.update(
         run_paper_entry(first, execute=True, owner="worker-a", broker_call=slow_order,
@@ -134,18 +134,21 @@ def test_lease_heartbeat_prevents_expiry_during_broker_execution(tmp_path):
     assert entered.wait(2)
     time.sleep(1.1)
     contender = run_paper_entry(
-        second, execute=True, owner="worker-b", broker_call=lambda: {"order_id": "must-not-place"},
+        second, execute=True, owner="worker-b", broker_call=lambda: {"status": "accepted", "order_id": "must-not-place"},
         lease_ttl_seconds=1,
     )
     worker.join(3)
-    assert contender["action"] == "accepted"
+    assert contender["action"] == "blocked"
     assert result["action"] == "accepted"
 
 
 def test_options_pilot_state_query_matches_exact_occ_payloads():
     class Backend:
         def list_positions(self):
-            return [{"symbol": "AAPL261218C00200000", "qty": "1"}]
+            return [
+                {"symbol": "AAPL261218C00200000", "qty": "0"},
+                {"symbol": "AAPL261218C00200000", "qty": "-0.5"},
+            ]
 
         def list_open_orders(self):
             return [{"symbol": "AAPL261218P00200000", "status": "open"}]
@@ -169,12 +172,61 @@ def test_negative_exact_occ_position_quantity_is_held():
     assert validate_paper_option_state(Backend(), "AAPL261218C00200000")["held"] is True
 
 
+def test_malformed_broker_result_is_terminal_unknown_reconciliation(tmp_path):
+    result = run_paper_entry(
+        evidence(tmp_path), execute=True,
+        broker_call=lambda: {"status": "accepted"},
+    )
+    assert result["action"] == "unknown_reconciliation"
+    assert result["reconciliation_required"] is True
+
+
+def test_intent_marker_survives_restart_and_blocks_retry(tmp_path):
+    first = evidence(tmp_path, candidate_id="crash-candidate")
+    result = run_paper_entry(
+        first, execute=True,
+        broker_call=lambda: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    assert result["action"] == "unknown_reconciliation"
+    restarted = evidence(tmp_path, candidate_id="crash-candidate-retry", premium=999)
+    retry = run_paper_entry(restarted, execute=True, broker_call=lambda: {
+        "status": "accepted", "order_id": "must-not-submit",
+    })
+    assert retry["action"] == "unknown_reconciliation"
+    assert retry["reconciliation_required"] is True
+
+
+def test_lease_contention_returns_promptly(tmp_path):
+    first = evidence(tmp_path, candidate_id="prompt-first")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def callback():
+        entered.set()
+        release.wait(3)
+        return {"status": "accepted", "order_id": "prompt-order"}
+
+    worker = threading.Thread(target=lambda: run_paper_entry(first, execute=True, broker_call=callback))
+    worker.start()
+    assert entered.wait(2)
+    second = evidence(tmp_path, candidate_id="prompt-second", occ_symbol="AAPL261218P00200000", side="put")
+    started = time.monotonic()
+    contender = run_paper_entry(second, execute=True, broker_call=lambda: {
+        "status": "accepted", "order_id": "must-not-submit",
+    })
+    elapsed = time.monotonic() - started
+    release.set()
+    worker.join(3)
+    assert contender["action"] == "blocked"
+    assert elapsed < 2
+
+
 def test_unknown_broker_submission_is_terminal_reconciliation_state(tmp_path):
     result = run_paper_entry(
         evidence(tmp_path), execute=True,
         broker_call=lambda: (_ for _ in ()).throw(TimeoutError("submission status unknown")),
     )
-    assert result["action"] == "unknown_submitted"
+    assert result["action"] == "unknown_reconciliation"
     assert result["reconciliation_required"] is True
     assert result["order"] == {}
 
@@ -190,14 +242,14 @@ def test_contender_cannot_enter_until_serialized_callback_finishes(tmp_path):
     def callback():
         entered.set()
         finish.wait(3)
-        return {"order_id": "serialized-order"}
+        return {"status": "accepted", "order_id": "serialized-order"}
 
     worker = threading.Thread(target=lambda: first_result.update(
         run_paper_entry(first, execute=True, broker_call=callback)))
     worker.start()
     assert entered.wait(2)
     contender = threading.Thread(target=lambda: second_result.update(
-        run_paper_entry(second, execute=True, broker_call=lambda: {"order_id": "wrong-order"})))
+        run_paper_entry(second, execute=True, broker_call=lambda: {"status": "accepted", "order_id": "wrong-order"})))
     contender.start()
     time.sleep(0.2)
     assert contender.is_alive()

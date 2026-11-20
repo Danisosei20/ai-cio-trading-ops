@@ -202,8 +202,8 @@ def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path
     )
 
     assert result["action"] == "accepted"
-    assert observed["sqlite"] == [("screened",)]
-    assert '"action": "screened"' in observed["artifact"]
+    assert observed["sqlite"] == [("intent",)]
+    assert '"action": "intent"' in observed["artifact"]
 
 
 def test_broker_exception_is_structured_unknown_submission(tmp_path):
@@ -213,10 +213,10 @@ def test_broker_exception_is_structured_unknown_submission(tmp_path):
         broker_call=lambda: (_ for _ in ()).throw(RuntimeError("paper broker down")),
         now=NOW, evidence_root=tmp_path, state_checker=STATE_OK,
     )
-    assert result["action"] == "unknown_submitted"
+    assert result["action"] == "unknown_reconciliation"
     assert result["reconciliation_required"] is True
     artifact = json.loads(next((tmp_path / "evidence").glob("*.json")).read_text())
-    assert artifact["evidence_type"] == "unknown_submitted"
+    assert artifact["evidence_type"] == "unknown_reconciliation"
     assert artifact["failure_stage"] == "broker"
     assert artifact["known_fields"]
     assert artifact["unknown_fields"] == []

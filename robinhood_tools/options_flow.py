@@ -103,7 +103,7 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                  correlation_id=auth.approval_id, approval_id=auth.approval_id)
     placed = service.place_option_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
-    return {"action": "buy_placed", "contract": contract.option_symbol,
+    return {"action": "buy_placed", "accepted": True, "contract": contract.option_symbol,
             "qty": contracts, "limit": str(request.limit_price),
             "premium": str(premium), "order_id": placed.id,
             "status": placed.status, "approval_id": auth.approval_id}

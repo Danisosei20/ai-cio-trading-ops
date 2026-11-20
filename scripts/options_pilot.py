@@ -312,10 +312,9 @@ def validate_paper_option_state(backend, occ_symbol: str) -> dict:
         try:
             # Any non-zero exact OCC quantity means the contract is held;
             # negative quantities are short exposure and must also block.
-            held = Decimal(str(position.get("qty", "0"))) != 0
+            held = held or Decimal(str(position.get("qty", "0"))) != 0
         except (ArithmeticError, TypeError, ValueError) as exc:
             raise PolicyViolation("paper position quantity was invalid") from exc
-        break
     open_order = any(
         str(order.get("symbol", "")).upper() == symbol
         and str(order.get("status", "open")).lower()

@@ -60,7 +60,10 @@ _VOLATILE_FINGERPRINT_FIELDS = {
     "open_order_exists", "open_orders", "trading_enabled", "paper_only", "mode", "settings",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
-_STATUS_PRECEDENCE = {"screened": 10, "blocked": 20, "accepted": 30, "unknown_submitted": 40}
+_STATUS_PRECEDENCE = {
+    "screened": 10, "blocked": 20, "intent": 30, "accepted": 40,
+    "unknown_submitted": 50, "unknown_reconciliation": 50,
+}
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
 
 
@@ -248,13 +251,13 @@ def write_evidence(root: Path, evidence: dict) -> Path:
     return path
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+def _connect(db_path: Path, *, timeout: float = 10, busy_timeout_ms: int = 10000) -> sqlite3.Connection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(db_path, timeout=10, isolation_level=None)
+    connection = sqlite3.connect(db_path, timeout=timeout, isolation_level=None)
     try:
         connection.execute("BEGIN IMMEDIATE")
-        connection.execute("PRAGMA busy_timeout=10000")
+        connection.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
         connection.execute(
             """CREATE TABLE IF NOT EXISTS paper_autopilot_leases (
                 name TEXT PRIMARY KEY, owner TEXT NOT NULL, token TEXT NOT NULL,
@@ -358,7 +361,12 @@ def _begin_serialized_cycle(db_path: Path, owner: str, now: datetime) -> tuple[s
     # transaction on the application database would deadlock the normal
     # attempt/evidence writes performed around the callback.
     coordination_path = Path(db_path).with_name(Path(db_path).name + ".cycle")
-    connection = _connect(coordination_path)
+    try:
+        connection = _connect(coordination_path, timeout=0.2, busy_timeout_ms=200)
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).lower():
+            return None
+        raise
     token = str(uuid.uuid4())
     acquired = _timestamp(now)
     try:
@@ -375,9 +383,11 @@ def _begin_serialized_cycle(db_path: Path, owner: str, now: datetime) -> tuple[s
             "VALUES('entry_cycle', ?, ?, ?, ?, ?)",
             (owner, token, generation, acquired, _timestamp(now + timedelta(days=3650))),
         )
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, sqlite3.OperationalError) as exc:
         connection.rollback()
         connection.close()
+        if isinstance(exc, sqlite3.OperationalError) and "locked" not in str(exc).lower():
+            raise
         return None
     return connection, token
 
@@ -531,6 +541,20 @@ def attempt_exists(db_path: Path, evidence: dict, action: str, reason: str) -> b
         ).fetchone() is not None
 
 
+def _attempt_action(db_path: Path, evidence: dict) -> str | None:
+    fingerprint = candidate_fingerprint(evidence)
+    occ_symbol = str(evidence.get("occ_symbol") or "").strip().upper()
+    with _managed_connection(db_path) as connection:
+        row = connection.execute(
+            "SELECT action FROM paper_autopilot_attempts WHERE fingerprint=? "
+            "UNION ALL SELECT a.action FROM paper_autopilot_attempts a "
+            "JOIN paper_autopilot_candidate_claims c ON c.fingerprint=a.fingerprint "
+            "WHERE c.occ_symbol=? LIMIT 1",
+            (fingerprint, occ_symbol),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def run_paper_entry(
     evidence: dict,
     execute: bool = False,
@@ -580,6 +604,26 @@ def run_paper_entry(
             result["duplicate"] = True
         return result
 
+    def unknown_reconciliation(reason: str, order: dict | None = None) -> dict:
+        evidence.update({"action": "unknown_reconciliation", "status": "unknown_reconciliation",
+                         "reason": reason, "evidence_type": "unknown_reconciliation",
+                         "failure_stage": "broker", "reconciliation_required": True})
+        if evidence.get("known_fields") is None:
+            fields = set(_EVIDENCE_DEFAULTS) - {
+                "action", "status", "reason", "failure_stage", "known_fields",
+                "unknown_fields", "evidence_type", "audit_history", "rejection_reasons",
+                "gate_results",
+            }
+            known = sorted(field for field in fields if evidence.get(field) not in (None, {}, ""))
+            evidence["known_fields"] = known
+            evidence["unknown_fields"] = sorted(fields - set(known))
+        record_attempt(path, evidence, "unknown_reconciliation", reason, order or {})
+        if evidence_root is not None:
+            write_evidence(Path(evidence_root), evidence)
+        return {"action": "unknown_reconciliation", "status": "unknown_reconciliation",
+                "reason": reason, "candidate_id": evidence.get("candidate_id"),
+                "order": order or {}, "reconciliation_required": True}
+
     settings = evidence.get("settings")
     settings_live = bool(getattr(settings, "trading_enabled", False)) if settings is not None else False
     settings_paper_disabled = settings is not None and getattr(settings, "paper_trading_enabled", True) is False
@@ -601,6 +645,10 @@ def run_paper_entry(
     position_status = str(evidence.get("position_status") or "").lower()
     if position_status in {"held", "open", "long", "pending", "buy_pending"}:
         return blocked(f"candidate position status is {position_status}; entry refused")
+
+    prior_action = _attempt_action(path, evidence)
+    if prior_action in {"intent", "unknown_submitted", "unknown_reconciliation"}:
+        return unknown_reconciliation("prior broker execution requires reconciliation")
 
     serialized_claim = _begin_serialized_cycle(path, owner, observed)
     if not serialized_claim:
@@ -642,36 +690,36 @@ def run_paper_entry(
             broker_call = evidence.get("_broker_call")
         if not callable(broker_call):
             return blocked("paper entry executor is not configured")
+        # This durable intent is written before invoking the external side
+        # effect. If the process dies at any point afterward, restart sees the
+        # marker and cannot treat the screened candidate as retryable.
+        evidence.update({"action": "intent", "status": "intent", "reason": "broker execution intent recorded"})
+        record_attempt(path, evidence, "intent", "broker execution intent recorded")
+        if evidence_root is not None:
+            write_evidence(Path(evidence_root), evidence)
         try:
             order = broker_call()
-        except Exception as exc:
+        except BaseException as exc:
             # Once the external callback has been invoked, its submission
             # outcome is unknowable from an exception alone. Never turn this
             # into a retryable blocked result: persist a terminal state that
             # requires reconciliation before any retry.
             _finish_serialized_cycle(cycle_connection)
             cycle_connection = None
-            reason = f"broker submission outcome unknown: {exc}"
-            if evidence.get("known_fields") is None:
-                fields = set(_EVIDENCE_DEFAULTS) - {
-                    "action", "status", "reason", "failure_stage", "known_fields",
-                    "unknown_fields", "evidence_type", "audit_history", "rejection_reasons",
-                    "gate_results",
-                }
-                known = sorted(field for field in fields if evidence.get(field) not in (None, {}, ""))
-                evidence["known_fields"] = known
-                evidence["unknown_fields"] = sorted(fields - set(known))
-            evidence.update({"action": "unknown_submitted", "status": "unknown_submitted",
-                             "reason": reason, "evidence_type": "unknown_submitted",
-                             "failure_stage": "broker", "reconciliation_required": True})
-            record_attempt(path, evidence, "unknown_submitted", reason, {})
-            if evidence_root is not None:
-                write_evidence(Path(evidence_root), evidence)
-            return {"action": "unknown_submitted", "status": "unknown_submitted",
-                    "reason": reason, "candidate_id": evidence.get("candidate_id"),
-                    "order": {}, "reconciliation_required": True}
+            return unknown_reconciliation(f"broker submission outcome unknown: {exc}")
         _finish_serialized_cycle(cycle_connection)
         cycle_connection = None
+        valid_result = (
+            isinstance(order, dict)
+            and (
+                order.get("accepted") is True
+                or str(order.get("status", "")).lower() == "accepted"
+                or str(order.get("action", "")).lower() in {"accepted", "buy_placed"}
+            )
+            and bool(order.get("order_id") or order.get("id"))
+        )
+        if not valid_result:
+            return unknown_reconciliation("broker returned an invalid accepted-order result", order if isinstance(order, dict) else {})
         evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed"})
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
         if evidence_root is not None:
