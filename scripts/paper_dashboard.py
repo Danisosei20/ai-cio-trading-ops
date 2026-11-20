@@ -143,15 +143,20 @@ def render(output: Path, database_path: str) -> Path:
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
         accounts = backend.list_accounts()
         acct = backend.transport.request("GET", "/v2/account")
+        # Take one position snapshot for this render and use it everywhere in
+        # the dashboard.  Mixing independently fetched snapshots can make the
+        # table disagree with derived portfolio values during a fill.
+        positions = backend.list_positions()
+        open_orders = backend.list_open_orders()
         account_line = (f"{accounts[0].label} {accounts[0].masked_account_number} · "
                         f"cash ${acct.get('cash')} · buying power ${acct.get('buying_power')} · "
                         f"portfolio ${acct.get('portfolio_value')}")
-        for p in backend.list_positions():
+        for p in positions:
             pos_rows += (f"<tr><td><b>{html.escape(str(p.get('symbol')))}</b></td>"
                          f"<td>{html.escape(str(p.get('qty')))}</td>"
                          f"<td>${html.escape(str(p.get('current_price')))}</td>"
                          f"<td>${html.escape(str(p.get('unrealized_pl')))}</td></tr>")
-        for o in backend.list_open_orders()[:25]:
+        for o in open_orders[:25]:
             order_rows += (f"<tr><td>{html.escape(str(o.get('symbol')))}</td>"
                            f"<td>{html.escape(str(o.get('side')))}</td>"
                            f"<td>{html.escape(str(o.get('qty')))}</td>"
@@ -163,8 +168,10 @@ def render(output: Path, database_path: str) -> Path:
             order_rows = "<tr><td colspan='5'>No open orders</td></tr>"
     except Exception as exc:  # noqa: BLE001
         account_line = f"paper broker unreachable: {html.escape(type(exc).__name__)}"
-        pos_rows = "<tr><td colspan='4'>—</td></tr>"
-        order_rows = "<tr><td colspan='5'>—</td></tr>"
+        # An error is not an empty account.  Keep the distinction visible so a
+        # broker outage cannot be mistaken for a flat paper portfolio.
+        pos_rows = "<tr><td colspan='4'>Unavailable — broker state unknown</td></tr>"
+        order_rows = "<tr><td colspan='5'>Unavailable — broker state unknown</td></tr>"
 
     ta_rows = ""
     for r in load_tradingagents(Path("outputs/paper/tradingagents")):
@@ -224,7 +231,7 @@ def render(output: Path, database_path: str) -> Path:
     ) or "<tr><td colspan='4'>No lifecycles</td></tr>"
 
     now_et = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
-    live = "OFF" if not settings.trading_enabled else "ON — STOP"
+    paper_status = "PAPER / AUTOMATION PAUSED" if not settings.trading_enabled else "PAPER / AUTOMATION ON"
     doc = f"""<!doctype html><html><head><meta charset='utf-8'>
 <meta http-equiv='refresh' content='15'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>Paper Trading — AI CIO</title>
@@ -236,7 +243,7 @@ table{{width:100%;border-collapse:collapse}}td,th{{padding:8px;text-align:left;b
 th{{color:#555;font-weight:600}}.pill{{padding:2px 10px;border-radius:12px;font-size:13px}}.live-off{{background:#1a7f37;color:#fff}}.live-on{{background:#cf222e;color:#fff}}
 small{{color:#555}}</style></head><body>
 <div class='hdr'><h1>Paper Trading</h1>
-<span class='pill {"live-off" if live=="OFF" else "live-on"}'>LIVE {live}</span>
+<span class='pill {"live-off" if not settings.trading_enabled else "live-on"}'>{paper_status}</span>
 <span class='pill' style='background:#0969da;color:#fff'>PAPER AUTO {"ON" if settings.paper_autonomy.enabled else "OFF"}</span>
 <small>{now_et} · Alpaca paper only · refreshes every 60s</small></div>
 <div class='card'><h2>Account</h2><p>{account_line}</p>
