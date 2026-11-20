@@ -51,6 +51,7 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "evidence_type": "entry",
     "audit_history": [],
     "rejection_reasons": None,
+    "order": None,
     "thesis": None,
     "slack": None,
 }
@@ -67,7 +68,7 @@ _STATUS_PRECEDENCE = {
     "unknown_submitted": 50, "unknown_reconciliation": 50,
 }
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
-_NON_ENTRY_EVIDENCE_FIELDS = {"thesis", "slack"}
+_NON_ENTRY_EVIDENCE_FIELDS = {"order", "thesis", "slack"}
 
 
 def _json_value(value: Any) -> Any:
@@ -336,11 +337,20 @@ def _connect(db_path: Path, *, timeout: float = 10, busy_timeout_ms: int = 10000
         connection.execute(
             """CREATE TABLE IF NOT EXISTS paper_autopilot_alert_deliveries (
                 candidate_id TEXT PRIMARY KEY, order_id TEXT NOT NULL,
+                order_status TEXT, evidence_reference TEXT,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT, sent_at TEXT, message_ts TEXT,
                 message_link TEXT, updated_at TEXT NOT NULL
             )"""
         )
+        alert_columns = {row[1] for row in connection.execute(
+            "PRAGMA table_info(paper_autopilot_alert_deliveries)"
+        )}
+        for column in ("order_status", "evidence_reference"):
+            if column not in alert_columns:
+                connection.execute(
+                    f"ALTER TABLE paper_autopilot_alert_deliveries ADD COLUMN {column} TEXT"
+                )
         connection.commit()
     except Exception:
         connection.rollback()
@@ -746,7 +756,8 @@ def run_paper_entry(
         cycle_connection = None
         if not _valid_broker_result(order):
             return unknown_reconciliation("broker returned an invalid accepted-order result", order if isinstance(order, dict) else {})
-        evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed"})
+        evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed",
+                         "order": _persisted_order(order)})
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)
         if evidence_root is not None:
             write_evidence(Path(evidence_root), evidence)
@@ -775,20 +786,23 @@ def _persist_alert_delivery(
     db_path: Path, evidence: dict, order_id: str, *, status: str, attempts: int,
     last_error: str | None, sent_at: str | None = None,
     message_ts: str | None = None, message_link: str | None = None,
+    order_status: str | None = None, evidence_reference: str | None = None,
 ) -> None:
     with _managed_connection(db_path) as connection:
         connection.execute(
             """INSERT INTO paper_autopilot_alert_deliveries
-               (candidate_id, order_id, status, attempts, last_error, sent_at,
+               (candidate_id, order_id, order_status, evidence_reference, status, attempts, last_error, sent_at,
                 message_ts, message_link, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(candidate_id) DO UPDATE SET order_id=excluded.order_id,
+                 order_status=excluded.order_status, evidence_reference=excluded.evidence_reference,
                  status=excluded.status, attempts=excluded.attempts,
                  last_error=excluded.last_error, sent_at=excluded.sent_at,
                  message_ts=excluded.message_ts, message_link=excluded.message_link,
                  updated_at=excluded.updated_at""",
-            (str(evidence["candidate_id"]), order_id, status, attempts, last_error,
-             sent_at, message_ts, message_link, datetime.now(timezone.utc).isoformat()),
+            (str(evidence["candidate_id"]), order_id, order_status, evidence_reference,
+             status, attempts, last_error, sent_at, message_ts, message_link,
+             datetime.now(timezone.utc).isoformat()),
         )
 
 
@@ -796,8 +810,6 @@ def send_entry_alert(
     result: dict, *, notifier: Any, clock: Any, retry_until_seconds: int = 600,
 ) -> dict:
     """Send an accepted paper-entry alert without touching broker execution."""
-    if retry_until_seconds < 0:
-        raise ValueError("retry_until_seconds must not be negative")
     if str(result.get("action", "")).lower() != "accepted":
         return {"sent": False, "attempts": 0, "last_error": None,
                 "sent_at": None, "status": "blocked"}
@@ -809,6 +821,39 @@ def send_entry_alert(
         raise ValueError("accepted entry alert requires candidate_id and order_id")
     db_path = Path(result.get("database_path") or evidence.get("database_path") or
                    evidence.get("db_path") or "outputs/paper/cio.db")
+    evidence_reference = str(result.get("evidence_reference") or
+                             evidence.get("evidence_reference") or
+                             (Path(result.get("evidence_root") or db_path.parent) /
+                              "evidence" / f"{candidate_id}.json"))
+
+    def failure(code: str, message: str) -> dict:
+        error = {"code": code, "message": message}
+        evidence["slack"] = {"status": "failed", "attempts": 0, "error": error}
+        try:
+            if result.get("evidence_root") is not None:
+                write_evidence(Path(result["evidence_root"]), evidence)
+        except Exception as exc:
+            error = {**error, "artifact_error": str(exc) or type(exc).__name__}
+            evidence["slack"]["error"] = error
+        try:
+            _persist_alert_delivery(
+                db_path, evidence, order_id, status="failed", attempts=0,
+                last_error=code, order_status=str(order.get("status", "accepted")),
+                evidence_reference=evidence_reference,
+            )
+        except Exception as exc:
+            error = {**error, "database_error": str(exc) or type(exc).__name__}
+        return {"sent": False, "attempts": 0, "last_error": error,
+                "sent_at": None, "status": "failed"}
+
+    configured_error = result.get("notifier_error")
+    if configured_error:
+        return failure(str(configured_error.get("code", "notifier_invalid")),
+                       str(configured_error.get("message", "Slack notifier construction failed")))
+    if notifier is None:
+        return failure("notifier_config_missing", "Slack bot token or channel configuration is missing")
+    if not callable(getattr(notifier, "send_approval", None)):
+        return failure("notifier_invalid", "Slack notifier does not provide send_approval")
     with _managed_connection(db_path) as connection:
         prior = connection.execute(
             "SELECT status, attempts, sent_at, message_ts, message_link "
@@ -820,7 +865,8 @@ def send_entry_alert(
                 "message_link": prior[4]}
 
     started = _clock_now(clock)
-    deadline = started.timestamp() + retry_until_seconds
+    retry_window = min(max(0, int(retry_until_seconds)), 600)
+    deadline = started.timestamp() + retry_window
     payload = {
         "event": "paper_entry_accepted", "timestamp": _timestamp(started),
         "contract": evidence.get("occ_symbol") or order.get("symbol"),
@@ -829,10 +875,7 @@ def send_entry_alert(
                  (evidence.get("quote") or {}).get("reviewed_price"),
         "thesis": evidence.get("thesis") or result.get("thesis") or "",
         "policy_version": evidence.get("policy_version") or result.get("policy_version"),
-        "evidence_reference": str(result.get("evidence_reference") or
-                                   evidence.get("evidence_reference") or
-                                   (Path(result.get("evidence_root") or db_path.parent) /
-                                    "evidence" / f"{candidate_id}.json")),
+        "evidence_reference": evidence_reference,
         "order_id": order_id,
     }
     channel_id = (result.get("channel_id") or evidence.get("channel_id") or
@@ -846,15 +889,42 @@ def send_entry_alert(
                 channel_id=channel_id,
                 message=json.dumps(payload, sort_keys=True, separators=(",", ":")),
             )
+        except Exception as exc:
+            last_error = {"code": "slack_send_failed",
+                          "message": str(exc) or type(exc).__name__}
+            if _clock_now(clock).timestamp() >= deadline:
+                break
+            sleep_for = min(delay, deadline - _clock_now(clock).timestamp())
+            if sleep_for <= 0:
+                break
+            try:
+                _persist_alert_delivery(db_path, evidence, order_id, status="retrying",
+                                        attempts=attempts, last_error=last_error["code"],
+                                        order_status=str(order.get("status", "accepted")),
+                                        evidence_reference=evidence_reference)
+            except Exception:
+                pass
+            _clock_sleep(clock, sleep_for)
+            delay = min(delay * 2, 60)
+            continue
+
+        # Persistence failures are not Slack send failures. Never resend a
+        # message merely because its local audit record needs recovery.
+        try:
             sent_at = _timestamp(_clock_now(clock))
-            evidence["slack"] = {"status": "sent", "attempts": attempts,
+            evidence["slack"] = {"status": "pending", "attempts": attempts,
                                   "message_ts": response.get("message_ts"),
                                   "message_link": response.get("message_link"),
                                   "sent_at": sent_at}
+            if result.get("evidence_root") is not None:
+                write_evidence(Path(result["evidence_root"]), evidence)
             _persist_alert_delivery(db_path, evidence, order_id, status="sent",
                                     attempts=attempts, last_error=None, sent_at=sent_at,
                                     message_ts=response.get("message_ts"),
-                                    message_link=response.get("message_link"))
+                                    message_link=response.get("message_link"),
+                                    order_status=str(order.get("status", "accepted")),
+                                    evidence_reference=evidence_reference)
+            evidence["slack"]["status"] = "sent"
             if result.get("evidence_root") is not None:
                 write_evidence(Path(result["evidence_root"]), evidence)
             return {"sent": True, "attempts": attempts, "last_error": None,
@@ -862,20 +932,29 @@ def send_entry_alert(
                     "message_ts": response.get("message_ts"),
                     "message_link": response.get("message_link")}
         except Exception as exc:
-            last_error = str(exc) or type(exc).__name__
-            if _clock_now(clock).timestamp() >= deadline:
-                break
-            sleep_for = min(delay, deadline - _clock_now(clock).timestamp())
-            if sleep_for <= 0:
-                break
-            _persist_alert_delivery(db_path, evidence, order_id, status="retrying",
-                                    attempts=attempts, last_error=last_error)
-            _clock_sleep(clock, sleep_for)
-            delay = min(delay * 2, 60)
+            last_error = {"code": "delivery_persistence_pending",
+                          "message": str(exc) or type(exc).__name__}
+            try:
+                _persist_alert_delivery(db_path, evidence, order_id, status="pending",
+                                        attempts=attempts, last_error=last_error["code"],
+                                        order_status=str(order.get("status", "accepted")),
+                                        evidence_reference=evidence_reference)
+            except Exception as db_exc:
+                last_error["database_error"] = str(db_exc) or type(db_exc).__name__
+            return {"sent": False, "attempts": attempts, "last_error": last_error,
+                    "sent_at": None, "status": "pending"}
     evidence["slack"] = {"status": "failed", "attempts": attempts, "error": last_error}
-    _persist_alert_delivery(db_path, evidence, order_id, status="failed",
-                            attempts=attempts, last_error=last_error)
     if result.get("evidence_root") is not None:
-        write_evidence(Path(result["evidence_root"]), evidence)
+        try:
+            write_evidence(Path(result["evidence_root"]), evidence)
+        except Exception as exc:
+            last_error = {**last_error, "artifact_error": str(exc) or type(exc).__name__}
+    try:
+        _persist_alert_delivery(db_path, evidence, order_id, status="failed",
+                                attempts=attempts, last_error=last_error["code"],
+                                order_status=str(order.get("status", "accepted")),
+                                evidence_reference=evidence_reference)
+    except Exception as exc:
+        last_error = {**last_error, "database_error": str(exc) or type(exc).__name__}
     return {"sent": False, "attempts": attempts, "last_error": last_error,
             "sent_at": None, "status": "failed"}

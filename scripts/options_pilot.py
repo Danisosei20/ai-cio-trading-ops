@@ -594,12 +594,19 @@ def main(argv=None) -> int:
                            "analysis": settings.freshness_max_age_minutes.get("market_regime", 30)},
         state_checker=state_checker,
     )
-    if result.get("action") == "accepted" and env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
-        from robinhood_tools.slack_web_api import SlackWebApiNotifier
-        result["channel_id"] = env["SLACK_CHANNEL_ID"]
+    if result.get("action") == "accepted":
+        notifier = None
+        if env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
+            try:
+                from robinhood_tools.slack_web_api import SlackWebApiNotifier
+                notifier = SlackWebApiNotifier.from_values(env)
+                result["channel_id"] = env["SLACK_CHANNEL_ID"]
+            except Exception as exc:
+                result["notifier_error"] = {
+                    "code": "notifier_invalid", "message": str(exc) or type(exc).__name__,
+                }
         result["alert"] = send_entry_alert(
-            result, notifier=SlackWebApiNotifier.from_values(env),
-            clock=lambda: datetime.now(timezone.utc),
+            result, notifier=notifier, clock=lambda: datetime.now(timezone.utc),
         )
     if result.get("action") != "accepted":
         # Blocked and unknown-submission states are already durably recorded
