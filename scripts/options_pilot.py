@@ -21,7 +21,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+from robinhood_tools.options_gate import DEFAULT_MIN_EV_PCT  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
+from robinhood_tools.option_entry_risk import (  # noqa: E402
+    MAX_QUOTED_IV, current_vix, realized_pnl_today, validate_option_entry,
+    validate_quoted_iv)
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
@@ -30,8 +34,9 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Paper long-options pilot.")
     p.add_argument("--ticker", default="NVDA")
     p.add_argument("--direction", default="call", choices=["call", "put"])
-    p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
-    p.add_argument("--max-contracts", type=int, default=3)
+    p.add_argument("--premium-cap", type=Decimal, default=Decimal("500"))
+    p.add_argument("--max-contracts", type=int, default=1,
+                   help="hard paper-desk limit: one contract")
     p.add_argument("--qty", type=int, default=0,
                    help="exact contracts (owner-directed); capped by premium-cap")
     p.add_argument("--max-positions", type=int, default=5,
@@ -43,10 +48,68 @@ def parse_args(argv=None):
     p.add_argument("--override-window", default="",
                    help="extend session as HH:MM-HH:MM for an owner-directed order "
                         "(reason = explicit CLI invocation; logged in audit)")
+    p.add_argument("--min-volume", type=int, default=0,
+                   help="owner-directed liquidity override: allow chains whose "
+                        "volume is below the desk default (100). 0 = keep the "
+                        "default. The spread, DTE, delta and OI gates are NOT "
+                        "relaxed - only the volume floor.")
     p.add_argument("--close", default="", help="OCC symbol to sell-to-close")
+    p.add_argument("--odds-paths", type=int, default=4000,
+                   help="simulation paths for the entry odds gate")
+    p.add_argument("--min-ev-pct", type=float, default=DEFAULT_MIN_EV_PCT,
+                   help="minimum simulated EV on premium to open "
+                         "(default +10%; the owner can "
+                        "set a margin - under the winners-run policy a "
+                        "capped loss against an uncapped win prices "
+                         "positive by construction, so the margin is the "
+                         "only part that filters)")
+    p.add_argument("--max-iv", type=float, default=MAX_QUOTED_IV,
+                   help="refuse quoted IV above this fraction; capped at "
+                        f"{MAX_QUOTED_IV:.0%}")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
+
+
+def iv_cap_block(*, quoted_iv: float | None, max_iv: float) -> str | None:
+    """Return an entry refusal while never exceeding the shared IV ceiling."""
+    effective_cap = MAX_QUOTED_IV if max_iv <= 0 else min(max_iv, MAX_QUOTED_IV)
+    try:
+        validate_quoted_iv(quoted_iv, effective_cap)
+    except PolicyViolation as exc:
+        return str(exc).replace("option entry blocked: ", "")
+    return None
+
+
+def _odds_verdict(quote, ticker: str, today, args) -> dict:
+    """Simulate the candidate under the guard's exit bands.
+
+    Never raises: an odds error is itself a refusal (fail closed), the
+    same posture the equity odds gate takes.
+    """
+    try:
+        from robinhood_tools.options_gate import (
+            entry_odds_verdict,
+            sigma_for_underlier,
+        )
+
+        iv = float(quote.iv) if quote.iv else None
+        sigma = sigma_for_underlier(ticker, iv)
+        if sigma is None:
+            return {"approved": False,
+                    "reason": "odds gate: no vol estimate for "
+                              f"{ticker} (realized and quoted IV both "
+                              "missing) - fail closed"}
+        return entry_odds_verdict(
+            premium0=float(quote.mid()),
+            delta=float(quote.delta) if quote.delta is not None else 0.5,
+            spot0=float(quote.underlying_price), sigma=float(sigma),
+            expiry=quote.contract.expiry, today=today,
+            paths=getattr(args, "odds_paths", 4000),
+            min_ev_pct=getattr(args, "min_ev_pct", DEFAULT_MIN_EV_PCT))
+    except Exception as exc:  # noqa: BLE001 - no odds means no entry
+        return {"approved": False,
+                "reason": f"odds gate error: {type(exc).__name__}: {exc}"}
 
 
 def main(argv=None) -> int:
@@ -76,6 +139,16 @@ def main(argv=None) -> int:
                           "note": "use the desk guard/exit path; closes travel review+ledger"}))
         return 0
 
+    daily_pnl = realized_pnl_today(settings.database_path, today)
+    vix = current_vix()
+    try:
+        validate_option_entry(vix=vix, premium=Decimal("0"), contracts=1,
+                              realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "reason": str(exc)}))
+        return 0
+
     data = AlpacaOptionsData.from_values(env)
     spot_q = get_quote(ticker, data_client=AlpacaMarketDataHttpClient.from_values(env),
                        max_age_minutes=args.max_age_minutes)
@@ -93,11 +166,42 @@ def main(argv=None) -> int:
                              as_of=datetime.now(timezone.utc).isoformat(),
                              source_url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
 
+    filters = None
+    if args.min_volume > 0:
+        from robinhood_tools.options import OptionSelectionFilters
+
+        # Deliberate, scoped, and auditable: the spread/DTE/delta/OI gates stay
+        # exactly as they are. Only the volume floor moves, and only for this
+        # explicit invocation - the desk default of 100 is unchanged for every
+        # other path. The cost is real: a thin chain means the exit sells into
+        # whatever bid exists.
+        filters = OptionSelectionFilters(min_option_volume=args.min_volume)
+        print(f"[filters] owner-directed min_option_volume={args.min_volume} "
+              f"(desk default 100); spread/DTE/delta/OI gates unchanged")
+
     quote, rejected = pick_long_option(
         data=data, underlying=ticker, spot=spot,
-        direction="bullish" if args.direction == "call" else "bearish", today=today)
+        direction="bullish" if args.direction == "call" else "bearish",
+        today=today, filters=filters)
+    iv_block = iv_cap_block(
+        quoted_iv=float(quote.iv) if quote.iv is not None else None,
+        max_iv=args.max_iv)
+    if iv_block:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "contract": quote.contract.option_symbol,
+                          "reason": iv_block}))
+        return 0
     auto_qty = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
     contracts = args.qty if args.qty > 0 else auto_qty
+    try:
+        validate_option_entry(
+            vix=vix, premium=Decimal(contracts) * quote.ask * 100,
+            contracts=contracts, realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "contract": quote.contract.option_symbol,
+                          "reason": str(exc)}))
+        return 0
     if args.qty > 0 and quote.ask * contracts * 100 > args.premium_cap:
         print(json.dumps({"ticker": ticker, "action": "skip",
                           "reason": f"directed qty {contracts} costs "
@@ -128,6 +232,24 @@ def main(argv=None) -> int:
            "iv": str(quote.iv), "qty": contracts,
            "premium": str((Decimal(contracts) * quote.ask * 100).quantize(Decimal("0.01"))),
            "rejected_elsewhere": len(rejected)}
+    # Odds gate verdict (owner decision 2026-11-16): the contract's
+    # simulated EV under the guard's exit bands. Dry-run REPORTS it so the
+    # operator can see the gate's opinion before --execute; execute mode
+    # enforces it here (and place_long_option enforces it again at the
+    # choke point, so both entry paths are covered).
+    odds = _odds_verdict(quote, ticker, today, args)
+    rec["odds"] = {
+        "approved": odds.get("approved"),
+        "ev_pct_on_premium": odds.get("ev_pct_on_premium"),
+        "stop_first": odds.get("stop_first"),
+        "neither": odds.get("neither"),
+        "reason": odds.get("reason", ""),
+    }
+    if not odds.get("approved", False):
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "contract": quote.contract.option_symbol,
+                          "reason": odds.get("reason", "odds gate refused")}))
+        return 0
     if args.dry_run or not args.execute:
         rec["action"] = "dry_run_buy"
         print(json.dumps(rec, indent=2))
@@ -164,6 +286,7 @@ def main(argv=None) -> int:
     db.update_candidate_status(candidate_id, "approved")
     rec.update({"action": "buy_placed", "order_id": result["order_id"],
                 "status": result["status"], "approval_id": result["approval_id"],
+                "alert": result.get("alert", "unknown"),
                 "candidate_id": candidate_id})
     print(json.dumps(rec, indent=2))
     return 0

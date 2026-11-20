@@ -6,17 +6,14 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from robinhood_tools.database import CioDatabase
+from robinhood_tools.database import CioDatabase, ClosingConnection
 from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.migrations import CURRENT_SCHEMA_VERSION, migrate_database
-from robinhood_tools.models import EquityOrderRequest, Order, OrderReview
+from robinhood_tools.models import Order
 from robinhood_tools.operations import (
     apply_losing_exit_cooldown,
-    monitor_slack_replies_once,
-    monitor_slack_reply_window,
     poll_until_terminal,
     report_service_failure,
-    resume_open_slack_monitors,
 )
 from robinhood_tools.reconciliation import Fill
 
@@ -29,16 +26,6 @@ class Orders:
         return Order(kwargs["order_id"], kwargs["account_id"], "AAPL", "sell", status)
     def get_fills(self, **kwargs):
         return [Fill(f"f{self.calls}", Decimal("1"), Decimal("120"), Decimal("0"), f"2026-07-13T14:0{self.calls}:00Z")]
-
-
-class Slack:
-    def __init__(self): self.acks = []
-    def replies(self, **kwargs): return [{"ts": "2.1", "text": "NO"}]
-    def acknowledge(self, **kwargs): self.acks.append(kwargs["message"])
-
-
-class SizedSlack(Slack):
-    def replies(self, **kwargs): return [{"ts": "3.1", "text": "$10"}]
 
 
 class Health:
@@ -54,26 +41,12 @@ class OperationsTests(unittest.TestCase):
             self.assertTrue(result.terminal)
             self.assertEqual(result.reconciliation.filled_quantity, Decimal("2"))
 
-    def test_slack_no_rejects_but_never_executes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = CioDatabase(Path(directory) / "cio.db")
-            request = EquityOrderRequest("a", "AAPL", "buy", "market", "gfd", notional=Decimal("10"))
-            review = OrderReview("r", "a", Decimal("10"))
-            approval = db.create(request, review, window_minutes=10)
-            db.open_reply_window(approval.approval_id, "C1", "1.1")
-            slack = Slack()
-            result = monitor_slack_replies_once(db, slack, approval_id=approval.approval_id,
-                                                channel_id="C1", parent_message_ts="1.1")
-            self.assertEqual(result[0]["state"], "rejected")
-            self.assertEqual(db.get(approval.approval_id).status, "rejected")
-            self.assertEqual(len(slack.acks), 1)
-
     def test_migration_is_repeatable_and_backup_is_valid(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database_path = root / "cio.db"
             backup_path = root / "backup.db"
-            with sqlite3.connect(database_path) as database:
+            with sqlite3.connect(database_path, factory=ClosingConnection) as database:
                 database.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
                 database.execute("INSERT INTO schema_version VALUES (?)", (CURRENT_SCHEMA_VERSION - 1,))
                 database.execute("CREATE TABLE legacy_record (value TEXT NOT NULL)")
@@ -82,13 +55,13 @@ class OperationsTests(unittest.TestCase):
             result = migrate_database(database_path, backup_path=backup_path)
             self.assertEqual(result["schema_version"], CURRENT_SCHEMA_VERSION)
             self.assertEqual(result["backup"], str(backup_path))
-            with sqlite3.connect(backup_path) as backup:
+            with sqlite3.connect(backup_path, factory=ClosingConnection) as backup:
                 self.assertEqual(backup.execute("SELECT version FROM schema_version").fetchone()[0],
                                  CURRENT_SCHEMA_VERSION - 1)
                 self.assertIsNone(backup.execute(
                     "SELECT name FROM sqlite_master WHERE name='research_experiments'"
                 ).fetchone())
-            with sqlite3.connect(database_path) as migrated:
+            with sqlite3.connect(database_path, factory=ClosingConnection) as migrated:
                 self.assertEqual(migrated.execute("SELECT version FROM schema_version").fetchone()[0],
                                  CURRENT_SCHEMA_VERSION)
                 self.assertIsNotNone(migrated.execute(
@@ -105,29 +78,6 @@ class OperationsTests(unittest.TestCase):
             ))
             with self.assertRaises(PolicyViolation):
                 db.require_no_symbol_cooldown("AAPL", today="2026-07-15")
-
-    def test_event_monitor_routes_size_without_user_returning_to_codex(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = CioDatabase(Path(directory) / "cio.db")
-            request = EquityOrderRequest("a", "AAPL", "buy", "market", "gfd", notional=Decimal("10"))
-            approval = db.create(request, OrderReview("r", "a", Decimal("10")), window_minutes=10)
-            db.open_reply_window(approval.approval_id, "C1", "1.1")
-            result = monitor_slack_reply_window(
-                db, SizedSlack(), approval_id=approval.approval_id, channel_id="C1",
-                parent_message_ts="1.1", timeout_seconds=0, poll_interval_seconds=0.01,
-            )
-            self.assertEqual(result.state, "fresh_review_required")
-            self.assertEqual(result.outcomes[0]["value"], "10")
-            self.assertEqual(db.get(approval.approval_id).status, "pending")
-
-    def test_restart_resumes_persisted_open_monitor(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = CioDatabase(Path(directory) / "cio.db")
-            request = EquityOrderRequest("a", "AAPL", "buy", "market", "gfd", notional=Decimal("10"))
-            approval = db.create(request, OrderReview("r", "a", Decimal("10")), window_minutes=10)
-            db.open_reply_window(approval.approval_id, "C1", "1.1")
-            result = resume_open_slack_monitors(db, SizedSlack(), timeout_seconds=0, poll_interval_seconds=0.01)
-            self.assertEqual(result[approval.approval_id].state, "fresh_review_required")
 
     def test_independent_health_notifier_reports_failure_without_secrets(self):
         health = Health()

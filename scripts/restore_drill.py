@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from robinhood_tools.database import DATABASE_SCHEMA_VERSION
+from robinhood_tools.database import ClosingConnection, DATABASE_SCHEMA_VERSION
 
 
 REQUIRED_TABLES = {
@@ -33,9 +33,10 @@ def run_restore_drill(source: Path, *, expected_schema: int = DATABASE_SCHEMA_VE
     with tempfile.TemporaryDirectory(prefix="cio-restore-drill-") as directory:
         restored = Path(directory) / "restored.db"
         source_uri = source.resolve().as_uri() + "?mode=ro"
-        with sqlite3.connect(source_uri, uri=True) as source_db, sqlite3.connect(str(restored)) as restored_db:
+        with sqlite3.connect(source_uri, uri=True, factory=ClosingConnection) as source_db, \
+                sqlite3.connect(str(restored), factory=ClosingConnection) as restored_db:
             source_db.backup(restored_db)
-        with sqlite3.connect(str(restored)) as db:
+        with sqlite3.connect(str(restored), factory=ClosingConnection) as db:
             integrity = str(db.execute("PRAGMA integrity_check").fetchone()[0])
             version_row = db.execute("SELECT version FROM schema_version").fetchone()
             version = int(version_row[0]) if version_row else 0

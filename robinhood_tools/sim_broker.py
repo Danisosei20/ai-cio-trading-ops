@@ -56,6 +56,11 @@ class _OptionPosition:
 class SimulationBroker:
     """Deterministic simulator. Never contacts any real broker."""
 
+    # Capability flag read by the order-alert seam. A fill from this backend
+    # is synthetic (unit tests, rehearsals, backtests) and must never page the
+    # live Slack channel. Real venue backends do not set this attribute.
+    is_simulation = True
+
     def __init__(self, *, cash: Decimal = Decimal("100000"),
                  equity_marks: dict[str, Decimal] | None = None,
                  day_ranges: dict[str, tuple[Decimal, Decimal]] | None = None,

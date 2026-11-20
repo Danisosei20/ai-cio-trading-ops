@@ -1,0 +1,52 @@
+@echo off
+REM ============================================================
+REM  Weekday 09:45 ET autonomous paper run (AI-CIO desk).
+REM  Registered in Task Scheduler as: AI-CIO-AutoTrade-0945
+REM
+REM  0) options_guard --execute   exits first (take +2% / cut -25% / DTE)
+REM  1) Refresh the screener (deterministic, top 10)
+REM  2) TradingAgents debate on the top 2 screened names
+REM     -> desk cross-check -> regime gate -> session gate
+REM     (09:45-15:45 ET weekdays + Alpaca clock open)
+REM     -> Alpaca PAPER order ($500 cap) -> Slack after execution
+REM
+REM  Everything logged to outputs\auto-trade.log.
+REM  Paper only. Never trades live brokers.
+REM ============================================================
+cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
+set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
+set LOG=outputs\auto-trade.log
+if not exist outputs mkdir outputs
+echo.>>%LOG%
+echo ==================================================>>%LOG%
+echo === auto trade run started %DATE% %TIME% ===>>%LOG%
+"%TA_PY%" -c "import json,pathlib,datetime,zoneinfo; p=pathlib.Path('outputs/auto-trade-run.json'); d=json.loads(p.read_text()) if p.exists() else {}; d['started_at']=datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York')).isoformat(); d['status']='started'; p.write_text(json.dumps(d))"
+
+"%TA_PY%" scripts\reconcile_fills.py --quiet>>%LOG% 2>&1
+"%TA_PY%" scripts\options_guard.py --execute>>%LOG% 2>&1
+REM Position odds for the dashboard (the simulation is expensive, so it
+REM runs once here and /trading reads the artifact, never re-simulating).
+"%TA_PY%" scripts\options_time_machine.py --book --allow-stale>>%LOG% 2>&1
+REM What the current book does under any market scenario (spot moves,
+REM decay, IV shocks, gaps) - read-only, ~5s, one artifact for the desk.
+"%TA_PY%" scripts\scenario_analysis.py>>%LOG% 2>&1
+REM How the desk's REAL fills performed, split by regime / side / weekday /
+REM hold length - the actual track record, not a simulation.
+"%TA_PY%" scripts\performance_by_scenario.py>>%LOG% 2>&1
+REM Certify the execution paths AND the truth against the live broker
+REM (read-only: ledger vs positions, dashboard P/L vs broker). The
+REM --no-broker variant used to skip those two checks forever; after the
+REM 2026-11-17 overnight reboot they ran for the first time and passed,
+REM so they now run every session.
+"%TA_PY%" scripts\paper_certification.py>>%LOG% 2>&1
+"%TA_PY%" scripts\universe_screen.py --top 10 --out outputs\screener\latest.json>>%LOG% 2>&1
+"%TA_PY%" scripts\zone_analysis.py --tickers SPY,QQQ,NVDA,AMD,AAPL>>%LOG% 2>&1
+REM Owner decision 2026-11-16 (Friday review): research-driven shorts may
+REM trade a down tape. --options routes bearish signals through the gated
+REM long-option flow (buy puts) instead of skipping them as "bearish but
+REM no position held"; premium/position caps match the 15:10 watch.
+"%TA_PY%" scripts\tradingagents_paper_auto.py --screen outputs\screener\latest.json --screen-top 7 --max-tool-rounds 5 --quick-model nvidia/nemotron-3.5-lightning-30b-a3b --deep-model nvidia/nemotron-3.5-lightning-30b-a3b --max-notional 2000 --ticker-timeout 1200 --options --premium-cap 3000 --max-option-positions 5>>%LOG% 2>&1
+
+echo === auto trade run finished %DATE% %TIME% ===>>%LOG%
+"%TA_PY%" -c "import json,pathlib,datetime,zoneinfo; p=pathlib.Path('outputs/auto-trade-run.json'); d=json.loads(p.read_text()) if p.exists() else {}; d['finished_at']=datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York')).isoformat(); d['status']='finished'; p.write_text(json.dumps(d))"
+".venv\Scripts\python.exe" scripts\run_summary.py>>%LOG% 2>&1

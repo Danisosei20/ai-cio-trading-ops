@@ -1,6 +1,7 @@
 """Options order path tests: fingerprint, ledger, guarded placement (sim)."""
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from decimal import Decimal
@@ -10,8 +11,10 @@ from robinhood_tools.approvals import option_fingerprint
 from robinhood_tools.database import CioDatabase
 from robinhood_tools.errors import PolicyViolation
 from robinhood_tools.models import OptionLeg, OptionOrderRequest
+from robinhood_tools.risk import RiskLimits
 from robinhood_tools.service import RobinhoodTradingService
 from robinhood_tools.sim_broker import SimulationBroker
+from scripts.options_watch_trade import liquid_signal_filter
 
 
 def leg(**overrides) -> OptionLeg:
@@ -252,6 +255,11 @@ class OptionGuardTest(unittest.TestCase):
         self.guard = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.guard)
 
+    def guard_default_target(self):
+        """The take-profit the guard actually ships with (not a test constant)."""
+        argv = self.guard.parse_args([])
+        return argv.target_pct
+
     def test_expire_target_stop_stale_hold(self):
         decide = self.guard.decide
         self.assertEqual(decide(Decimal("1000"), Decimal("900"), 2, 1,
@@ -260,13 +268,164 @@ class OptionGuardTest(unittest.TestCase):
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "TARGET")
         self.assertEqual(decide(Decimal("1000"), Decimal("400"), 30, 1,
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "STOP")
-        self.assertEqual(decide(Decimal("1000"), Decimal("1100"), 30, 6,
+        # STALE is for positions that are NOT winning; a loser drifts out.
+        self.assertEqual(decide(Decimal("1000"), Decimal("950"), 30, 6,
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "STALE")
         self.assertEqual(decide(Decimal("1000"), Decimal("1100"), 30, 1,
                                 Decimal("0.5"), Decimal("0.5"), 2, 5)[0], "HOLD")
         with self.assertRaises(PolicyViolation):
             decide(Decimal("0"), Decimal("100"), 30, 1,
                    Decimal("0.5"), Decimal("0.5"), 2, 5)
+
+    def test_winners_run_never_closed_by_time(self):
+        """With the target explicitly disabled, a winner is not closed by the
+        old 2% target or the STALE time exit -- only downside (STOP) and
+        expiry (EXPIRE) close it.
+
+        Superseded as the *default* by the 2026-11-06 owner decision to take
+        profit at +2%, then restored as the default on 2026-11-16 ("no,
+        it should be unlimited"). This pins that target_pct=0 means
+        unlimited and that a winner past the +25% arm rides the trail.
+        """
+        decide = self.guard.decide
+        # +180% held 9 days: no target, so no TARGET; in profit, so no STALE.
+        act, why = decide(Decimal("1000"), Decimal("2800"), 10, 9,
+                          Decimal("0"), Decimal("0.15"), 2, 5)
+        self.assertEqual(act, "HOLD")
+        self.assertIn("trail armed", why)
+        # Small winner on day 1 also holds -- nothing closes it early.
+        self.assertEqual(decide(Decimal("1000"), Decimal("1030"), 30, 1,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "HOLD")
+        # Downside still stops at -15%, winner or not.
+        self.assertEqual(decide(Decimal("1000"), Decimal("850"), 30, 1,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "STOP")
+        # Flat/losing trades still get flushed by STALE.
+        self.assertEqual(decide(Decimal("1000"), Decimal("1000"), 30, 6,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "STALE")
+        # Expiry guard is untouched -- nothing is held into the weekend.
+        self.assertEqual(decide(Decimal("1000"), Decimal("2800"), 2, 1,
+                                Decimal("0"), Decimal("0.15"), 2, 5)[0], "EXPIRE")
+
+    def test_trailing_stop_protects_big_winners(self):
+        """2026-10-17: once peak >= +25%, the stop ratchets up from the peak."""
+        decide = self.guard.decide
+        D = Decimal
+        # Peaked +200% (floor +80%): still above floor -> keep riding.
+        self.assertEqual(decide(D("2000"), D("5000"), 30, 2,
+                                D("0"), D("0.15"), 2, 5, peak_ret=D("2.0"))[0], "HOLD")
+        # Fell back to +70%: below the +80% floor -> trail exit.
+        act, why = decide(D("2000"), D("3400"), 30, 2,
+                          D("0"), D("0.15"), 2, 5, peak_ret=D("2.0"))
+        self.assertEqual(act, "TRAIL")
+        self.assertIn("floor", why)
+        # Peak under the +25% arm: plain winners-run rules apply.
+        self.assertEqual(decide(D("1000"), D("1150"), 30, 2,
+                                D("0"), D("0.15"), 2, 5, peak_ret=D("0.20"))[0], "HOLD")
+        # A +30% peak arms the trail at a +12% floor.
+        self.assertEqual(decide(D("1000"), D("1100"), 30, 2,
+                                D("0"), D("0.15"), 2, 5, peak_ret=D("0.30"))[0], "TRAIL")
+
+    def test_the_default_target_lets_winners_run(self):
+        """Owner decision 2026-11-16 ("no, it should be unlimited").
+
+        The 2026-11-06 +2% take-profit was reverted: the default target is
+        DISABLED, so an ordinary winner is held for the +25% trail instead
+        of being scalped. The options Time Machine priced the old policy at
+        -$47.53 per contract per round trip (61% win rate at a 1:7.5
+        payoff), which is why the default changed.
+        """
+        decide = self.guard.decide
+        act, why = decide(Decimal("1000"), Decimal("1030"), 30, 1,
+                          self.guard_default_target(), Decimal("0.15"), 2, 5)
+        self.assertEqual(act, "HOLD")
+        self.assertIn("winners run", why)
+        # The escape hatch remains: an explicit target still closes it.
+        act, why = decide(Decimal("1000"), Decimal("1030"), 30, 1,
+                          Decimal("0.02"), Decimal("0.15"), 2, 5)
+        self.assertEqual(act, "TARGET")
+        self.assertIn("3%", why)
+
+    def test_two_percent_target_does_not_close_a_home_run(self):
+        """A winner past the +25% trail arm rides the ratcheting floor.
+
+        The ACN call sits above +100%; a flat +2% target would sell it the
+        moment it crossed +2%, which is not what "take the 2%" means.
+        """
+        decide = self.guard.decide
+        act, why = decide(Decimal("1000"), Decimal("2200"), 30, 3,
+                          self.guard_default_target(), Decimal("0.15"), 2, 5,
+                          peak_ret=Decimal("1.2"))
+        self.assertEqual(act, "HOLD")
+        self.assertIn("trail armed", why)
+        # ...and it still exits if it falls back below the locked floor.
+        act, why = decide(Decimal("1000"), Decimal("500"), 30, 3,
+                          self.guard_default_target(), Decimal("0.15"), 2, 5,
+                          peak_ret=Decimal("1.2"))
+        self.assertEqual(act, "TRAIL")
+        self.assertIn("floor", why)
+
+    def test_guard_default_target_is_disabled(self):
+        """Owner 2026-11-16: winners run unlimited — the take-profit default
+        is 0 (disabled); the +25% trail floor is the protection."""
+        self.assertEqual(self.guard_default_target(), Decimal("0"))
+
+    def test_market_clock_closed_blocks_execution(self):
+        """Execution guard must refuse when the Alpaca market clock is closed."""
+        from unittest.mock import patch
+
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+
+        from robinhood_tools.alpaca_paper import AlpacaPaperBackend
+        from robinhood_tools.errors import PolicyViolation
+        from robinhood_tools.runtime import (_build_paper_service,
+                                              PaperAutonomySettings,
+                                              RuntimeSettings)
+        from robinhood_tools.universe import Sp500Snapshot
+        from pathlib import Path
+
+        settings = RuntimeSettings(
+            mode="paper_auto", trading_enabled=False, channel_id="C1",
+            approval_window_minutes=60,
+            database_path=Path(tempfile.mkdtemp()) / "paper.db",
+            dashboard_path=Path(tempfile.mkdtemp()) / "dashboard.html",
+            risk_limits=RiskLimits(
+                max_order_value=Decimal("500"), max_symbol_exposure=Decimal("500"),
+                min_cash_dollars=Decimal("50"), max_open_positions=1),
+            paper_trading_enabled=True,
+            paper_autonomy=PaperAutonomySettings(
+                enabled=True, regular_session_only=True,
+                earliest_entry_time_et="10:15", latest_entry_time_et="15:45"),
+        )
+        snapshot = Sp500Snapshot(
+            symbols=frozenset({"SPY"}), as_of="2026-01-01T00:00:00Z",
+            source_url="https://example.com")
+
+        # Patch the global datetime clock to a Tuesday 11:00 ET (inside the
+        # window) so the guard reaches the market-clock check.
+        fake_now = _dt(2026, 10, 13, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+        with patch("datetime.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.strptime.side_effect = _dt.strptime
+            mock_dt.time = _dt.time
+            mock_dt.side_effect = _dt
+
+            def run_guard(is_open: bool) -> None:
+                with patch.object(AlpacaPaperBackend, "market_clock",
+                                  return_value={"is_open": is_open}):
+                    svc = _build_paper_service(
+                        settings=settings, sp500_snapshot=snapshot,
+                        earliest="10:15", latest="15:45")
+                    svc.execution_guard()
+
+            # Market closed -> guard raises.
+            with self.assertRaises(PolicyViolation):
+                run_guard(False)
+
+            # Market open -> guard passes.
+            run_guard(True)  # does not raise
+
+
 
     def test_watchlist_format(self):
         import importlib.util
@@ -293,6 +452,226 @@ class OptionGuardTest(unittest.TestCase):
                          ("NVDA", "2026-11-20", "call", Decimal("240")))
         with self.assertRaises(PolicyViolation):
             occ_details("NVDA")
+
+    def test_load_tracked_unwraps_legacy_nesting(self):
+        import json
+        import tempfile
+
+        # Reproduce the legacy schema that nested the whole prior document
+        # under "tracked", which silently reset hold_days to 0 (STALE dead).
+        legacy = {
+            "updated": "2026-10-13",
+            "tracked": {
+                "updated": "2026-10-13",
+                "tracked": {
+                    "MRNA261016C00200000": {"first_seen": "2026-10-08",
+                                            "cost": "770"},
+                    "NVDA261120C00240000": {"first_seen": "2026-10-08",
+                                            "cost": "810"},
+                },
+                "evaluated": [],
+                "AAPL261120C00340000": {"first_seen": "2026-10-09",
+                                        "cost": "915"},
+                "NVDA261120C00240000": {"first_seen": "2026-10-05",
+                                        "cost": "700"},
+            },
+            "evaluated": [],
+        }
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "state.json"
+            p.write_text(json.dumps(legacy))
+            got = self.guard._load_tracked(p)
+        # every symbol found at any depth is recovered, flat
+        self.assertEqual(got["MRNA261016C00200000"]["first_seen"], "2026-10-08")
+        self.assertEqual(got["AAPL261120C00340000"]["first_seen"], "2026-10-09")
+        # duplicates keep the earliest first_seen so hold_days never rewinds
+        self.assertEqual(got["NVDA261120C00240000"]["first_seen"], "2026-10-05")
+
+    def test_load_tracked_missing_or_broken_file(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "nope.json"
+            self.assertEqual(self.guard._load_tracked(missing), {})
+            broken = Path(d) / "broken.json"
+            broken.write_text("{not json")
+            self.assertEqual(self.guard._load_tracked(broken), {})
+
+
+class OptionsWatchTradeTest(unittest.TestCase):
+    """15:10 watch -> trade gate (owner 2026-10-14)."""
+
+    def setUp(self):
+        import importlib.util
+        sys_path = str(Path("scripts/options_watch_trade.py"))
+        spec = importlib.util.spec_from_file_location("options_watch_trade", sys_path)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+    def _screen(self, ranked):
+        import json
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        tmp.write(json.dumps({"date": "2026-10-13", "ranked": ranked}))
+        tmp.close()
+        self.addCleanup(Path(tmp.name).unlink)
+        return Path(tmp.name)
+
+    def test_gate_skips_overbought_and_held(self):
+        path = self._screen([
+            {"symbol": "MRNA", "rsi": 66.3, "mom20": 0.50},
+            {"symbol": "NTAP", "rsi": 75.2, "mom20": 0.26},   # overbought
+            {"symbol": "HPE", "rsi": 59.5, "mom20": -0.02},   # held -> skip
+            {"symbol": "EIX", "rsi": 45.2, "mom20": 0.017},
+            {"symbol": "MTD", "rsi": 72.0, "mom20": 0.20},
+        ])
+        got = self.mod.gated_candidates(path, top=5, max_rsi=73.0,
+                                        held={"HPE"})
+        self.assertEqual(got, [("MRNA", "call"), ("EIX", "call"), ("MTD", "call")])
+
+    def test_direction_follows_momentum_and_stops_at_top(self):
+        path = self._screen([
+            {"symbol": "AAA", "rsi": 50.0, "mom20": -0.10},  # down -> put
+            {"symbol": "BBB", "rsi": 50.0, "mom20": 0.10},   # up -> call
+            {"symbol": "CCC", "rsi": 50.0, "mom20": 0.10},
+        ])
+        self.assertEqual(self.mod.gated_candidates(path, top=2, max_rsi=73.0,
+                                                   held=set()),
+                         [("AAA", "put"), ("BBB", "call")])
+
+    def test_missing_screen_is_empty_not_crash(self):
+        self.assertEqual(
+            self.mod.gated_candidates(Path("/no/such/screen.json"), 5, 73.0, set()),
+            [])
+
+
+class MinVolumeOverrideTest(unittest.TestCase):
+    """The owner-directed liquidity override, pinned.
+
+    2026-11-06: the desk's own gates refused to re-buy ACN because its option
+    chain is thin (most strikes 1-47 contracts against a 100 minimum). Rather
+    than lowering the desk default for every path, the pilot takes a scoped
+    --min-volume that relaxes ONLY the volume floor - the spread, DTE, delta
+    and OI gates are untouched, so a wide spread still blocks.
+    """
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, ".")
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "options_pilot", Path("scripts/options_pilot.py"))
+        self.pilot = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.pilot)
+
+    def test_default_keeps_the_desk_volume_floor(self):
+        argv = self.pilot.parse_args(["--ticker", "ACN"])
+        self.assertEqual(argv.min_volume, 0)
+
+    def test_override_relaxes_only_volume(self):
+        from robinhood_tools.options import OptionSelectionFilters
+
+        argv = self.pilot.parse_args(
+            ["--ticker", "ACN", "--min-volume", "5"])
+        self.assertEqual(argv.min_volume, 5)
+        filters = OptionSelectionFilters(min_option_volume=argv.min_volume)
+        # Volume moved...
+        self.assertEqual(filters.min_option_volume, 5)
+        # ...and the gates that protect against a bad fill did not.
+        self.assertEqual(filters.max_spread_pct, Decimal("0.10"))
+        self.assertEqual(filters.min_delta, Decimal("0.30"))
+        self.assertEqual(filters.max_delta, Decimal("0.60"))
+        self.assertEqual(filters.min_dte, 7)
+        self.assertEqual(filters.max_dte, 60)
+
+    def test_spread_gate_still_blocks_under_the_override(self):
+        """A thin chain with a wide spread must stay un-buyable."""
+        from robinhood_tools.options import OptionContract, OptionQuote, select_long_option
+        from datetime import date
+
+        def q(strike, ask, bid, delta, vol):
+            sym = f"ACN261218C{int(round(float(strike) * 1000)):08d}"
+            c = OptionContract("ACN", "2026-12-18", Decimal(str(strike)),
+                               "call", sym)
+            oq = OptionQuote(contract=c, bid=Decimal(str(bid)), ask=Decimal(str(ask)),
+                             underlying_price=Decimal("260"),
+                             quoted_at="2026-11-06T16:00:00-05:00",
+                             delta=Decimal(str(delta)), volume=vol, open_interest=None)
+            return oq
+
+        # The real ACN Dec-18 K260: delta in band, volume 6, spread 7.3%.
+        # Under the desk default it is rejected on volume alone...
+        ok = q(260, "18.86", "17.50", "0.5451", 6)
+        with self.assertRaises(Exception):
+            select_long_option([ok], direction="bullish",
+                               today="2026-11-06")
+        # ...and with the override's volume floor it is selected.
+        from robinhood_tools.options import OptionSelectionFilters
+        f = OptionSelectionFilters(min_option_volume=5)
+        selected, rejected = select_long_option(
+            [ok], direction="bullish", today="2026-11-06", filters=f)
+        self.assertEqual(selected.contract.strike, Decimal("260"))
+
+        # But a wide spread is still rejected even with volume relaxed.
+        wide = q(260, "25.00", "17.50", "0.5451", 500)
+        with self.assertRaises(Exception):
+            select_long_option([wide], direction="bullish",
+                               today="2026-11-06", filters=f)
+
+
+class TestLiquidSignalFilter(unittest.TestCase):
+    def _write_signals(self, root, data):
+        d = Path(root) / "outputs" / "liquid"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "latest.json").write_text(json.dumps(data))
+
+    def test_crowded_long_call_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {
+                    "crowded_longs_smart_money_fading": ["BTCD", "TWST"],
+                    "crowded_shorts_smart_money_buying": ["SMH"],
+                }})
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("BTCD", "call", path)
+            self.assertFalse(allowed)
+            self.assertIn("liquid:", why)
+            allowed, why = liquid_signal_filter("BTCD", "put", path)
+            self.assertTrue(allowed)
+
+    def test_crowded_short_put_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {
+                    "crowded_longs_smart_money_fading": [],
+                    "crowded_shorts_smart_money_buying": ["SMH"],
+                }})
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("SMH", "put", path)
+            self.assertFalse(allowed)
+            allowed, why = liquid_signal_filter("SMH", "call", path)
+            self.assertTrue(allowed)
+
+    def test_clear_symbol_passes(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._write_signals(root, {
+                "signals": {
+                    "crowded_longs_smart_money_fading": ["BTCD"],
+                    "crowded_shorts_smart_money_buying": ["SMH"],
+                }})
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("PTC", "call", path)
+            self.assertTrue(allowed)
+            allowed, why = liquid_signal_filter("PTC", "put", path)
+            self.assertTrue(allowed)
+
+    def test_missing_file_passes(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "outputs" / "liquid" / "latest.json"
+            allowed, why = liquid_signal_filter("PTC", "call", path)
+            self.assertTrue(allowed)
 
 
 if __name__ == "__main__":

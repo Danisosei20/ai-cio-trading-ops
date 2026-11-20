@@ -98,9 +98,6 @@ class CioWorkflow:
                 message_ts=delivery.get("message_ts"), message_link=delivery.get("message_link"),
                 retry_count=int(delivery.get("retry_count", 0)),
             )
-            self.database.open_reply_window(
-                approval.approval_id, self.channel_id, delivery.get("message_ts"), minutes=10
-            )
             self.database.audit("slack_delivered", delivery, correlation_id=correlation_id, approval_id=approval.approval_id)
         except Exception as exc:
             self.database.record_delivery(
@@ -136,8 +133,6 @@ class CioWorkflow:
             channel_id=self.channel_id,
             message=self._execution_status_message(request, approval_id, order),
         )
-        self.database.resolve_reply_window(approval_id, "executed")
-        self.database.cleanup_terminal_reply_windows()
         return order
 
     def prepare_sale(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from .database import CioDatabase, DATABASE_SCHEMA_VERSION
+from .database import CioDatabase, ClosingConnection, DATABASE_SCHEMA_VERSION
 
 
 CURRENT_SCHEMA_VERSION = DATABASE_SCHEMA_VERSION
@@ -17,7 +17,8 @@ def migrate_database(path: str | Path, *, backup_path: str | Path | None = None)
         if database_path.resolve() == backup.resolve():
             raise ValueError("Migration backup path must differ from the database path.")
         backup.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(database_path) as source, sqlite3.connect(backup) as destination:
+        with sqlite3.connect(database_path, factory=ClosingConnection) as source, \
+                sqlite3.connect(backup, factory=ClosingConnection) as destination:
             source.backup(destination)
 
     database = CioDatabase(database_path)

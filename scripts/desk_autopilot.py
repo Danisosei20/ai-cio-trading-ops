@@ -57,8 +57,12 @@ def main(argv=None) -> int:
     if a.mode == "learn":
         return run([sys.executable, "scripts/learn_from_trades.py"])
     if a.mode == "close":
+        # Report against the cap the watch enforces (3000, options_watch's
+        # default), not the watchlist's own, so the close message cannot
+        # flag a contract "over cap" that the desk would actually accept.
         return run([pick_python(needs_llm=True),
-                    "scripts/options_watchlist.py", "--send"])
+                    "scripts/options_watchlist.py", "--send",
+                    "--premium-cap", "3000"])
     if a.mode == "status":
         return run([sys.executable, "scripts/morning_check.py"])
     return 2

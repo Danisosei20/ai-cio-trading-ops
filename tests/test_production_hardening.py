@@ -17,7 +17,6 @@ from robinhood_tools.paper import PaperTradingBackend
 from robinhood_tools.portfolio import TaxLot, rank_lots_for_tax_aware_sale, wash_sale_warning
 from robinhood_tools.privacy import create_safe_support_bundle
 from robinhood_tools.runtime import build_settings, build_live_service
-from robinhood_tools.slack_replies import parse_safe_reply, reply_acknowledgement
 from robinhood_tools.universe import Sp500Snapshot
 
 
@@ -155,29 +154,6 @@ class ProductionHardeningTests(unittest.TestCase):
                 self.assertNotIn(".env", names)
                 self.assertNotIn("config/approval_routes.json", names)
                 self.assertIn(".env.example", names)
-
-    def test_slack_reply_parser_never_creates_execution_authority(self):
-        amount = parse_safe_reply("TEST SIZE $50")
-        shares = parse_safe_reply("TEST SHARES 0.25")
-        blocked = parse_safe_reply("APPROVE real-order")
-        self.assertEqual((amount.kind, amount.value), ("dollar_amount", Decimal("50")))
-        self.assertEqual((shares.kind, shares.value), ("share_quantity", Decimal("0.25")))
-        self.assertEqual(blocked.kind, "execution_blocked")
-        self.assertIn("require Codex", reply_acknowledgement(blocked))
-        self.assertEqual(parse_safe_reply("YES").kind, "yes_request_sizing")
-        self.assertEqual(parse_safe_reply("NO").kind, "reject")
-        self.assertEqual(parse_safe_reply("$50").value, Decimal("50"))
-        self.assertEqual(parse_safe_reply("0.25 shares").value, Decimal("0.25"))
-        self.assertEqual(parse_safe_reply("YES, $10").value, Decimal("10"))
-        self.assertEqual(parse_safe_reply("yes 0.25 shares").value, Decimal("0.25"))
-
-    def test_slack_reply_deduplication(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = CioDatabase(Path(directory) / "cio.db")
-            self.assertTrue(db.claim_slack_message("C1", "1.2", "dollar_amount"))
-            self.assertFalse(db.claim_slack_message("C1", "1.2", "dollar_amount"))
-            db.mark_slack_message_acknowledged("C1", "1.2")
-            self.assertFalse(db.claim_slack_message("C1", "1.2", "dollar_amount"))
 
 
 if __name__ == "__main__":

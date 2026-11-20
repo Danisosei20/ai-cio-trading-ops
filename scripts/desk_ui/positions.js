@@ -1,6 +1,6 @@
 async function tick(){
  try{
-  const [a,g]=await Promise.all([api('/api/account'),api('/api/guard')]);
+   const [a,g,pol]=await Promise.all([api('/api/account'),api('/api/guard'),api('/api/policy')]);
   $('acct').innerHTML=a.ok?
    `<span class="kpi">$${esc(a.portfolio)}</span><br>Cash $${esc(a.cash)} · Buying power $${esc(a.buying_power)} · Acct <small>${esc(a.account)}</small>`:
    '<span class="empty">broker unreachable ('+esc(a.error||'')+')</span>';
@@ -24,7 +24,12 @@ async function tick(){
    return `<div class="guardrow"><b>${esc(p.symbol)}</b> ${esc(p.qty)} @ $${esc(p.entry)} → $${esc(p.mark)} `+
    `<span class="${sig}">${esc(p.signal)}</span> <span class="${String(p.return_pct).startsWith('-')?'neg':'pos'}">${esc(p.return_pct)}</span> · stop $${esc(p.stop)} · target $${esc(p.target)}`+
    `${p.order_id?` · sold <small>${esc(p.order_id)}</small>`:''}</div>`;}).join('')
-   :'<span class="empty">No guarded positions.</span>';
+    :'<span class="empty">No guarded positions.</span>';
+   const o=pol.policy.options||{};
+   $('policy').innerHTML=`${pill(pol.status.status,pol.status.status==='READY'?'ok':pol.status.status==='BLOCKED'?'bad':'warn')} `+
+    `${pill('PAPER ONLY','info')} · ${esc(pol.policy.policy_version)}<br><small>IV ≤ ${esc((o.quoted_iv_cap*100).toFixed(0))}% · stop ${esc((o.guard_stop_pct*100).toFixed(0))}% · `+
+    `minimum ${esc(o.minimum_reward_risk)}:1 · winners ride</small><br><small>Equity guard ${pol.equity_guard.available?'available':'unavailable'} · `+
+    `Options guard ${pol.options_guard.available?'available':'unavailable'}</small>`;
  }catch(e){showError('acct',e);}
  paintBars(document);
 }
