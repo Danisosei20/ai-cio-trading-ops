@@ -66,7 +66,6 @@ def test_held_or_open_order_is_blocked(tmp_path):
 def test_lease_contention_blocks_and_releases_after_success(tmp_path):
     db = tmp_path / "autopilot.db"
     first = evidence(tmp_path, candidate_id="first")
-    second = evidence(tmp_path, candidate_id="second", occ_symbol="AAPL261218P00200000", side="put")
     entered = []
 
     # Keep the first lease held while its executor is running.

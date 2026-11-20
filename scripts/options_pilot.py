@@ -15,7 +15,7 @@ import argparse
 import json
 import sys
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 

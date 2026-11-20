@@ -14,7 +14,8 @@ from scripts.options_pilot import (
 
 
 NOW = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)
-STATE_OK = lambda: {"validated": True, "held": False, "open_order": False}
+def STATE_OK():
+    return {"validated": True, "held": False, "open_order": False}
 
 
 def quote(as_of: datetime = NOW) -> dict:
