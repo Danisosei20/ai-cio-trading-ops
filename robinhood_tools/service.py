@@ -118,7 +118,10 @@ class RobinhoodTradingService:
         self.authorizer.require("robinhood.read", "robinhood.trade_review", "robinhood.trade_write")
         if self.broker_environment != "paper":
             raise PolicyViolation("Option orders are paper-only.")
-        if self.execution_guard:
+        # Entry/session guards must never trap a held position. Sell-to-close
+        # remains callable so a closed session cannot disable protection.
+        is_exit = all(leg.side == "sell" and leg.effect == "close" for leg in request.legs)
+        if self.execution_guard and not is_exit:
             self.execution_guard()
         account = require_explicit_account(request.account_id, self.backend.list_accounts())
         require_agentic_account(account)
