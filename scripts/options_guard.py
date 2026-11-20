@@ -30,9 +30,9 @@ ACTUAL POLICY (reconciled 2026-11-16):
     orders on illiquid contracts may fill far from the intended price.
     The pilot's small notional limits exposure to this risk.
 
-The +2% target matches the desk owner plan already used by the EQUITY guard
-(paper_position_guard.py, +2%/-1%), so both guards now take profit at the
-same threshold.
+The EQUITY guard (paper_position_guard.py) is a separate policy: it keeps its
++2%/-1% thresholds. This options guard does NOT share them — its take-profit
+is disabled by default and protection comes from the -15% stop and +25% trail.
 
   python3 scripts/options_guard.py --check
   python3 scripts/options_guard.py --execute
@@ -85,12 +85,12 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
            peak_ret: Decimal | None = None) -> tuple[str, str]:
     """Pure exit decision. Returns (action, reason).
 
-    Owner policy 2026-11-06 ("take trade at any time even if the profit is
-    2%"): an ordinary winner is closed at +2%. Once a position has peaked
-    above --trail-arm (default +25%) that no longer applies - the -15% stop
-    ratchets up to trail from the peak instead of the entry, so a +200%
-    winner can never ride back below its locked-in floor and is not sold at
-    +2%.
+    Active policy (the owner reverted the +2% target on 2026-11-16): an
+    ordinary winner is HELD — ``target_pct`` defaults to 0, so TARGET fires
+    only when a caller explicitly passes a positive threshold. Protection
+    comes from the -15% stop and the trail: once a position has peaked above
+    +25%, the stop ratchets up to a floor of peak * 0.40, so a +200% winner
+    can never ride back below +80% and is never sold at a flat target.
     """
     if entry_cost <= 0:
         raise PolicyViolation("Entry cost must be positive.")
