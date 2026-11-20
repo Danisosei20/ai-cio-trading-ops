@@ -209,7 +209,7 @@ def _regime() -> str:
     keeps a surprise here from costing the run its entries.
     """
     try:
-        return market_regime(_spy_closes(), require_long_term=True)
+        return market_regime(_spy_closes())
     except Exception:  # noqa: BLE001 - an unreadable regime is never RISK_ON
         return "UNKNOWN"
 

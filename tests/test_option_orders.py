@@ -277,6 +277,84 @@ class OptionGuardTest(unittest.TestCase):
             decide(Decimal("0"), Decimal("100"), 30, 1,
                    Decimal("0.5"), Decimal("0.5"), 2, 5)
 
+    def test_reconciliation_required_close_is_retained_and_skipped_next_cycle(self):
+        state = {
+            "NVDA261120C00240000": {
+                "first_seen": "2026-10-07",
+                "cost": "1000",
+            }
+        }
+        result = {
+            "status": "filled",
+            "order_id": "close-2",
+            "reconciliation_required": True,
+            "reconciliation": {
+                "required": True,
+                "reason": "fresh exact-OCC position is non-flat",
+                "order_id": "close-2",
+                "broker_status": "filled",
+                "position_evidence": [{"symbol": "NVDA261120C00240000", "qty": "1"}],
+                "claim_released": False,
+            },
+        }
+
+        self.assertTrue(self.guard.record_close_result(
+            state, "NVDA261120C00240000", result))
+        self.assertIn("NVDA261120C00240000", state)
+        self.assertTrue(state["NVDA261120C00240000"]["reconciliation_required"])
+        self.assertEqual(
+            state["NVDA261120C00240000"]["reconciliation"]["reason"],
+            "fresh exact-OCC position is non-flat",
+        )
+        self.assertTrue(self.guard.close_reconciliation_pending(
+            state["NVDA261120C00240000"]))
+
+        # A subsequent guard cycle must retain recovery metadata and skip a
+        # replacement close while the authoritative position is still non-flat.
+        class Backend:
+            def get_option_order(self, order_id):
+                self.order_id = order_id
+                return type("Order", (), {"status": "filled"})()
+
+        backend = Backend()
+        recovery = self.guard.reconcile_pending_closes(
+            state, backend,
+            [{"symbol": "NVDA261120C00240000", "qty": "1"}],
+        )
+        self.assertEqual(recovery[0]["exit_action"], "reconciliation_pending")
+        self.assertEqual(backend.order_id, "close-2")
+        self.assertIn("NVDA261120C00240000", state)
+        self.assertTrue(self.guard.close_reconciliation_pending(
+            state["NVDA261120C00240000"]))
+        self.assertEqual(state["NVDA261120C00240000"]["reconciliation"]["order_id"], "close-2")
+
+    def test_legacy_flat_state_migrates_without_losing_tracking_metadata(self):
+        legacy = {
+            "NVDA261120C00240000": {
+                "first_seen": "2026-10-07",
+                "cost": "1000",
+                "pending": {"action": "close", "attempts": 1},
+                "reconciliation_required": True,
+                "order_id": "close-2",
+                "status": "filled",
+                "reconciliation": {
+                    "reason": "fresh exact-OCC position is non-flat",
+                    "claim_released": False,
+                },
+            }
+        }
+
+        state = self.guard.load_tracked_state(legacy)
+
+        self.assertEqual(state, legacy)
+        self.assertIsNot(state, legacy)
+
+    def test_new_state_format_is_loaded_as_tracked_records(self):
+        tracked = {"NVDA261120C00240000": {"first_seen": "2026-10-07"}}
+
+        state = self.guard.load_tracked_state({"updated": "2026-10-08", "tracked": tracked})
+
+        self.assertIs(state, tracked)
     def test_winners_run_never_closed_by_time(self):
         """With the target explicitly disabled, a winner is not closed by the
         old 2% target or the STALE time exit -- only downside (STOP) and
@@ -411,11 +489,16 @@ class OptionGuardTest(unittest.TestCase):
             mock_dt.side_effect = _dt
 
             def run_guard(is_open: bool) -> None:
+                class Transport:
+                    def request(self, method, path, payload=None):
+                        return [{"date": "2026-10-13", "open": "09:30", "close": "16:00"}]
+
                 with patch.object(AlpacaPaperBackend, "market_clock",
                                   return_value={"is_open": is_open}):
                     svc = _build_paper_service(
                         settings=settings, sp500_snapshot=snapshot,
-                        earliest="10:15", latest="15:45")
+                        earliest="10:15", latest="15:45", transport=Transport(),
+                        session_now=fake_now)
                     svc.execution_guard()
 
             # Market closed -> guard raises.
@@ -589,7 +672,6 @@ class MinVolumeOverrideTest(unittest.TestCase):
     def test_spread_gate_still_blocks_under_the_override(self):
         """A thin chain with a wide spread must stay un-buyable."""
         from robinhood_tools.options import OptionContract, OptionQuote, select_long_option
-        from datetime import date
 
         def q(strike, ask, bid, delta, vol):
             sym = f"ACN261218C{int(round(float(strike) * 1000)):08d}"

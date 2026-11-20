@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -38,8 +36,6 @@ if str(ROOT) not in sys.path:
 
 from robinhood_tools.trade_state import TradeStateMachine, TradeState
 from robinhood_tools.portfolio_risk import PortfolioRiskController
-from robinhood_tools.confidence import SetupScorer
-from scripts.daytrade_scout import scout_one
 from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
 
 ET = ZoneInfo("America/New_York")
@@ -203,7 +199,7 @@ def _validate_setup(rec: dict, equity: Decimal, open_positions: dict | None = No
     price = rec.get("price", 0)
     or_low = rec.get("or_low", 0)
     or_high = rec.get("or_high", 0)
-    vwap = rec.get("vwap", 0)
+    rec.get("vwap", 0)
     zone_verdict = rec.get("zone_verdict", "neutral")
     odds = rec.get("odds", {})
 
@@ -213,16 +209,14 @@ def _validate_setup(rec: dict, equity: Decimal, open_positions: dict | None = No
     # ── Determine direction & intent ────────────────────────────────
     if setup == "long_reclaim":
         direction = "long"
-        is_short = False
     else:  # short_breakdown
         direction = "short"
         # Check if we already hold a long position → sell-to-close, not short entry
         existing_long = open_positions.get(ticker, {}).get("qty", 0) if open_positions else 0
         if existing_long > 0:
             direction = "sell_to_close"
-            is_short = False
         else:
-            is_short = True
+            pass
 
     # ── Technical validation ────────────────────────────────────────
     # Zone gate: fail-closed - only block in the relevant direction
@@ -432,7 +426,7 @@ def _place_order(plan: dict) -> tuple[bool, str, str | None]:
         # Build Alpaca snapshot for eligibility
         from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
-        acct = backend.transport.request("GET", "/v2/account")
+        backend.transport.request("GET", "/v2/account")
 
         # Build a simple snapshot object
         class _Snap:
@@ -578,7 +572,6 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
             continue
 
         ticker = rec["ticker"]
-        raw_direction = "long" if setup == "long_reclaim" else "short"
 
         # ── Determine actual action (sell-to-close vs new entry) ─────
         existing_pos = open_positions.get(ticker, {})
@@ -825,7 +818,7 @@ def _exit_position(trade, current_price: float, reason: str) -> tuple[bool, str,
                 pass
 
         snapshot = _Snap()
-        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
         service = build_paper_service_with_session(
             settings=settings, sp500_snapshot=snapshot,
             env_path=".env",

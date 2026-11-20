@@ -65,6 +65,24 @@ class OptionsFlowTest(unittest.TestCase):
                              spot=Decimal("237.08"), direction="sideways",
                              today=date(2026, 10, 7))
 
+    def test_all_rejected_selection_exposes_every_rejected_contract(self):
+        first = quote("NVDA261120C00240000")
+        second = quote("NVDA261120C00250000")
+        first = OptionQuote(first.contract, first.bid, first.ask, first.underlying_price,
+                            first.quoted_at, iv=first.iv, delta=Decimal("0.10"),
+                            open_interest=first.open_interest, volume=first.volume)
+        second = OptionQuote(second.contract, second.bid, second.ask, second.underlying_price,
+                             second.quoted_at, iv=second.iv, delta=Decimal("0.10"),
+                             open_interest=second.open_interest, volume=second.volume)
+        with self.assertRaises(PolicyViolation) as raised:
+            pick_long_option(
+                data=FakeOptionsData([first, second]), underlying="NVDA",
+                spot=Decimal("237.08"), direction="bullish", today=date(2026, 10, 7))
+        self.assertEqual(
+            [item.option_symbol for item in raised.exception.rejected],
+            [first.contract.option_symbol, second.contract.option_symbol],
+        )
+
     def test_place_long_option(self):
         result = place_long_option(
             settings=self.settings, snapshot=snapshot(), quote=quote(),
@@ -170,11 +188,20 @@ class CloseOptionTest(unittest.TestCase):
             premium_cap=Decimal("500"), database=self.db, service=self.service,
             today=_dt.date(2026, 10, 7))
         self.assertEqual(buy["status"], "filled")
+        from robinhood_tools.paper_autopilot import build_evidence, claim_candidate
+        evidence = build_evidence({
+            "candidate_id": "entry-claim", "symbol": "NVDA",
+            "occ_symbol": self.quote.contract.option_symbol,
+        }, now=_dt.datetime(2026, 10, 7, tzinfo=_dt.timezone.utc))
+        self.assertTrue(claim_candidate(self.db.path, evidence))
         out = close_long_option(
             settings=self.settings, quote=self.quote, contracts=1,
             database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
         self.assertEqual(out["action"], "sell_placed")
         self.assertEqual(out["status"], "filled")
+        self.assertTrue(out["claim_closed"])
+        reopened = dict(evidence, candidate_id="re-entry", premium="1")
+        self.assertTrue(claim_candidate(self.db.path, reopened))
 
     def test_zero_bid_refused(self):
         import copy
@@ -189,6 +216,105 @@ class CloseOptionTest(unittest.TestCase):
             close_long_option(
                 settings=self.settings, quote=dead, contracts=1,
                 database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
+
+    def test_negative_contracts_are_rejected(self):
+        from robinhood_tools.options_flow import close_long_option
+
+        import datetime as _dt
+
+        with self.assertRaises(PolicyViolation):
+            close_long_option(
+                settings=self.settings, quote=self.quote, contracts=-1,
+                database=self.db, service=self.service, today=_dt.date(2026, 10, 8))
+
+    def test_claim_release_uses_authoritative_order_status(self):
+        from unittest.mock import patch
+
+        from robinhood_tools.models import Order
+        from robinhood_tools.options_flow import close_long_option, place_long_option
+        import datetime as _dt
+        from robinhood_tools.paper_autopilot import build_evidence, claim_candidate
+        from robinhood_tools.universe import Sp500Snapshot
+
+        snap = Sp500Snapshot(frozenset({"NVDA"}),
+                             _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                             "https://example.com/sp500")
+        place_long_option(settings=self.settings, snapshot=snap, quote=self.quote,
+                          contracts=1, earnings_date=_dt.date(2026, 11, 20),
+                          premium_cap=Decimal("500"), database=self.db,
+                          service=self.service, today=_dt.date(2026, 10, 7))
+        evidence = build_evidence({"candidate_id": "authoritative", "symbol": "NVDA",
+                                   "occ_symbol": self.quote.contract.option_symbol},
+                                  now=_dt.datetime(2026, 10, 7, tzinfo=_dt.timezone.utc))
+        self.assertTrue(claim_candidate(self.db.path, evidence))
+        authoritative = Order("close-1", "sim-1", self.quote.contract.option_symbol,
+                              "sell", "queued")
+        with patch.object(self.service.backend, "get_option_order", return_value=authoritative) as get_order:
+            out = close_long_option(settings=self.settings, quote=self.quote, contracts=1,
+                                    database=self.db, service=self.service,
+                                    today=_dt.date(2026, 10, 8))
+        get_order.assert_called_once_with(out["order_id"])
+        self.assertNotIn("claim_closed", out)
+        self.assertTrue(out["reconciliation_required"])
+
+    def test_terminal_close_with_nonflat_position_persists_reconciliation(self):
+        from unittest.mock import patch
+
+        from robinhood_tools.models import Order
+        from robinhood_tools.options_flow import close_long_option, place_long_option
+        import datetime as _dt
+        from robinhood_tools.paper_autopilot import build_evidence, claim_candidate
+        from robinhood_tools.universe import Sp500Snapshot
+
+        snap = Sp500Snapshot(frozenset({"NVDA"}),
+                             _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                             "https://example.com/sp500")
+        place_long_option(settings=self.settings, snapshot=snap, quote=self.quote,
+                          contracts=1, earnings_date=_dt.date(2026, 11, 20),
+                          premium_cap=Decimal("500"), database=self.db,
+                          service=self.service, today=_dt.date(2026, 10, 7))
+        evidence = build_evidence({"candidate_id": "nonflat-close", "symbol": "NVDA",
+                                   "occ_symbol": self.quote.contract.option_symbol},
+                                  now=_dt.datetime(2026, 10, 7, tzinfo=_dt.timezone.utc))
+        self.assertTrue(claim_candidate(self.db.path, evidence))
+        authoritative = Order("close-2", "sim-2", self.quote.contract.option_symbol,
+                              "sell", "filled")
+        with patch.object(self.service.backend, "get_option_order", return_value=authoritative), \
+             patch.object(self.service.backend, "get_positions", side_effect=[
+                 [{"symbol": self.quote.contract.option_symbol, "qty": "1"}],
+                 [{"symbol": self.quote.contract.option_symbol, "qty": "1"}],
+             ]):
+            out = close_long_option(settings=self.settings, quote=self.quote, contracts=1,
+                                    database=self.db, service=self.service,
+                                    today=_dt.date(2026, 10, 8))
+
+        self.assertTrue(out["reconciliation_required"])
+        self.assertFalse(out["reconciliation"]["claim_released"])
+        self.assertEqual(out["reconciliation"]["reason"],
+                         "fresh exact-OCC position is non-flat")
+        self.assertNotIn("claim_closed", out)
+        self.assertFalse(claim_candidate(self.db.path,
+                                          dict(evidence, candidate_id="re-entry")))
+        from robinhood_tools.operations import build_recovery_plan
+        self.assertEqual(self.db.get(out["approval_id"]).status,
+                         "reconciliation_required")
+        self.assertIn(out["approval_id"],
+                      build_recovery_plan(self.db).reconciliation_approval_ids)
+        with self.db.connect() as connection:
+            approval = connection.execute(
+                "SELECT order_id, failure FROM approvals WHERE approval_id=?",
+                (out["approval_id"],),
+            ).fetchone()
+        self.assertEqual(approval[0], out["order_id"])
+        self.assertEqual(__import__("json").loads(approval[1])["reason"],
+                         "fresh exact-OCC position is non-flat")
+        with self.db.connect() as connection:
+            event = connection.execute(
+                "SELECT event, payload FROM audit_events WHERE approval_id=?",
+                (out["approval_id"],),
+            ).fetchone()
+        self.assertEqual(event[0], "reconciliation_required")
+        self.assertTrue(__import__("json").loads(event[1])["claim_released"] is False)
 
 
 if __name__ == "__main__":

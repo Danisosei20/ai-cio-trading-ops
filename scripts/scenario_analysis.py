@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -93,7 +93,7 @@ def fetch_book() -> list[dict]:
             }
             mid = float(quote.mid())
         except Exception as exc:  # noqa: BLE001 - no Greeks, delta-only row
-            spot_q = get_quote(contract.underlying, max_age_minutes=1440)
+            get_quote(contract.underlying, max_age_minutes=1440)
             greeks = {"delta": 0.5, "gamma": 0.0, "theta": 0.0,
                       "vega": 0.0, "iv": 0.0, "error": str(exc)[:80]}
             mid = float(pos.get("current_price", "0"))

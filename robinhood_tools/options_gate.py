@@ -20,7 +20,6 @@ so certification and tests run offline.
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
 
 from .desk_policy import POLICY
 

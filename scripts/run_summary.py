@@ -98,7 +98,7 @@ def _goal_line() -> str:
     """Recurring weekly profit objective (fail-safe: silent on any error)."""
     try:
         import os
-        from datetime import date, datetime, timedelta
+        from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
 
         from robinhood_tools.alpaca_paper import (AlpacaPaperBackend,

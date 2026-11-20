@@ -1,6 +1,4 @@
 """Tests for the autonomous day trading engine."""
-import json
-import os
 import sys
 import tempfile
 import unittest
@@ -13,7 +11,6 @@ if str(ROOT) not in sys.path:
 
 from scripts.daytrade_engine import (
     _calc_position_size, _calc_reward_to_risk, _validate_setup,
-    MAX_RISK_PCT_PER_TRADE, MIN_REWARD_TO_RISK,
 )
 from robinhood_tools.portfolio_risk import PortfolioRiskController
 from robinhood_tools.trade_state import TradeStateMachine, TradeState

@@ -33,6 +33,8 @@ jobs:
           PAPER_TRADING_ENABLED=true
           ALPACA_PAPER_TRADE=true
           ALPACA_PAPER_BASE_URL=https://paper-api.alpaca.markets
+          ALPACA_API_KEY=ci
+          ALPACA_SECRET_KEY=ci
           EOF
       - run: ruff check robinhood_tools scripts tests
       - run: mypy robinhood_tools

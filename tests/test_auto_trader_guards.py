@@ -72,6 +72,8 @@ class AutoTraderGuardTests(unittest.TestCase):
         self.assertIn('if not rec.get("reason") and sig in BUY_SIGNALS:', self.source)
 
     def test_llm_timeout_is_forwarded_by_factory(self):
+        if not FACTORY.exists():
+            self.skipTest("TradingAgents sibling checkout is not available")
         src = FACTORY.read_text(encoding="utf-8")
         self.assertIn('config.get("timeout")', src)
         self.assertIn('kwargs["timeout"]', src)

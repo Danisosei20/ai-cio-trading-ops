@@ -22,7 +22,6 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -198,10 +197,10 @@ def _positions_by_direction() -> dict:
     positions = _positions()
     long_positions = [p for p in positions if p.get("direction") == "long"]
     short_positions = [p for p in positions if p.get("direction") == "short"]
-    
+
     long_pnl = sum(float(p.get("unrealized_pl", 0)) for p in long_positions)
     short_pnl = sum(float(p.get("unrealized_pl", 0)) for p in short_positions)
-    
+
     return {
         "long": {
             "count": len(long_positions),

@@ -608,7 +608,7 @@ def main(argv=None) -> int:
             circuit_broken = True
             log_line(f"CIRCUIT BREAKER: equity down {(equity_now-last_eq)/last_eq*100:.1f}% "
                      f"from prev close (${last_eq:,.0f} -> ${equity_now:,.0f}) - buys blocked")
-            print(f"CIRCUIT BROKEN: equity down >2% from prev close - buys blocked desk-wide")
+            print("CIRCUIT BROKEN: equity down >2% from prev close - buys blocked desk-wide")
     except Exception:  # noqa: BLE001
         pass
 

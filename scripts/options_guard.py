@@ -60,6 +60,66 @@ from robinhood_tools.options_flow import close_long_option  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
 STATE_FILE = Path("outputs/paper/options_guard.json")
+TERMINAL_ORDER_STATUSES = {"filled", "closed", "executed"}
+
+
+def load_tracked_state(payload: object) -> dict:
+    """Load current state and migrate legacy flat symbol records in memory."""
+    if not isinstance(payload, dict):
+        return {}
+    tracked = payload.get("tracked")
+    if isinstance(tracked, dict):
+        return tracked
+    # Legacy files stored symbol records at the top level.  Keep each record
+    # intact so first_seen, pending, and reconciliation evidence survives the
+    # first write in the new {"tracked": ...} format.
+    return {symbol: record for symbol, record in payload.items()
+            if isinstance(record, dict)}
+
+
+def close_reconciliation_pending(record: dict) -> bool:
+    """Return whether a close still requires authoritative reconciliation."""
+    return bool(record.get("reconciliation_required"))
+
+
+def record_close_result(state: dict, symbol: str, result: dict) -> bool:
+    """Persist unresolved close evidence without releasing local tracking."""
+    if not result.get("reconciliation_required"):
+        return False
+    record = state.setdefault(symbol, {})
+    record.update({
+        "reconciliation_required": True,
+        "order_id": result.get("order_id"),
+        "status": result.get("status"),
+        "reconciliation": result.get("reconciliation") or {},
+    })
+    return True
+
+
+def reconcile_pending_closes(state: dict, backend, positions: list[dict]) -> list[dict]:
+    """Clear pending state only after terminal order and flat OCC evidence."""
+    recovery = []
+    for symbol, record in list(state.items()):
+        if not close_reconciliation_pending(record):
+            continue
+        metadata = record.get("reconciliation") or {}
+        order_id = record.get("order_id") or metadata.get("order_id")
+        try:
+            authoritative = backend.get_option_order(order_id)
+            status = str(authoritative.status).lower()
+            exact = [p for p in positions
+                     if str(p.get("symbol", "")).upper() == symbol.upper()]
+            flat = all(Decimal(str(p.get("qty", "0"))) == 0 for p in exact)
+            if status in TERMINAL_ORDER_STATUSES and flat:
+                state.pop(symbol, None)
+                continue
+            metadata.update({"broker_status": status, "position_evidence": exact})
+        except (AttributeError, InvalidOperation, TypeError, ValueError, KeyError) as exc:
+            metadata["error"] = f"{type(exc).__name__}: {exc}"
+        record["reconciliation"] = metadata
+        recovery.append({"symbol": symbol, "reconciliation": metadata,
+                         "exit_action": "reconciliation_pending"})
+    return recovery
 
 
 def parse_args(argv=None):
@@ -180,11 +240,16 @@ def main(argv=None) -> int:
     env = {**load_env(args.env_file), **os.environ}
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
     data = AlpacaOptionsData.from_values(env)
-    state = _load_tracked(STATE_FILE)
+    payload = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    state = load_tracked_state(payload)
     today = date.today()
 
     results = []
-    for p in backend.list_positions():
+    positions = backend.list_positions()
+    for pending in reconcile_pending_closes(state, backend, positions):
+        results.append(pending)
+        print(json.dumps(pending))
+    for p in positions:
         symbol = str(p.get("symbol", ""))
         if len(symbol) <= 10:
             continue  # not an OCC contract
@@ -221,6 +286,13 @@ def main(argv=None) -> int:
                         "return": f"{ret:.0%}" if cost > 0 else None,
                         "peak": f"+{peak:.0%}",
                         "signal": action, "reason": reason})
+            if close_reconciliation_pending(seen):
+                rec.update({"exit_action": "reconciliation_pending",
+                            "reconciliation": seen.get("reconciliation") or {},
+                            "status": seen.get("status")})
+                results.append(rec)
+                print(json.dumps(rec))
+                continue
             if action != "HOLD" and args.execute:
                 from robinhood_tools.alpaca_options import snapshot_to_quote  # noqa: E402
                 from robinhood_tools.options import occ_details as _occ  # noqa: E402
@@ -240,8 +312,13 @@ def main(argv=None) -> int:
                 result = close_long_option(
                     settings=settings, quote=quote, contracts=qty, database=None,
                     service=None, today=today)
-                if result["status"] in {"queued", "confirmed", "filled",
-                                        "partially_filled", "accepted"}:
+                if result.get("reconciliation_required"):
+                    record_close_result(state, symbol, result)
+                    rec.update({"exit_action": "reconciliation_pending",
+                                "status": result.get("status"),
+                                "reconciliation": result.get("reconciliation") or {}})
+                elif result["status"] in {"queued", "confirmed", "filled",
+                                         "partially_filled", "accepted"}:
                     rec.update({"exit_action": "sell_placed",
                                 "order_id": result["order_id"], "status": result["status"],
                                 # The Slack alert's outcome, carried through so a

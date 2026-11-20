@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from robinhood_tools.desk_policy import POLICY, policy_snapshot, policy_status  # noqa: E402
+from robinhood_tools.desk_policy import policy_snapshot, policy_status  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_DIR = Path(__file__).resolve().parent / "desk_ui"

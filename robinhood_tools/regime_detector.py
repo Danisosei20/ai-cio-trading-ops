@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import math
 
 
 class Regime(str, Enum):
@@ -286,8 +285,8 @@ def compute_vwap_slope(bars: list[dict], lookback: int = 20) -> float:
         vol_sum = sum(b["volume"] for b in bars_subset)
         return tp_sum / vol_sum if vol_sum > 0 else 0.0
 
-    vwap_now = vwap(bars_subset[-lookback:])
-    vwap_past = vwap(bars_subset[:lookback])
+    vwap_now = vwap(bars[-lookback:])
+    vwap_past = vwap(bars[:lookback])
     return (vwap_now - vwap_past) / lookback
 
 

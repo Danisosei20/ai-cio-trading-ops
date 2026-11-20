@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+import json
 from zoneinfo import ZoneInfo
 
 from .alpaca_options import AlpacaOptionsData
@@ -155,10 +156,10 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                  correlation_id=auth.approval_id, approval_id=auth.approval_id)
     placed = service.place_option_order(request, review_id=review.review_id,
                                         approval_id=auth.approval_id, confirmed=False)
-    result = {"action": "buy_placed", "contract": contract.option_symbol,
-              "qty": contracts, "limit": str(request.limit_price),
-              "premium": str(premium), "order_id": placed.id,
-              "status": placed.status, "approval_id": auth.approval_id}
+    result = {"action": "buy_placed", "accepted": True, "contract": contract.option_symbol,
+            "qty": contracts, "limit": str(request.limit_price),
+            "premium": str(premium), "order_id": placed.id,
+            "status": placed.status, "approval_id": auth.approval_id}
     # One Slack message per placed order (owner directive 2026-11-16). The
     # end-of-run summary is not a substitute: 13 entries logged today with
     # no per-order alert. Never blocks the order path.
@@ -219,7 +220,10 @@ def close_long_option(*, settings, quote, contracts: int,
         raise PolicyViolation("Backend cannot list positions; close refused.")
     for position in lister():
         if str(position.get("symbol", "")).upper() == contract.option_symbol:
-            held += abs(Decimal(str(position.get("qty", "0"))))
+            quantity = Decimal(str(position.get("qty", "0")))
+            if quantity < 0:
+                raise PolicyViolation("Negative exact OCC quantity is invalid for sell-to-close.")
+            held += quantity
     if held < contracts:
         raise PolicyViolation(
             f"Holdings check failed: {held} held vs {contracts} to close; "
@@ -236,8 +240,81 @@ def close_long_option(*, settings, quote, contracts: int,
                                         approval_id=auth.approval_id, confirmed=False)
     result = {"action": "sell_placed", "contract": contract.option_symbol,
               "qty": contracts, "limit": str(request.limit_price),
-              "order_id": placed.id, "status": placed.status,
-              "approval_id": auth.approval_id}
+             "order_id": placed.id, "status": placed.status,
+             "approval_id": auth.approval_id}
+
+    def require_reconciliation(reason: str, *, broker_status=None,
+                               positions=None, error: str | None = None) -> dict:
+        """Record an unresolved close observation without releasing its claim."""
+        metadata = {
+            "required": True,
+            "reason": reason,
+            "order_id": placed.id,
+            "broker_status": str(broker_status if broker_status is not None else placed.status),
+            "position_evidence": positions,
+            "claim_released": False,
+        }
+        if error:
+            metadata["error"] = error
+        # Keep the authoritative approval unresolved until reconciliation.  The
+        # JSON failure payload is durable recovery metadata for restart plans and
+        # dashboards; in particular, do not turn a bad position observation into
+        # a closed OCC claim.
+        db.mark_reconciliation_required(
+            auth.approval_id, json.dumps(metadata, default=str), order_id=placed.id,
+        )
+        db.audit("reconciliation_required", metadata,
+                 correlation_id=auth.approval_id, approval_id=auth.approval_id)
+        result.update({"reconciliation_required": True, "reconciliation": metadata})
+        return result
+    # A placement response is only an acknowledgement. Re-read the order from
+    # the broker before using it as closure evidence.
+    try:
+        get_order = getattr(service.backend, "get_option_order", None)
+        if get_order is None:
+            raise PolicyViolation("Backend cannot retrieve option order status; close reconciliation required.")
+        authoritative = get_order(placed.id)
+        terminal = str(authoritative.status).lower() in {"filled", "closed", "executed"}
+        position_check = lister()
+    except Exception as exc:
+        return require_reconciliation(
+            "unable to obtain terminal order and fresh position evidence",
+            error=str(exc) or type(exc).__name__,
+        )
+    if terminal:
+        from .paper_autopilot import reconcile_candidate_claim
+        claim_closed = reconcile_candidate_claim(
+            db.path if hasattr(db, "path") else settings.database_path,
+            contract.option_symbol, order_id=authoritative.id,
+            broker_status=authoritative.status, positions=position_check,
+        )
+        if not claim_closed:
+            if not isinstance(position_check, list):
+                reason = "fresh position evidence is invalid"
+            else:
+                try:
+                    exact = [item for item in position_check
+                             if str(item.get("symbol", "")).upper() == contract.option_symbol]
+                    quantities = [Decimal(str(item.get("qty", "0"))) for item in exact]
+                    invalid = any(not quantity.is_finite() or quantity < 0
+                                  for quantity in quantities)
+                    reason = ("fresh exact-OCC position evidence is invalid"
+                              if invalid else
+                              "fresh exact-OCC position is non-flat"
+                              if any(quantity != 0 for quantity in quantities)
+                              else "fresh exact-OCC position evidence is invalid")
+                except (ArithmeticError, AttributeError, TypeError, ValueError):
+                    reason = "fresh exact-OCC position evidence is invalid"
+            return require_reconciliation(
+                reason, broker_status=authoritative.status, positions=position_check,
+            )
+        result["claim_closed"] = True
+        db.mark_executed(auth.approval_id, authoritative.id)
+    else:
+        return require_reconciliation(
+            "close order is not terminal", broker_status=authoritative.status,
+            positions=position_check,
+        )
     # One Slack message per placed exit (owner directive 2026-11-16): the
     # guard closes positions all session and the operator only learned about
     # it from the next run summary. The outcome is recorded, not discarded -

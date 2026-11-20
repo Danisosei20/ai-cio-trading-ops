@@ -19,10 +19,8 @@ Usage:
 from __future__ import annotations
 
 import json
-import urllib.request
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, date
-from pathlib import Path
+from dataclasses import dataclass
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
 

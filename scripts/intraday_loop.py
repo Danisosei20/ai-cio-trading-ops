@@ -74,7 +74,8 @@ def _save_traded(traded: list[dict]) -> None:
 def _market_open() -> bool:
     """Check if the market is open via Alpaca clock (best effort)."""
     try:
-        import urllib.request, json as _j
+        import urllib.request
+        import json as _j
         from robinhood_tools.settings import load_env
         env = load_env(".env")
         base = env.get("ALPACA_PAPER_BASE_URL", "https://paper-api.alpaca.markets")

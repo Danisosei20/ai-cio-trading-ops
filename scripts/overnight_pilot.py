@@ -48,7 +48,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -226,7 +226,7 @@ def _validate_setup(rec: dict, equity: Decimal,
     price = rec.get("price", 0)
     or_low = rec.get("or_low", 0)
     or_high = rec.get("or_high", 0)
-    vwap = rec.get("vwap", 0)
+    rec.get("vwap", 0)
     zone_verdict = rec.get("zone_verdict", "neutral")
     odds = rec.get("odds", {})
 
@@ -415,7 +415,6 @@ def main(argv=None) -> int:
         print("REFUSAL: live kill switch open.", file=sys.stderr)
         return 2
 
-    import os
 
     from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
     from robinhood_tools.database import CioDatabase
@@ -453,7 +452,7 @@ def main(argv=None) -> int:
                 if hist is None or len(hist) < 60:
                     continue
                 closes = [float(v) for v in hist["Close"].dropna()]
-                volumes = [float(v) for v in hist["Volume"].dropna()]
+                [float(v) for v in hist["Volume"].dropna()]
                 if len(closes) < 60:
                     continue
 
@@ -530,6 +529,12 @@ def main(argv=None) -> int:
         if len(spy_closes) >= 51:
             regime = market_regime(spy_closes)
 
+        # Reuse the shared risk controller before selecting entries.
+        try:
+            from scripts.daytrade_engine import _call_risk_controller
+        except ImportError:  # run as a bare script: scripts/ is sys.path[0]
+            from daytrade_engine import _call_risk_controller
+
         # Select candidates up to MAX_OPEN_POSITIONS
         selected = []
         for rec in candidates:
@@ -567,11 +572,9 @@ def main(argv=None) -> int:
         # own (daytrade_engine) - reusing them keeps one risk definition.
         # Imported locally so the module also loads as `scripts.overnight_pilot`.
         try:
-            from scripts.daytrade_engine import (  # noqa: PLC0415
-                _call_risk_controller, _place_order_with_timeout)
+            from scripts.daytrade_engine import _place_order_with_timeout  # noqa: PLC0415
         except ImportError:  # run as a bare script: scripts/ is sys.path[0]
-            from daytrade_engine import (  # noqa: PLC0415
-                _call_risk_controller, _place_order_with_timeout)
+            from daytrade_engine import _place_order_with_timeout  # noqa: PLC0415
         sm = TradeStateMachine()
         open_count = 0
         for rec, plan in selected:
