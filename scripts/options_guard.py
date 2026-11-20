@@ -32,6 +32,20 @@ STATE_FILE = Path("outputs/paper/options_guard.json")
 TERMINAL_ORDER_STATUSES = {"filled", "closed", "executed"}
 
 
+def load_tracked_state(payload: object) -> dict:
+    """Load current state and migrate legacy flat symbol records in memory."""
+    if not isinstance(payload, dict):
+        return {}
+    tracked = payload.get("tracked")
+    if isinstance(tracked, dict):
+        return tracked
+    # Legacy files stored symbol records at the top level.  Keep each record
+    # intact so first_seen, pending, and reconciliation evidence survives the
+    # first write in the new {"tracked": ...} format.
+    return {symbol: record for symbol, record in payload.items()
+            if isinstance(record, dict)}
+
+
 def close_reconciliation_pending(record: dict) -> bool:
     """Return whether a close still requires authoritative reconciliation."""
     return bool(record.get("reconciliation_required"))
@@ -125,7 +139,7 @@ def main(argv=None) -> int:
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
     data = AlpacaOptionsData.from_values(env)
     payload = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
-    state = payload.get("tracked", {}) if isinstance(payload, dict) else {}
+    state = load_tracked_state(payload)
     today = date.today()
 
     results = []

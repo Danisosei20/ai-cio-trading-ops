@@ -319,6 +319,34 @@ class OptionGuardTest(unittest.TestCase):
             state["NVDA261120C00240000"]))
         self.assertEqual(state["NVDA261120C00240000"]["reconciliation"]["order_id"], "close-2")
 
+    def test_legacy_flat_state_migrates_without_losing_tracking_metadata(self):
+        legacy = {
+            "NVDA261120C00240000": {
+                "first_seen": "2026-10-07",
+                "cost": "1000",
+                "pending": {"action": "close", "attempts": 1},
+                "reconciliation_required": True,
+                "order_id": "close-2",
+                "status": "filled",
+                "reconciliation": {
+                    "reason": "fresh exact-OCC position is non-flat",
+                    "claim_released": False,
+                },
+            }
+        }
+
+        state = self.guard.load_tracked_state(legacy)
+
+        self.assertEqual(state, legacy)
+        self.assertIsNot(state, legacy)
+
+    def test_new_state_format_is_loaded_as_tracked_records(self):
+        tracked = {"NVDA261120C00240000": {"first_seen": "2026-10-07"}}
+
+        state = self.guard.load_tracked_state({"updated": "2026-10-08", "tracked": tracked})
+
+        self.assertIs(state, tracked)
+
     def test_watchlist_format(self):
         import importlib.util
 
