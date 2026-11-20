@@ -224,6 +224,23 @@ def test_unknown_occ_claim_cannot_be_reentered(tmp_path):
     assert not claim_candidate(db, {**evidence, "candidate_id": "second", "premium": 700})
 
 
+def test_authoritative_reconciliation_releases_only_terminal_flat_close(tmp_path):
+    from robinhood_tools.paper_autopilot import reconcile_candidate_claim
+
+    db = tmp_path / "autopilot.db"
+    first = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    assert claim_candidate(db, first)
+    assert not reconcile_candidate_claim(
+        db, first["occ_symbol"], order_id="sell-1", broker_status="queued", positions=[]
+    )
+    assert not claim_candidate(db, {**first, "candidate_id": "second"})
+    assert reconcile_candidate_claim(
+        db, first["occ_symbol"], order_id="sell-1", broker_status="filled",
+        positions=[{"symbol": first["occ_symbol"], "qty": "0"}],
+    )
+    assert claim_candidate(db, {**first, "candidate_id": "second"})
+
+
 def test_record_attempt_persists_before_gate_result(tmp_path):
     db = tmp_path / "autopilot.db"
     evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))

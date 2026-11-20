@@ -567,6 +567,38 @@ def close_candidate_claim(db_path: Path, occ_symbol: str, *, order_id: str,
         return cursor.rowcount == 1
 
 
+def reconcile_candidate_claim(
+    db_path: Path, occ_symbol: str, *, order_id: str,
+    broker_status: str, positions: list[dict], closed_at: datetime | None = None,
+) -> bool:
+    """Release an OCC claim only from broker status plus a fresh flat position.
+
+    Callers provide observations from the broker, never a confirmation flag.
+    Queued/non-terminal orders and any non-zero exact-OCC position retain the
+    claim so a later run cannot submit a duplicate entry.
+    """
+    if not str(order_id).strip() or str(broker_status).lower() not in {
+        "filled", "closed", "executed",
+    } or not isinstance(positions, list):
+        return False
+    symbol = str(occ_symbol).strip().upper()
+    if not symbol:
+        return False
+    try:
+        remaining = sum(
+            abs(Decimal(str(item.get("qty", "0"))))
+            for item in positions
+            if str(item.get("symbol", "")).upper() == symbol
+        )
+    except (ArithmeticError, AttributeError, TypeError, ValueError):
+        return False
+    if remaining != 0:
+        return False
+    return close_candidate_claim(
+        db_path, symbol, order_id=str(order_id), confirmed=True, closed_at=closed_at,
+    )
+
+
 def record_attempt(
     db_path: Path,
     evidence: dict,

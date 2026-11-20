@@ -177,10 +177,11 @@ def close_long_option(*, settings, quote, contracts: int,
         result["reconciliation_required"] = True
         return result
     if terminal and remaining == 0:
-        from .paper_autopilot import close_candidate_claim
-        result["claim_closed"] = close_candidate_claim(
+        from .paper_autopilot import reconcile_candidate_claim
+        result["claim_closed"] = reconcile_candidate_claim(
             db.path if hasattr(db, "path") else settings.database_path,
-            contract.option_symbol, order_id=placed.id, confirmed=True,
+            contract.option_symbol, order_id=placed.id,
+            broker_status=placed.status, positions=position_check,
         )
     else:
         result["reconciliation_required"] = True

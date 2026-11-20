@@ -210,23 +210,6 @@ def persist_candidate_before_gate(
         evidence, now=now, active_policy_version=active_policy_version,
         freshness_limits=freshness_limits,
     )
-
-
-def deliver_accepted_entry_alert(result: dict, *, env: dict, clock, notifier=None) -> dict:
-    """Production handoff: alert only after the paper broker accepted an order."""
-    if result.get("action") != "accepted":
-        return result
-    if notifier is None and env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
-        try:
-            from robinhood_tools.slack_web_api import SlackWebApiNotifier
-            notifier = SlackWebApiNotifier.from_values(env)
-            result["channel_id"] = env["SLACK_CHANNEL_ID"]
-        except Exception as exc:
-            result["notifier_error"] = {
-                "code": "notifier_invalid", "message": str(exc) or type(exc).__name__,
-            }
-    result["alert"] = send_entry_alert(result, notifier=notifier, clock=clock)
-    return result
     if reason:
         _annotate_blocked_evidence(evidence, failure_stage="validation", reason=reason)
         evidence["action"] = "blocked"
@@ -246,6 +229,32 @@ def deliver_accepted_entry_alert(result: dict, *, env: dict, clock, notifier=Non
         # kept out of the persisted evidence/fingerprint.
         state_checker=state_checker,
     )
+
+
+def deliver_accepted_entry_alert(result: dict, *, env: dict, clock, notifier=None) -> dict:
+    """Production handoff: alert only after a valid accepted paper order."""
+    if result.get("action") != "accepted":
+        return result
+    order = result.get("order") or {}
+    if str(order.get("status", "")).lower() not in {"accepted", "queued", "new"}:
+        return result
+    if notifier is None and env.get("SLACK_BOT_TOKEN") and env.get("SLACK_CHANNEL_ID"):
+        try:
+            from robinhood_tools.slack_web_api import SlackWebApiNotifier
+            notifier = SlackWebApiNotifier.from_values(env)
+            result["channel_id"] = env["SLACK_CHANNEL_ID"]
+        except Exception as exc:
+            result["notifier_error"] = {
+                "code": "notifier_invalid", "message": str(exc) or type(exc).__name__,
+            }
+    try:
+        result["alert"] = send_entry_alert(result, notifier=notifier, clock=clock)
+    except Exception as exc:
+        result["alert"] = {"sent": False, "status": "indeterminate",
+                            "attempts": 0,
+                            "last_error": {"code": "alert_exception",
+                                            "message": str(exc) or type(exc).__name__}}
+    return result
 
 
 def record_preentry_block(
