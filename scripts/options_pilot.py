@@ -410,7 +410,6 @@ def main(argv=None) -> int:
         return 2
 
     import os
-    from datetime import datetime, timezone
 
     from robinhood_tools.alpaca_options import AlpacaOptionsData
     from robinhood_tools.market_prices import get_quote
