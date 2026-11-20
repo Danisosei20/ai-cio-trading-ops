@@ -97,10 +97,17 @@ def test_stale_evidence_is_rejected_and_persisted_before_gate(tmp_path):
     assert called == []
     with sqlite3.connect(db) as connection:
         row = connection.execute(
-            "SELECT action, reason FROM paper_autopilot_attempts"
+            "SELECT action, reason, evidence FROM paper_autopilot_attempts"
         ).fetchone()
     assert row[0] == "blocked"
     assert "stale" in row[1]
+    blocked = json.loads(row[2])
+    assert blocked["evidence_type"] == "blocked"
+    assert blocked["failure_stage"] == "validation"
+    assert blocked["known_fields"]
+    assert blocked["unknown_fields"] == []
+    assert blocked["quote"]["source"] == "alpaca-options"
+    assert blocked["freshness"]["quote"]["observed_at_utc"]
 
 
 def test_screened_candidate_and_downstream_gate_failure_persist_before_order(tmp_path):
@@ -159,9 +166,10 @@ def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
             evidence_root=tmp_path,
         )
     with sqlite3.connect(db) as connection:
-        rows = connection.execute("SELECT action, reason FROM paper_autopilot_attempts ORDER BY id").fetchall()
+        rows = connection.execute("SELECT action, reason, evidence FROM paper_autopilot_attempts ORDER BY id").fetchall()
     assert rows[0][0] == "blocked"
-    assert rows[1] == ("blocked", "downstream failure")
+    assert rows[1][:2] == ("blocked", "downstream failure")
+    assert json.loads(rows[1][2])["failure_stage"] == "gate"
 
 
 def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path):
@@ -188,6 +196,21 @@ def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path
     assert result["action"] == "accepted"
     assert observed["sqlite"] == [("screened",)]
     assert '"action": "screened"' in observed["artifact"]
+
+
+def test_broker_exception_is_structured_blocked_evidence(tmp_path):
+    evidence = collect_entry_evidence("NVDA", "call", quote(), analysis(), now=NOW)
+    with pytest.raises(RuntimeError, match="paper broker down"):
+        persist_candidate_before_gate(
+            tmp_path / "autopilot.db", evidence, gate=lambda: True,
+            broker_call=lambda: (_ for _ in ()).throw(RuntimeError("paper broker down")),
+            now=NOW, evidence_root=tmp_path,
+        )
+    artifact = json.loads(next((tmp_path / "evidence").glob("*.json")).read_text())
+    assert artifact["evidence_type"] == "blocked"
+    assert artifact["failure_stage"] == "broker"
+    assert artifact["known_fields"]
+    assert artifact["unknown_fields"] == []
 
 
 def test_early_block_helper_writes_one_blocked_attempt_and_artifact(tmp_path):
@@ -256,6 +279,28 @@ def test_rejected_chain_candidates_are_persisted_individually(tmp_path):
         ("screened", "selection rejected: spread too wide"),
         ("screened", "selection rejected: volume too low"),
     ]
+
+
+def test_all_rejected_chain_is_persisted_before_selection_exception(tmp_path):
+    from types import SimpleNamespace
+    from scripts.options_pilot import persist_rejected_chain_candidates
+
+    rejected = [
+        SimpleNamespace(option_symbol="NVDA261218C00200000", reasons=["DTE too short"]),
+        SimpleNamespace(option_symbol="NVDA261218C00210000", reasons=["delta outside band"]),
+    ]
+    error = PolicyViolation("No suitable long call: 2 rejected.")
+    error.rejected = rejected
+    try:
+        persist_rejected_chain_candidates(
+            tmp_path / "autopilot.db", "NVDA", "call", error.rejected,
+            now=NOW, evidence_root=tmp_path,
+        )
+        raise error
+    except PolicyViolation:
+        pass
+    with sqlite3.connect(tmp_path / "autopilot.db") as connection:
+        assert connection.execute("SELECT count(*) FROM paper_autopilot_attempts").fetchone()[0] == 2
 
 
 @pytest.mark.parametrize("mutator,match", [

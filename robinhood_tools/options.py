@@ -142,7 +142,9 @@ def select_long_option(quotes: list[OptionQuote], *, direction: str,
         score = q.spread_pct() + abs(abs(delta) - Decimal("0.45"))
         ranked.append((score, q))
     if not ranked:
-        raise PolicyViolation(f"No suitable long {want}: {len(rejected)} rejected.")
+        error = PolicyViolation(f"No suitable long {want}: {len(rejected)} rejected.")
+        error.rejected = rejected
+        raise error
     ranked.sort(key=lambda item: item[0])
     return ranked[0][1], rejected
 

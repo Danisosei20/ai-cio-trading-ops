@@ -247,3 +247,19 @@ def test_record_attempt_upserts_one_row_and_keeps_json_audit_history(tmp_path):
     assert row[0:3] == ("accepted", "gates passed", '{"order_id":"paper-1"}')
     history = json.loads(row[3])["audit_history"]
     assert [item["action"] for item in history] == ["screened", "accepted"]
+
+
+def test_concurrent_record_attempts_upsert_one_unique_fingerprint_row(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+    def write_once(_):
+        record_attempt(db, evidence, "screened", "candidate screened")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write_once, range(8)))
+
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT count(*) FROM paper_autopilot_attempts").fetchone()[0] == 1
+        indexes = connection.execute("PRAGMA index_list(paper_autopilot_attempts)").fetchall()
+    assert any(index[2] and "fingerprint" in index[1] for index in indexes)

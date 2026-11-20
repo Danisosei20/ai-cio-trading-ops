@@ -55,7 +55,7 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
 _VOLATILE_FINGERPRINT_FIELDS = {
     "candidate_id", "observed_at_utc", "observed_at_et", "created_at", "updated_at",
     "action", "status", "reason", "failure_stage", "known_fields", "unknown_fields",
-    "audit_history", "order", "slack",
+    "evidence_type", "audit_history", "order", "slack",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
@@ -132,6 +132,50 @@ def _persisted_order(order: dict | None) -> dict | None:
     return _json_value({key: value for key, value in order.items() if key in _ORDER_FIELDS})
 
 
+def _deduplicate_attempts(connection: sqlite3.Connection) -> None:
+    """Collapse pre-unique-index duplicates without discarding transition history."""
+    fingerprints = connection.execute(
+        """SELECT fingerprint FROM paper_autopilot_attempts
+           GROUP BY fingerprint HAVING count(*) > 1"""
+    ).fetchall()
+    for (fingerprint,) in fingerprints:
+        rows = connection.execute(
+            """SELECT id, candidate_id, evidence, action, status, reason,
+                      order_payload, created_at
+               FROM paper_autopilot_attempts WHERE fingerprint=? ORDER BY id""",
+            (fingerprint,),
+        ).fetchall()
+        keep = rows[0]
+        merged = json.loads(keep[2])
+        history = list(merged.get("audit_history", []))
+        for row in rows:
+            row_evidence = json.loads(row[2])
+            row_history = row_evidence.get("audit_history", [])
+            if row_history:
+                history.extend(row_history)
+            else:
+                history.append({
+                    "action": row[3], "reason": row[5],
+                    "order": json.loads(row[6]) if row[6] else None,
+                    "at": row[7],
+                })
+        merged["audit_history"] = history
+        latest = rows[-1]
+        connection.execute(
+            """UPDATE paper_autopilot_attempts
+               SET evidence=?, action=?, status=?, reason=?, order_payload=?
+               WHERE id=?""",
+            (
+                json.dumps(merged, sort_keys=True, separators=(",", ":"), allow_nan=False),
+                latest[3], latest[4], latest[5], latest[6], keep[0],
+            ),
+        )
+        connection.execute(
+            "DELETE FROM paper_autopilot_attempts WHERE fingerprint=? AND id<>?",
+            (fingerprint, keep[0]),
+        )
+
+
 def write_evidence(root: Path, evidence: dict) -> Path:
     """Write one evidence artifact with replacement semantics, never partial output."""
     root = Path(root)
@@ -182,6 +226,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path, timeout=10, isolation_level=None)
     try:
+        connection.execute("BEGIN IMMEDIATE")
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute(
             """CREATE TABLE IF NOT EXISTS paper_autopilot_leases (
@@ -199,8 +244,19 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             """CREATE TABLE IF NOT EXISTS paper_autopilot_attempts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id TEXT NOT NULL,
                 fingerprint TEXT NOT NULL, evidence TEXT NOT NULL, action TEXT NOT NULL,
-                reason TEXT NOT NULL, order_payload TEXT, created_at TEXT NOT NULL
+                status TEXT NOT NULL DEFAULT 'screened', reason TEXT NOT NULL,
+                order_payload TEXT, created_at TEXT NOT NULL
             )"""
+        )
+        attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(paper_autopilot_attempts)")}
+        if "status" not in attempt_columns:
+            connection.execute(
+                "ALTER TABLE paper_autopilot_attempts ADD COLUMN status TEXT NOT NULL DEFAULT 'screened'"
+            )
+        _deduplicate_attempts(connection)
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_autopilot_attempts_fingerprint "
+            "ON paper_autopilot_attempts(fingerprint)"
         )
         connection.execute(
             """CREATE TABLE IF NOT EXISTS paper_autopilot_candidate_claims (
@@ -208,7 +264,17 @@ def _connect(db_path: Path) -> sqlite3.Connection:
                 candidate_id TEXT NOT NULL, claimed_at TEXT NOT NULL
             )"""
         )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_autopilot_claims_fingerprint "
+            "ON paper_autopilot_candidate_claims(fingerprint)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_autopilot_claims_occ_symbol "
+            "ON paper_autopilot_candidate_claims(occ_symbol)"
+        )
+        connection.commit()
     except Exception:
+        connection.rollback()
         connection.close()
         raise
     return connection
@@ -291,6 +357,7 @@ def record_attempt(
     order: dict | None = None,
 ) -> None:
     with _managed_connection(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
         fingerprint = candidate_fingerprint(evidence)
         existing = connection.execute(
             "SELECT id, candidate_id, evidence FROM paper_autopilot_attempts WHERE fingerprint=? LIMIT 1",
@@ -314,17 +381,17 @@ def record_attempt(
         if existing:
             connection.execute(
                 """UPDATE paper_autopilot_attempts
-                   SET candidate_id=?, evidence=?, action=?, reason=?, order_payload=?, created_at=?
+                   SET candidate_id=?, evidence=?, action=?, status=?, reason=?, order_payload=?, created_at=?
                    WHERE id=?""",
-                (evidence["candidate_id"], encoded_evidence, action, reason, order_payload,
+                (evidence["candidate_id"], encoded_evidence, action, action, reason, order_payload,
                  datetime.now(timezone.utc).isoformat(), existing[0]),
             )
         else:
             connection.execute(
                 """INSERT INTO paper_autopilot_attempts
-                   (candidate_id, fingerprint, evidence, action, reason, order_payload, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (evidence["candidate_id"], fingerprint, encoded_evidence, action, reason,
+                   (candidate_id, fingerprint, evidence, action, status, reason, order_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (evidence["candidate_id"], fingerprint, encoded_evidence, action, action, reason,
                  order_payload, datetime.now(timezone.utc).isoformat()),
             )
 

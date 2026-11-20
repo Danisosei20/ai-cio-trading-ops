@@ -31,6 +31,26 @@ from robinhood_tools.runtime import build_settings  # noqa: E402
 
 
 EVIDENCE_MAX_AGE_MINUTES = {"quote": 5, "analysis": 15}
+_BLOCKED_EVIDENCE_FIELDS = frozenset({
+    "symbol", "occ_symbol", "side", "quantity", "quote", "premium", "vwap", "ema",
+    "poc", "supply_demand", "support_resistance", "regime", "iv", "liquidity",
+    "earnings_date", "earnings_provenance", "analysis_source", "session_status",
+    "position_status", "policy_version", "freshness",
+})
+
+
+def _annotate_blocked_evidence(evidence: dict, *, failure_stage: str, reason: str) -> None:
+    known_fields = sorted(
+        field for field in _BLOCKED_EVIDENCE_FIELDS
+        if evidence.get(field) not in (None, {}, "")
+    )
+    evidence.update({
+        "evidence_type": "blocked",
+        "failure_stage": failure_stage,
+        "known_fields": known_fields,
+        "unknown_fields": sorted(_BLOCKED_EVIDENCE_FIELDS - set(known_fields)),
+        "reason": reason,
+    })
 
 
 def _observed_at(value, *, field: str) -> datetime:
@@ -188,13 +208,15 @@ def persist_candidate_before_gate(
         freshness_limits=freshness_limits,
     )
     if reason:
-        evidence.update({"action": "blocked", "reason": reason})
+        _annotate_blocked_evidence(evidence, failure_stage="validation", reason=reason)
+        evidence["action"] = "blocked"
         record_attempt(db_path, evidence, "blocked", reason)
         write_evidence(root, evidence)
         raise PolicyViolation(reason)
     if not claim_candidate(db_path, evidence):
         reason = "duplicate candidate or OCC claim"
-        evidence.update({"action": "blocked", "reason": reason})
+        _annotate_blocked_evidence(evidence, failure_stage="claim", reason=reason)
+        evidence["action"] = "blocked"
         record_attempt(db_path, evidence, "blocked", reason)
         write_evidence(root, evidence)
         return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
@@ -205,21 +227,25 @@ def persist_candidate_before_gate(
         decision = gate()
     except Exception as exc:
         reason = str(exc) or type(exc).__name__
-        evidence.update({"action": "blocked", "reason": reason})
+        _annotate_blocked_evidence(evidence, failure_stage="gate", reason=reason)
+        evidence["action"] = "blocked"
         record_attempt(db_path, evidence, "blocked", reason)
         write_evidence(root, evidence)
         raise
     allowed, gate_reason = (decision, "gate failed") if isinstance(decision, bool) else decision
     if not allowed:
-        evidence.update({"action": "blocked", "reason": str(gate_reason)})
-        record_attempt(db_path, evidence, "blocked", str(gate_reason))
+        reason = str(gate_reason)
+        _annotate_blocked_evidence(evidence, failure_stage="gate", reason=reason)
+        evidence["action"] = "blocked"
+        record_attempt(db_path, evidence, "blocked", reason)
         write_evidence(root, evidence)
-        return {"action": "blocked", "reason": str(gate_reason), "candidate_id": evidence["candidate_id"]}
+        return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
     try:
         order = broker_call()
     except Exception as exc:
         reason = str(exc) or type(exc).__name__
-        evidence.update({"action": "blocked", "reason": reason})
+        _annotate_blocked_evidence(evidence, failure_stage="broker", reason=reason)
+        evidence["action"] = "blocked"
         record_attempt(db_path, evidence, "blocked", reason)
         write_evidence(root, evidence)
         raise
@@ -439,6 +465,12 @@ def main(argv=None) -> int:
             data=data, underlying=ticker, spot=spot,
             direction="bullish" if args.direction == "call" else "bearish", today=today)
     except Exception as exc:
+        rejected = getattr(exc, "rejected", ())
+        if rejected:
+            persist_rejected_chain_candidates(
+                settings.database_path, ticker, args.direction, rejected,
+                now=now, evidence_root=settings.database_path.parent,
+            )
         record_block(f"option selection failure: {exc}")
         raise
     persist_rejected_chain_candidates(

@@ -65,6 +65,24 @@ class OptionsFlowTest(unittest.TestCase):
                              spot=Decimal("237.08"), direction="sideways",
                              today=date(2026, 10, 7))
 
+    def test_all_rejected_selection_exposes_every_rejected_contract(self):
+        first = quote("NVDA261120C00240000")
+        second = quote("NVDA261120C00250000")
+        first = OptionQuote(first.contract, first.bid, first.ask, first.underlying_price,
+                            first.quoted_at, iv=first.iv, delta=Decimal("0.10"),
+                            open_interest=first.open_interest, volume=first.volume)
+        second = OptionQuote(second.contract, second.bid, second.ask, second.underlying_price,
+                             second.quoted_at, iv=second.iv, delta=Decimal("0.10"),
+                             open_interest=second.open_interest, volume=second.volume)
+        with self.assertRaises(PolicyViolation) as raised:
+            pick_long_option(
+                data=FakeOptionsData([first, second]), underlying="NVDA",
+                spot=Decimal("237.08"), direction="bullish", today=date(2026, 10, 7))
+        self.assertEqual(
+            [item.option_symbol for item in raised.exception.rejected],
+            [first.contract.option_symbol, second.contract.option_symbol],
+        )
+
     def test_place_long_option(self):
         result = place_long_option(
             settings=self.settings, snapshot=snapshot(), quote=quote(),
