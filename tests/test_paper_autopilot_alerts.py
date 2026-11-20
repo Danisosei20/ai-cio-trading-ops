@@ -169,3 +169,22 @@ def test_retry_window_is_hard_capped_at_ten_minutes(tmp_path):
     assert sum(clock.sleeps) <= 600
     assert clock.current.timestamp() <= datetime(2026, 11, 20, 15, 40,
                                                    tzinfo=timezone.utc).timestamp()
+
+
+def test_already_sent_delivery_is_idempotent_before_notifier_validation(tmp_path):
+    result = accepted_result(tmp_path)
+    clock = FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc))
+    first = send_entry_alert(result, notifier=Notifier(), clock=clock)
+
+    second = send_entry_alert(result, notifier=None, clock=clock)
+
+    assert first["sent"] is True
+    assert second == {
+        "sent": True,
+        "attempts": 1,
+        "last_error": None,
+        "sent_at": first["sent_at"],
+        "status": "sent",
+        "message_ts": "1700000000.1",
+        "message_link": "https://slack.example/p/1",
+    }

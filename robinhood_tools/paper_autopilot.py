@@ -825,6 +825,20 @@ def send_entry_alert(
                              evidence.get("evidence_reference") or
                              (Path(result.get("evidence_root") or db_path.parent) /
                               "evidence" / f"{candidate_id}.json"))
+    # Durable state is authoritative: a later invocation must not require a
+    # working notifier before it can recognize an already completed delivery.
+    try:
+        with _managed_connection(db_path) as connection:
+            prior = connection.execute(
+                "SELECT status, attempts, sent_at, message_ts, message_link "
+                "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?", (candidate_id,)
+            ).fetchone()
+    except Exception:
+        prior = None
+    if prior and prior[0] == "sent":
+        return {"sent": True, "attempts": prior[1], "last_error": None,
+                "sent_at": prior[2], "status": "sent", "message_ts": prior[3],
+                "message_link": prior[4]}
 
     def failure(code: str, message: str) -> dict:
         error = {"code": code, "message": message}
@@ -854,16 +868,6 @@ def send_entry_alert(
         return failure("notifier_config_missing", "Slack bot token or channel configuration is missing")
     if not callable(getattr(notifier, "send_approval", None)):
         return failure("notifier_invalid", "Slack notifier does not provide send_approval")
-    with _managed_connection(db_path) as connection:
-        prior = connection.execute(
-            "SELECT status, attempts, sent_at, message_ts, message_link "
-            "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?", (candidate_id,)
-        ).fetchone()
-    if prior and prior[0] == "sent":
-        return {"sent": True, "attempts": prior[1], "last_error": None,
-                "sent_at": prior[2], "status": "sent", "message_ts": prior[3],
-                "message_link": prior[4]}
-
     started = _clock_now(clock)
     retry_window = min(max(0, int(retry_until_seconds)), 600)
     deadline = started.timestamp() + retry_window
