@@ -138,6 +138,30 @@ def _persisted_order(order: dict | None) -> dict | None:
     return _json_value({key: value for key, value in order.items() if key in _ORDER_FIELDS})
 
 
+def _valid_broker_result(order: Any) -> bool:
+    """Require a coherent success signal and a durable broker order identity."""
+    if not isinstance(order, dict):
+        return False
+    status = str(order.get("status", "")).strip().lower()
+    action = str(order.get("action", "")).strip().lower()
+    rejected = {"rejected", "failed", "cancelled", "canceled", "error", "denied"}
+    if status in rejected or action in rejected:
+        return False
+    success_signals = {"accepted", "placed", "buy_placed"}
+    has_success_signal = (
+        order.get("accepted") is True
+        or status in success_signals
+        or action in success_signals
+    )
+    if not has_success_signal:
+        return False
+    if status in {"accepted", "placed"} and action in rejected:
+        return False
+    if action in {"accepted", "placed", "buy_placed"} and status in rejected:
+        return False
+    return bool(str(order.get("order_id") or order.get("id") or "").strip())
+
+
 def _event_key(event: dict) -> str:
     return json.dumps(event, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -709,16 +733,7 @@ def run_paper_entry(
             return unknown_reconciliation(f"broker submission outcome unknown: {exc}")
         _finish_serialized_cycle(cycle_connection)
         cycle_connection = None
-        valid_result = (
-            isinstance(order, dict)
-            and (
-                order.get("accepted") is True
-                or str(order.get("status", "")).lower() == "accepted"
-                or str(order.get("action", "")).lower() in {"accepted", "buy_placed"}
-            )
-            and bool(order.get("order_id") or order.get("id"))
-        )
-        if not valid_result:
+        if not _valid_broker_result(order):
             return unknown_reconciliation("broker returned an invalid accepted-order result", order if isinstance(order, dict) else {})
         evidence.update({"action": "accepted", "status": "accepted", "reason": "gates passed"})
         record_attempt(path, evidence, "accepted", "gates passed", order if isinstance(order, dict) else None)

@@ -181,6 +181,23 @@ def test_malformed_broker_result_is_terminal_unknown_reconciliation(tmp_path):
     assert result["reconciliation_required"] is True
 
 
+def test_contradictory_or_terminal_failure_broker_result_never_accepts(tmp_path):
+    results = (
+        {"accepted": True, "status": "rejected", "order_id": "bad-1"},
+        {"action": "buy_placed", "status": "failed", "order_id": "bad-2"},
+        {"action": "accepted", "status": "cancelled", "order_id": "bad-3"},
+        {"action": "rejected", "status": "accepted", "order_id": "bad-4"},
+    )
+    for index, payload in enumerate(results):
+        result = run_paper_entry(
+            evidence(tmp_path, candidate_id=f"contradictory-{index}",
+                     occ_symbol=f"AAPL261218C0020{index:05d}"),
+            execute=True, broker_call=lambda payload=payload: payload,
+        )
+        assert result["action"] == "unknown_reconciliation"
+        assert result["reconciliation_required"] is True
+
+
 def test_intent_marker_survives_restart_and_blocks_retry(tmp_path):
     first = evidence(tmp_path, candidate_id="crash-candidate")
     result = run_paper_entry(
