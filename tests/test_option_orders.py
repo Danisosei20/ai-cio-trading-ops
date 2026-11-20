@@ -268,6 +268,57 @@ class OptionGuardTest(unittest.TestCase):
             decide(Decimal("0"), Decimal("100"), 30, 1,
                    Decimal("0.5"), Decimal("0.5"), 2, 5)
 
+    def test_reconciliation_required_close_is_retained_and_skipped_next_cycle(self):
+        state = {
+            "NVDA261120C00240000": {
+                "first_seen": "2026-10-07",
+                "cost": "1000",
+            }
+        }
+        result = {
+            "status": "filled",
+            "order_id": "close-2",
+            "reconciliation_required": True,
+            "reconciliation": {
+                "required": True,
+                "reason": "fresh exact-OCC position is non-flat",
+                "order_id": "close-2",
+                "broker_status": "filled",
+                "position_evidence": [{"symbol": "NVDA261120C00240000", "qty": "1"}],
+                "claim_released": False,
+            },
+        }
+
+        self.assertTrue(self.guard.record_close_result(
+            state, "NVDA261120C00240000", result))
+        self.assertIn("NVDA261120C00240000", state)
+        self.assertTrue(state["NVDA261120C00240000"]["reconciliation_required"])
+        self.assertEqual(
+            state["NVDA261120C00240000"]["reconciliation"]["reason"],
+            "fresh exact-OCC position is non-flat",
+        )
+        self.assertTrue(self.guard.close_reconciliation_pending(
+            state["NVDA261120C00240000"]))
+
+        # A subsequent guard cycle must retain recovery metadata and skip a
+        # replacement close while the authoritative position is still non-flat.
+        class Backend:
+            def get_option_order(self, order_id):
+                self.order_id = order_id
+                return type("Order", (), {"status": "filled"})()
+
+        backend = Backend()
+        recovery = self.guard.reconcile_pending_closes(
+            state, backend,
+            [{"symbol": "NVDA261120C00240000", "qty": "1"}],
+        )
+        self.assertEqual(recovery[0]["exit_action"], "reconciliation_pending")
+        self.assertEqual(backend.order_id, "close-2")
+        self.assertIn("NVDA261120C00240000", state)
+        self.assertTrue(self.guard.close_reconciliation_pending(
+            state["NVDA261120C00240000"]))
+        self.assertEqual(state["NVDA261120C00240000"]["reconciliation"]["order_id"], "close-2")
+
     def test_watchlist_format(self):
         import importlib.util
 
