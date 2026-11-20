@@ -25,7 +25,7 @@ from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.paper_autopilot import (  # noqa: E402
-    build_evidence, record_attempt, write_evidence,
+    build_evidence, claim_candidate, record_attempt, write_evidence,
 )
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
@@ -189,57 +189,104 @@ def persist_candidate_before_gate(
     )
     if reason:
         evidence.update({"action": "blocked", "reason": reason})
-        write_evidence(root, evidence)
         record_attempt(db_path, evidence, "blocked", reason)
+        write_evidence(root, evidence)
         raise PolicyViolation(reason)
+    if not claim_candidate(db_path, evidence):
+        reason = "duplicate candidate or OCC claim"
+        evidence.update({"action": "blocked", "reason": reason})
+        record_attempt(db_path, evidence, "blocked", reason)
+        write_evidence(root, evidence)
+        return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
     evidence.update({"action": "screened", "reason": "candidate screened"})
-    write_evidence(root, evidence)
     record_attempt(db_path, evidence, "screened", "candidate screened")
+    write_evidence(root, evidence)
     try:
         decision = gate()
     except Exception as exc:
         reason = str(exc) or type(exc).__name__
         evidence.update({"action": "blocked", "reason": reason})
-        write_evidence(root, evidence)
         record_attempt(db_path, evidence, "blocked", reason)
+        write_evidence(root, evidence)
         raise
     allowed, gate_reason = (decision, "gate failed") if isinstance(decision, bool) else decision
     if not allowed:
         evidence.update({"action": "blocked", "reason": str(gate_reason)})
-        write_evidence(root, evidence)
         record_attempt(db_path, evidence, "blocked", str(gate_reason))
+        write_evidence(root, evidence)
         return {"action": "blocked", "reason": str(gate_reason), "candidate_id": evidence["candidate_id"]}
     try:
         order = broker_call()
     except Exception as exc:
         reason = str(exc) or type(exc).__name__
         evidence.update({"action": "blocked", "reason": reason})
-        write_evidence(root, evidence)
         record_attempt(db_path, evidence, "blocked", reason)
+        write_evidence(root, evidence)
         raise
     evidence.update({"action": "accepted", "reason": "gates passed"})
-    write_evidence(root, evidence)
     record_attempt(db_path, evidence, "accepted", "gates passed", order)
+    write_evidence(root, evidence)
     return {"action": "accepted", "candidate_id": evidence["candidate_id"], "order": order}
 
 
 def record_preentry_block(
     db_path, symbol: str, side: str, quote: dict | None, analysis: dict | None,
-    *, reason: str, now: datetime, evidence_root: Path | None = None,
+    *, reason: str, failure_stage: str = "pre_entry", now: datetime,
+    evidence_root: Path | None = None,
 ) -> dict:
     """Record one early skip/failure before selection or the order gate."""
     quote = quote or {}
     analysis = analysis or {}
     candidate = collect_entry_evidence(symbol, side, quote, analysis, now=now)
     evidence = build_evidence(candidate, now=now)
+    fields = {
+        "symbol", "occ_symbol", "side", "quantity", "quote", "premium", "vwap", "ema",
+        "poc", "supply_demand", "support_resistance", "regime", "iv", "liquidity",
+        "earnings_date", "earnings_provenance", "analysis_source", "session_status",
+        "position_status", "policy_version", "freshness",
+    }
+    known_fields = sorted(field for field in fields if evidence.get(field) not in (None, {}, ""))
+    unknown_fields = sorted(fields - set(known_fields))
+    evidence.update({
+        "evidence_type": "blocked",
+        "failure_stage": failure_stage,
+        "known_fields": known_fields,
+        "unknown_fields": unknown_fields,
+    })
     from robinhood_tools.paper_autopilot import attempt_exists
     if attempt_exists(db_path, evidence, "blocked", reason):
         return {"action": "blocked", "duplicate": True, "reason": reason}
     evidence.update({"action": "blocked", "reason": reason})
     root = Path(evidence_root) if evidence_root is not None else Path(db_path).parent
-    write_evidence(root, evidence)
     record_attempt(db_path, evidence, "blocked", reason)
+    write_evidence(root, evidence)
     return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
+
+
+def persist_rejected_chain_candidates(
+    db_path, symbol: str, side: str, rejected, *, now: datetime,
+    evidence_root: Path | None = None,
+) -> None:
+    """Persist each deterministic chain rejection without claiming it for entry."""
+    root = Path(evidence_root) if evidence_root is not None else Path(db_path).parent
+    for rejection in rejected:
+        reasons = list(getattr(rejection, "reasons", ()))
+        candidate = {
+            "symbol": symbol.strip().upper(),
+            "occ_symbol": rejection.option_symbol,
+            "side": side,
+            "quote": {"occ_symbol": rejection.option_symbol, "source": "alpaca-options"},
+            "failure_stage": "chain_selection",
+            "known_fields": ["symbol", "occ_symbol", "side", "quote", "rejection_reasons"],
+            "unknown_fields": ["technical_analysis", "earnings", "position", "gate_results"],
+            "evidence_type": "rejected_candidate",
+        }
+        evidence = build_evidence(candidate, now=now)
+        evidence["rejection_reasons"] = reasons
+        reason = "selection rejected: " + "; ".join(reasons)
+        evidence.update({"action": "screened", "status": "screened", "reason": reason})
+        record_attempt(db_path, evidence, "screened", reason)
+        write_evidence(root, evidence)
 
 
 def _option_quote_payload(quote, *, quantity: int = 1) -> dict:
@@ -394,6 +441,10 @@ def main(argv=None) -> int:
     except Exception as exc:
         record_block(f"option selection failure: {exc}")
         raise
+    persist_rejected_chain_candidates(
+        settings.database_path, ticker, args.direction, rejected,
+        now=now, evidence_root=settings.database_path.parent,
+    )
     auto_qty = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
     contracts = args.qty if args.qty > 0 else auto_qty
     quote_payload = _option_quote_payload(quote, quantity=contracts if contracts > 0 else 1)

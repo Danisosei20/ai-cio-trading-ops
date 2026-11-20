@@ -43,11 +43,19 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "freshness": None,
     "gate_results": None,
     "action": "screened",
+    "status": "screened",
     "reason": "",
+    "failure_stage": None,
+    "known_fields": None,
+    "unknown_fields": None,
+    "evidence_type": "entry",
+    "audit_history": [],
+    "rejection_reasons": None,
 }
 _VOLATILE_FINGERPRINT_FIELDS = {
     "candidate_id", "observed_at_utc", "observed_at_et", "created_at", "updated_at",
-    "action", "reason", "order", "slack",
+    "action", "status", "reason", "failure_stage", "known_fields", "unknown_fields",
+    "audit_history", "order", "slack",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
@@ -282,22 +290,43 @@ def record_attempt(
     reason: str,
     order: dict | None = None,
 ) -> None:
-    evidence_payload = _persisted_evidence(evidence)
     with _managed_connection(db_path) as connection:
-        connection.execute(
-            """INSERT INTO paper_autopilot_attempts
-               (candidate_id, fingerprint, evidence, action, reason, order_payload, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                evidence["candidate_id"],
-                candidate_fingerprint(evidence),
-                json.dumps(evidence_payload, sort_keys=True, separators=(",", ":"), allow_nan=False),
-                action,
-                reason,
-                json.dumps(_persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
+        fingerprint = candidate_fingerprint(evidence)
+        existing = connection.execute(
+            "SELECT id, candidate_id, evidence FROM paper_autopilot_attempts WHERE fingerprint=? LIMIT 1",
+            (fingerprint,),
+        ).fetchone()
+        history = []
+        if existing:
+            evidence["candidate_id"] = existing[1]
+            history = json.loads(existing[2]).get("audit_history", [])
+        event = {
+            "action": action,
+            "reason": reason,
+            "order": _persisted_order(order),
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        history.append(event)
+        evidence.update({"action": action, "status": action, "reason": reason, "audit_history": history})
+        evidence_payload = _persisted_evidence(evidence)
+        order_payload = json.dumps(_persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False)
+        encoded_evidence = json.dumps(evidence_payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        if existing:
+            connection.execute(
+                """UPDATE paper_autopilot_attempts
+                   SET candidate_id=?, evidence=?, action=?, reason=?, order_payload=?, created_at=?
+                   WHERE id=?""",
+                (evidence["candidate_id"], encoded_evidence, action, reason, order_payload,
+                 datetime.now(timezone.utc).isoformat(), existing[0]),
+            )
+        else:
+            connection.execute(
+                """INSERT INTO paper_autopilot_attempts
+                   (candidate_id, fingerprint, evidence, action, reason, order_payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (evidence["candidate_id"], fingerprint, encoded_evidence, action, reason,
+                 order_payload, datetime.now(timezone.utc).isoformat()),
+            )
 
 
 def attempt_exists(db_path: Path, evidence: dict, action: str, reason: str) -> bool:

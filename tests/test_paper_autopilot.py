@@ -231,3 +231,19 @@ def test_record_attempt_scrubs_untrusted_metadata_and_order_credentials(tmp_path
         ).fetchone()
     assert "do-not-store" not in row[0]
     assert json.loads(row[1]) == {"id": "order-1", "status": "accepted"}
+
+
+def test_record_attempt_upserts_one_row_and_keeps_json_audit_history(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+    record_attempt(db, evidence, "screened", "candidate screened")
+    record_attempt(db, evidence, "accepted", "gates passed", {"order_id": "paper-1"})
+
+    with sqlite3.connect(db) as connection:
+        row = connection.execute(
+            "SELECT action, reason, order_payload, evidence FROM paper_autopilot_attempts"
+        ).fetchone()
+    assert row[0:3] == ("accepted", "gates passed", '{"order_id":"paper-1"}')
+    history = json.loads(row[3])["audit_history"]
+    assert [item["action"] for item in history] == ["screened", "accepted"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -121,8 +122,7 @@ def test_screened_candidate_and_downstream_gate_failure_persist_before_order(tmp
         rows = connection.execute(
             "SELECT action, reason FROM paper_autopilot_attempts ORDER BY id"
         ).fetchall()
-    assert rows[0][0] == "screened"
-    assert rows[1] == ("blocked", "risk gate failed")
+    assert rows == [("blocked", "risk gate failed")]
 
 
 @pytest.mark.parametrize("field,value", [("bid", 0), ("ask", 0), ("reviewed_price", 0), ("iv", -0.1), ("volume", 0)])
@@ -161,8 +161,7 @@ def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
     with sqlite3.connect(db) as connection:
         rows = connection.execute("SELECT action, reason FROM paper_autopilot_attempts ORDER BY id").fetchall()
     assert rows[0][0] == "blocked"
-    assert rows[1] == ("screened", "candidate screened")
-    assert rows[2] == ("blocked", "downstream failure")
+    assert rows[1] == ("blocked", "downstream failure")
 
 
 def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path):
@@ -195,17 +194,68 @@ def test_early_block_helper_writes_one_blocked_attempt_and_artifact(tmp_path):
     from scripts.options_pilot import record_preentry_block
 
     record_preentry_block(
-        tmp_path / "autopilot.db", "NVDA", "call", quote(), analysis(),
-        reason="premium cap", now=NOW, evidence_root=tmp_path,
+        tmp_path / "autopilot.db", "NVDA", "call", quote(), {},
+        reason="premium cap", failure_stage="premium_cap", now=NOW, evidence_root=tmp_path,
     )
     record_preentry_block(
-        tmp_path / "autopilot.db", "NVDA", "call", quote(), analysis(),
+        tmp_path / "autopilot.db", "NVDA", "call", quote(), {},
         reason="premium cap", now=NOW, evidence_root=tmp_path,
     )
     with sqlite3.connect(tmp_path / "autopilot.db") as connection:
         rows = connection.execute("SELECT action, reason FROM paper_autopilot_attempts").fetchall()
     assert rows == [("blocked", "premium cap")]
     assert len(list((tmp_path / "evidence").glob("*.json"))) == 1
+    artifact = json.loads(next((tmp_path / "evidence").glob("*.json")).read_text())
+    assert artifact["failure_stage"] == "premium_cap"
+    assert "quote" in artifact["known_fields"]
+    assert "vwap" in artifact["unknown_fields"]
+
+
+def test_valid_candidate_claim_is_before_gate_and_duplicate_is_blocked(tmp_path):
+    from scripts.options_pilot import persist_candidate_before_gate
+
+    db = tmp_path / "autopilot.db"
+    first = collect_entry_evidence("NVDA", "call", quote(), analysis(), now=NOW)
+    second = collect_entry_evidence("NVDA", "call", quote(), analysis(), now=NOW)
+    gate_calls = []
+    first_result = persist_candidate_before_gate(
+        db, first, gate=lambda: (gate_calls.append(True) or (False, "risk gate failed")),
+        broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
+        evidence_root=tmp_path,
+    )
+    second_result = persist_candidate_before_gate(
+        db, second, gate=lambda: pytest.fail("duplicate must not reach gate"),
+        broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
+        evidence_root=tmp_path,
+    )
+
+    assert first_result["action"] == "blocked"
+    assert second_result["reason"] == "duplicate candidate or OCC claim"
+    assert gate_calls == [True]
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT count(*) FROM paper_autopilot_attempts").fetchone()[0] == 1
+
+
+def test_rejected_chain_candidates_are_persisted_individually(tmp_path):
+    from types import SimpleNamespace
+    from scripts.options_pilot import persist_rejected_chain_candidates
+
+    rejected = [
+        SimpleNamespace(option_symbol="NVDA261218C00200000", reasons=["spread too wide"]),
+        SimpleNamespace(option_symbol="NVDA261218C00210000", reasons=["volume too low"]),
+    ]
+    persist_rejected_chain_candidates(
+        tmp_path / "autopilot.db", "NVDA", "call", rejected, now=NOW,
+        evidence_root=tmp_path,
+    )
+    with sqlite3.connect(tmp_path / "autopilot.db") as connection:
+        rows = connection.execute(
+            "SELECT action, reason FROM paper_autopilot_attempts ORDER BY id"
+        ).fetchall()
+    assert rows == [
+        ("screened", "selection rejected: spread too wide"),
+        ("screened", "selection rejected: volume too low"),
+    ]
 
 
 @pytest.mark.parametrize("mutator,match", [
