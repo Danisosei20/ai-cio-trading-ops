@@ -9,7 +9,7 @@ book lost $10.3k realized over 33 round-trips.
 The options Time Machine (scripts/options_time_machine.py) prices the
 guard's exit bands for a contract. This module turns that into an entry
 gate: simulate the contract under the CURRENT exit policy (no take-profit
-by default, -15% stop, +25% arm with a peak x 0.40 floor) and refuse
+ by default, -25% stop, +25% arm with a peak x 0.40 floor) and refuse
 openers whose simulated expected value on premium is negative.
 
 Fail-closed by design, same as the equity odds gate: no vol estimate
@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+
+from .desk_policy import POLICY
 
 # The guard's policy, kept here so the gate prices what the guard enforces.
 DEFAULT_PATHS = 4000
@@ -45,7 +47,17 @@ DEFAULT_PATHS = 4000
 # if the +2% scalp policy ever returns. tests/test_options_gate.py pins both
 # the non-discrimination and this reading of the number.
 DEFAULT_MIN_EV_PCT = 0.10
+MIN_REWARD_RISK = POLICY.minimum_reward_risk
+# The guard's actual stop is -25%; a +50% milestone therefore supplies 2:1.
+MODELED_REWARD_PCT = POLICY.modeled_reward_pct
 HORIZON_DAYS = 10            # min(DTE, HORIZON_DAYS)
+
+
+def reward_risk_ratio(reward_pct: float, risk_pct: float) -> float:
+    """Return the modeled reward/risk ratio, or zero for invalid risk."""
+    if reward_pct < 0 or risk_pct <= 0:
+        return 0.0
+    return reward_pct / risk_pct
 
 
 def horizon_for(expiry: str, today: date, cap: int = HORIZON_DAYS) -> int:
@@ -60,9 +72,10 @@ def horizon_for(expiry: str, today: date, cap: int = HORIZON_DAYS) -> int:
 def entry_odds_verdict(*, premium0: float, delta: float, spot0: float,
                        sigma: float, expiry: str, today: date,
                        paths: int = DEFAULT_PATHS,
-                       target_pct: float = 0.0, stop_pct: float = 0.15,
+                       target_pct: float = 0.0, stop_pct: float = POLICY.guard_stop_pct,
                        arm_pct: float = 0.25, floor_ratio: float = 0.40,
                        min_ev_pct: float = DEFAULT_MIN_EV_PCT,
+                       modeled_reward_pct: float = MODELED_REWARD_PCT,
                        seed: int = 7) -> dict:
     """Simulate the contract and return the entry verdict.
 
@@ -77,15 +90,21 @@ def entry_odds_verdict(*, premium0: float, delta: float, spot0: float,
         stop_pct=stop_pct, arm_pct=arm_pct, floor_ratio=floor_ratio,
         seed=seed)
     ev = float(odds["ev_pct_on_premium"])
+    rr = reward_risk_ratio(modeled_reward_pct, stop_pct)
     verdict = dict(odds)
     verdict["min_ev_pct"] = min_ev_pct
-    verdict["approved"] = ev >= min_ev_pct
+    verdict["modeled_reward_pct"] = modeled_reward_pct
+    verdict["reward_risk"] = rr
+    verdict["approved"] = ev >= min_ev_pct and rr >= MIN_REWARD_RISK
     verdict["reason"] = (
         f"simulated EV {ev:+.2%} on premium over "
         f"{odds['paths']} paths (stop {odds['stop_first']:.0%} / "
         f"neither {odds['neither']:.0%}) "
         + ("meets" if verdict["approved"] else "below")
         + f" the {min_ev_pct:+.2%} bar")
+    if rr < MIN_REWARD_RISK:
+        verdict["reason"] += (
+            f"; reward/risk {rr:.2f}:1 below {MIN_REWARD_RISK:.0f}:1")
     return verdict
 
 

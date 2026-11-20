@@ -87,6 +87,8 @@ class TestReportTask(unittest.TestCase):
                 self.assertTrue(data["observe_only"])
                 self.assertEqual(data["tickers"], ["AAA", "BBB"])
                 self.assertEqual(len(data["notes"]), 1)
+                self.assertTrue(data["paper_only"])
+                self.assertIn("policy_version", data)
 
 
 class TestResearchTaskNoTickers(unittest.TestCase):

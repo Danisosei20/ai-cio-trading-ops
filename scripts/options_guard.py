@@ -3,11 +3,11 @@
 
 Evaluates every open OCC position each run:
   EXPIRE  DTE <= --max-dte (default 2) — never hold into expiry weekend
-  STOP    premium down <= --stop-pct (default 0.15 = -15%)
+   STOP    premium down <= --stop-pct (default 0.25 = -25%)
   TARGET  premium up >= --target-pct (default 0 = DISABLED — winners run)
   STALE   held >= --max-hold-days (default 5) while NOT in profit
-  TRAIL   if peak >= 25%: floor = peak * (1 - stop_pct/trail_arm)
-          (trail_arm=0.25, so floor = peak * 0.40). Exit if current <= floor.
+   TRAIL   if peak >= 25%: floor = peak * (1 - 0.15/trail_arm)
+           (trail_arm=0.25, so floor = peak * 0.40). Exit if current <= floor.
 Exits sell-to-close through review + ledger + session guard. Paper only.
 
 ACTUAL POLICY (reconciled 2026-11-16):
@@ -20,19 +20,18 @@ ACTUAL POLICY (reconciled 2026-11-16):
     above +25% the ratcheting floor (peak x 0.40) locks the winner in,
     so a +200% winner can never ride back below +80%. --target-pct still
     accepts an explicit value for anyone who wants a scalp; 0 disables.
-  - Stop loss: -15% from entry (not -25%; the -25% in prior docs was the
-    equity guard's stop, not the options guard's). Gap caveat: a weekend
-    gap can fill far past it — hence the Thursday 15:45 short-premium rule.
+   - Stop loss: -25% from entry. Gap caveat: a weekend gap can fill far past
+     it — hence the Thursday 15:45 short-premium rule.
   - Trailing: activates at +25% peak. Floor = peak * 0.40 (i.e., a +100%
     winner locks in +40%). Once armed, the stop ratchets from the peak.
-  - Gap risk: a -15% (or -25%) stop is NOT a guaranteed max loss. Options
+   - Gap risk: a -25% stop is NOT a guaranteed max loss. Options
     can gap past the stop during illiquid or overnight sessions. Market
     orders on illiquid contracts may fill far from the intended price.
     The pilot's small notional limits exposure to this risk.
 
 The EQUITY guard (paper_position_guard.py) is a separate policy: it keeps its
 +2%/-1% thresholds. This options guard does NOT share them — its take-profit
-is disabled by default and protection comes from the -15% stop and +25% trail.
+is disabled by default and protection comes from the -25% stop and +25% trail.
 
   python3 scripts/options_guard.py --check
   python3 scripts/options_guard.py --execute
@@ -51,8 +50,11 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+from robinhood_tools.desk_policy import POLICY  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
+DEFAULT_STOP_PCT = Decimal(str(POLICY.guard_stop_pct))
+TRAIL_STOP_PCT = Decimal("0.15")
 from robinhood_tools.options import occ_details  # noqa: E402
 from robinhood_tools.options_flow import close_long_option  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -71,7 +73,7 @@ def parse_args(argv=None):
                         "on 2026-11-16 after the options Time Machine showed a "
                         "1:7.5 payoff at a 61% win rate is negative EV per "
                         "round trip (-$47.53/contract on the live position)")
-    p.add_argument("--stop-pct", type=Decimal, default=Decimal("0.15"))
+    p.add_argument("--stop-pct", type=Decimal, default=DEFAULT_STOP_PCT)
     p.add_argument("--max-dte", type=int, default=2)
     p.add_argument("--max-hold-days", type=int, default=5)
     p.add_argument("--config", default="config/approval_routes.json")
@@ -88,7 +90,7 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
     Active policy (the owner reverted the +2% target on 2026-11-16): an
     ordinary winner is HELD — ``target_pct`` defaults to 0, so TARGET fires
     only when a caller explicitly passes a positive threshold. Protection
-    comes from the -15% stop and the trail: once a position has peaked above
+    comes from the -25% stop and the trail: once a position has peaked above
     +25%, the stop ratchets up to a floor of peak * 0.40, so a +200% winner
     can never ride back below +80% and is never sold at a flat target.
     """
@@ -100,7 +102,9 @@ def decide(entry_cost: Decimal, mark_value: Decimal, dte: int, hold_days: int,
     trail_arm = Decimal("0.25")
     peak = peak_ret if peak_ret is not None else ret
     if peak >= trail_arm:
-        floor = peak * (1 - stop_pct / trail_arm)
+        trail_stop_pct = (TRAIL_STOP_PCT if stop_pct == DEFAULT_STOP_PCT
+                          else stop_pct)
+        floor = peak * (1 - trail_stop_pct / trail_arm)
         if floor > 0:
             if ret <= floor:
                 return "TRAIL", f"peak +{peak:.0%} -> floor +{floor:.0%}, now {ret:.0%}"

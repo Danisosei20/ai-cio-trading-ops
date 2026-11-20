@@ -1,6 +1,6 @@
 async function tick(){
  try{
-  const [h,a,r,g,l]=await Promise.all([api('/api/health'),api('/api/account'),api('/api/research'),api('/api/guard'),api('/api/lessons')]);
+   const [h,a,r,g,l,pol]=await Promise.all([api('/api/health'),api('/api/account'),api('/api/research'),api('/api/guard'),api('/api/lessons'),api('/api/policy')]);
   const tg=await api('/api/target').catch(()=>({}));
   if(tg.pnl!==null&&tg.pnl!==undefined){const pv=parseFloat(tg.pnl),tv=parseFloat(tg.target)||100;
    const pct=Math.max(0,Math.min(100,(pv/tv)*100));
@@ -37,7 +37,15 @@ async function tick(){
   $('guard').innerHTML=g.positions&&g.positions.length?g.positions.map(p=>
    `<div><b>${esc(p.symbol)}</b> ${esc(p.qty)} @ $${esc(p.entry)} → $${esc(p.mark)} `+
    `<b>${esc(p.signal)}</b> (${esc(p.return_pct)}) · stop $${esc(p.stop)} · target $${esc(p.target)}</div>`).join('')
-   :'<span class="empty">No guarded positions.</span>';
+    :'<span class="empty">No guarded positions.</span>';
+   const o=pol.policy.options||{};
+   $('policy').innerHTML=`<div>${pill(pol.status.status,pol.status.status==='READY'?'ok':pol.status.status==='BLOCKED'?'bad':'warn')} `+
+    `${pill(pol.status.paper_only?'PAPER ONLY':'BLOCKED','info')} · version ${esc(pol.policy.policy_version)}</div>`+
+    `<small>Options: IV ≤ ${esc((o.quoted_iv_cap*100).toFixed(0))}% · guard stop ${esc((o.guard_stop_pct*100).toFixed(0))}% · `+
+    `minimum ${esc(o.minimum_reward_risk)}:1 · winners ${o.unlimited_winners?'ride':'capped'} · VIX ≤ ${esc(o.max_vix)}</small><br>`+
+    `<small>Equity guard: ${pol.equity_guard.available?'available':'unavailable'} · Options guard: ${pol.options_guard.available?'available':'unavailable'} · `+
+    `report: ${pol.report.available?'available':'unavailable'}</small>`+
+    (pol.status.reasons&&pol.status.reasons.length?`<br><span class="warn">${esc(pol.status.reasons.join('; '))}</span>`:'');
   $('lessons').innerHTML=l.standing&&l.standing.length?'<ul>'+
    l.standing.map(s=>`<li><b>${esc(s.lesson)}</b><br><small>${esc(s.evidence||'')} → ${esc(s.rule||'')}</small></li>`).join('')+'</ul>':
    '<span class="empty">No lessons recorded yet.</span>';

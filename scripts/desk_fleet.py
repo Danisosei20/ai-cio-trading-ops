@@ -34,6 +34,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from robinhood_tools.desk_policy import POLICY, policy_snapshot
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ET = ZoneInfo("America/New_York")
@@ -372,6 +374,7 @@ def task_verify(ctx: dict, args) -> dict:
         checks["screener_age_hours"] = None
     checks["tradingagents_installed"] = _tradingagents_available()
     checks["has_tickers"] = bool(ctx.get("tickers"))
+    checks["paper_only"] = POLICY.paper_only
     ok = all(v for v in checks.values() if isinstance(v, bool))
     if not ok:
         ctx["notes"].append("verify: one or more checks failed")
@@ -388,6 +391,9 @@ def task_report(ctx: dict, args) -> dict:
         "results": ctx["results"],
         "notes": ctx["notes"],
         "observe_only": True,
+        "paper_only": POLICY.paper_only,
+        "policy_version": POLICY.version,
+        "policy": policy_snapshot(),
         "log_dir": str(ctx["log_dir"]),
     }
     path = ROOT / "outputs/fleet-summary.json"
@@ -555,7 +561,10 @@ def run_agents(args) -> int:
         print(json.dumps({k: rec.get(k) for k in
                           ("ticker", "decision", "desk_verdict", "action", "reason")}))
 
-    summary = {"date": datetime.now(ET).date().isoformat(), "agents": results}
+    summary = {"date": datetime.now(ET).date().isoformat(), "agents": results,
+               "paper_only": POLICY.paper_only,
+               "policy_version": POLICY.version,
+               "policy": policy_snapshot()}
     (ROOT / "outputs/fleet-summary.json").write_text(json.dumps(summary, indent=2))
     placed = sum(1 for r in results if str(r.get("action", "")).endswith("_placed"))
     line = (f"Fleet done: {len(results)} agents, {placed} placed, "

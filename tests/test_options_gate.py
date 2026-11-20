@@ -20,6 +20,7 @@ from robinhood_tools.options_gate import (
     entry_odds_verdict,
     horizon_for,
     require_positive_ev,
+    reward_risk_ratio,
 )
 
 
@@ -34,6 +35,26 @@ class HorizonTest(unittest.TestCase):
 
 
 class VerdictMathTest(unittest.TestCase):
+    def test_reward_risk_ratio_requires_two_to_one(self):
+        self.assertEqual(reward_risk_ratio(0.30, 0.15), 2.0)
+        self.assertLess(reward_risk_ratio(0.20, 0.15), 2.0)
+
+    def test_entry_verdict_rejects_below_two_to_one_model(self):
+        v = entry_odds_verdict(premium0=10.0, delta=-0.5, spot0=95.0,
+                               sigma=0.9, expiry="2027-01-15",
+                               today=date(2026, 11, 16), paths=1000,
+                               min_ev_pct=0.0, modeled_reward_pct=0.20)
+        self.assertFalse(v["approved"])
+        self.assertIn("reward/risk", v["reason"])
+
+    def test_default_model_matches_guard_stop_policy(self):
+        v = entry_odds_verdict(premium0=10.0, delta=-0.5, spot0=95.0,
+                               sigma=0.9, expiry="2027-01-15",
+                               today=date(2026, 11, 16), paths=1000,
+                               min_ev_pct=0.0)
+        self.assertEqual(v["modeled_reward_pct"], 0.50)
+        self.assertEqual(v["reward_risk"], 2.0)
+
     def test_positive_ev_approves_with_numbers_attached(self):
         v = entry_odds_verdict(premium0=10.0, delta=-0.5, spot0=95.0,
                                sigma=0.9, expiry="2027-01-15",

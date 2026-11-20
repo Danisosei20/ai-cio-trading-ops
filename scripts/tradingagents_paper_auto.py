@@ -36,6 +36,8 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
+from robinhood_tools.desk_policy import POLICY  # noqa: E402
+from robinhood_tools.market_prices import market_regime  # noqa: E402
 from robinhood_tools.paper_flow import (SignalOrder, lookup_earnings_date,  # noqa: E402
                                         place_signal_order)
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -71,6 +73,13 @@ def regime_gate_passes(*, regime: str, circuit_broken: bool, sig: str,
     if sig in SELL_SIGNALS and (not options_mode or regime == "RISK_OFF"):
         return True
     return False
+
+
+def regime_for_options(spy_closes: list[float], *, options_mode: bool) -> str:
+    """Use the stricter SPY trend confirmation only for options entries."""
+    return market_regime(spy_closes, require_long_term=options_mode)
+
+
 ET = ZoneInfo("America/New_York")
 STATUS_FILE = Path("outputs/paper/tradingagents/status.json")
 RUN_LOG = Path("outputs/paper/tradingagents/live.log")
@@ -314,6 +323,9 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
     from robinhood_tools.alpaca_options import AlpacaOptionsData
     from robinhood_tools.database import CioDatabase
     from robinhood_tools.market_prices import get_quote
+    from robinhood_tools.option_entry_risk import (
+        current_vix, realized_pnl_today, validate_option_entry,
+        validate_quoted_iv)
     from robinhood_tools.options_flow import pick_long_option, place_long_option
     from robinhood_tools.paper_flow import lookup_earnings_date
 
@@ -327,10 +339,24 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
         set_stage(ticker, "skip", rec["reason"])
         return
     data = AlpacaOptionsData.from_values(env)
+    daily_pnl = realized_pnl_today(settings.database_path, _date.today())
+    try:
+        validate_option_entry(vix=current_vix(), premium=Decimal("0"),
+                              contracts=1, realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        rec["reason"] = str(exc)
+        set_stage(ticker, "skip", rec["reason"])
+        return
     spot_q = get_quote(ticker, data_client=data_client)
     quote, rejected = pick_long_option(
         data=data, underlying=ticker, spot=spot_q.price,
         direction=direction, today=_date.today())
+    try:
+        validate_quoted_iv(float(quote.iv) if quote.iv is not None else None)
+    except PolicyViolation as exc:
+        rec["reason"] = str(exc)
+        set_stage(ticker, "skip", rec["reason"])
+        return
     rec.update({"spot": str(spot_q.price), "spot_source": spot_q.source,
                 "contract": quote.contract.option_symbol,
                 "expiry": quote.contract.expiry, "strike": str(quote.contract.strike),
@@ -358,6 +384,14 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
         set_stage(ticker, "skip", rec["reason"])
         return
     premium = (quote.ask * contracts * 100).quantize(Decimal("0.01"))
+    try:
+        validate_option_entry(vix=current_vix(), premium=premium,
+                              contracts=contracts,
+                              realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        rec["reason"] = str(exc)
+        set_stage(ticker, "skip", rec["reason"])
+        return
     if args.dry_run:
         rec.update({"action": "dry_run_buy", "qty": contracts,
                     "premium": str(premium)})
@@ -550,16 +584,16 @@ def main(argv=None) -> int:
 
     positions = {p.get("symbol", "").upper(): Decimal(str(p.get("qty", "0"))) for p in backend.list_positions()}
 
-    from robinhood_tools.market_prices import market_regime  # noqa: E402
-
     try:
         import yfinance as _yf  # noqa: E402,PLC0415
 
         _spy = _yf.Ticker("SPY").history(period="1y", interval="1d")
-        regime = market_regime([float(v) for v in _spy["Close"].dropna()])
+        regime = regime_for_options(
+            [float(v) for v in _spy["Close"].dropna()],
+            options_mode=args.options)
     except Exception:
         regime = "UNKNOWN"
-    log_line(f"market regime: {regime} (SPY 50d trend)")
+    log_line(f"market regime: {regime} (SPY 50/200d trend)")
     if regime != "RISK_ON":
         print(f"RISK {regime}: buys blocked desk-wide, sells only.")
 
@@ -585,7 +619,8 @@ def main(argv=None) -> int:
     cap = min(args.max_notional, settings.risk_limits.max_order_value)
     _ctrl = None
     for ticker in tickers:
-        rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": ""}
+        rec: dict = {"ticker": ticker, "date": trade_date, "action": "skip", "reason": "",
+                     "policy_version": POLICY.version, "paper_only": POLICY.paper_only}
         if args.day_trade:
             rec["trade_style"] = "day_trade"
             rec["flatten_by"] = "15:45 ET"

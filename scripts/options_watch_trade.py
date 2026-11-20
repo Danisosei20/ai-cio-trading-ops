@@ -59,13 +59,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from robinhood_tools.market_prices import _spy_closes, market_regime  # noqa: E402
+from robinhood_tools.desk_policy import POLICY  # noqa: E402
 
-# TradingAgents venv interpreter. macOS source-machine path kept as default for
-# backwards compatibility; set TRADINGAGENTS_VENV_PYTHON per machine (Windows:
-# TradingAgents/.venv/Scripts/python.exe).
-TAVENV = Path(os.environ.get(
-    "TRADINGAGENTS_VENV_PYTHON",
-    "/Users/daniz/Desktop/2026work/TradingAgents/.venv/bin/python"))
+# TradingAgents venv interpreter. Prefer an explicit override, then portable
+# sibling venv locations; never silently claim a missing machine path exists.
+_TA_ROOT = ROOT.parent / "TradingAgents"
+_TA_DEFAULTS = (_TA_ROOT / ".venv" / "Scripts" / "python.exe",
+                _TA_ROOT / ".venv" / "bin" / "python")
+TAVENV = Path(os.environ["TRADINGAGENTS_VENV_PYTHON"]) if os.environ.get(
+    "TRADINGAGENTS_VENV_PYTHON") else next((p for p in _TA_DEFAULTS if p.exists()), Path(sys.executable))
 
 ET = ZoneInfo("America/New_York")
 
@@ -89,14 +91,17 @@ def parse_args(argv=None):
     p.add_argument("--max-rsi", type=float, default=73.0,
                    help="skip names above this RSI (overbought gas)")
     p.add_argument("--direction", default="auto", choices=["auto", "call", "put"])
-    p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
-    p.add_argument("--max-contracts", type=int, default=5,
-                   help="owner rule 2026-10-17: raised from 3 to 5")
+    p.add_argument("--premium-cap", type=Decimal, default=Decimal("500"))
+    p.add_argument("--max-contracts", type=int, default=1,
+                   help="hard paper-desk limit: one contract")
     p.add_argument("--max-positions", type=int, default=5)
     p.add_argument("--max-tries", type=int, default=10,
                    help="candidates to attempt before giving up this run "
                         "(default 10: with the RISK_OFF tape offering both "
                         "feeds, 4 starved the calls behind the puts)")
+    p.add_argument("--risk-off-max-iv", type=float, default=0.45,
+                   help="RISK_OFF quoted-IV cap for new long premium "
+                        "(default 45%%; 0 disables this guard)")
     p.add_argument("--loop", type=int, default=0,
                    help="minutes between cycles; 0 = one run (default). A loop "
                         "runs the full cycle - exits, one entry, notify on "
@@ -112,6 +117,35 @@ def parse_args(argv=None):
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
+
+
+def risk_off_iv_block(*, regime: str, quoted_iv: float | None,
+                      max_iv: float) -> str | None:
+    """Refuse expensive new long-option premium in a risk-off tape."""
+    if regime != "RISK_OFF" or max_iv <= 0 or quoted_iv is None:
+        return None
+    if quoted_iv > max_iv:
+        return f"risk-off IV {quoted_iv:.1%} exceeds {max_iv:.1%} cap"
+    return None
+
+
+def risk_on_confirmation(report: dict, side: str) -> str | None:
+    """Require candidate price/VWAP/EMA alignment before a RISK_ON entry."""
+    profile = report.get("profile") if isinstance(report, dict) else None
+    price = report.get("price") if isinstance(report, dict) else None
+    if not isinstance(profile, dict) or price is None:
+        return "RISK_ON VWAP/EMA confirmation missing"
+    try:
+        price = float(price)
+        vwap = float(profile["vwap"])
+        fast = float(profile["ema_fast"])
+        slow = float(profile["ema_slow"])
+    except (KeyError, TypeError, ValueError):
+        return "RISK_ON VWAP/EMA confirmation missing"
+    aligned = (price > vwap and price > fast and price > slow
+               if side == "call" else
+               price < vwap and price < fast and price < slow)
+    return None if aligned else "RISK_ON VWAP/EMA confirmation failed"
 
 
 def gated_candidates(screen_path: str | Path, top: int, max_rsi: float,
@@ -175,7 +209,7 @@ def _regime() -> str:
     keeps a surprise here from costing the run its entries.
     """
     try:
-        return market_regime(_spy_closes())
+        return market_regime(_spy_closes(), require_long_term=True)
     except Exception:  # noqa: BLE001 - an unreadable regime is never RISK_ON
         return "UNKNOWN"
 
@@ -434,23 +468,29 @@ def _run_cycle(args, py: str) -> str | None:
         try:
             from scripts.zone_analysis import analyze
 
-            report = analyze(symbol)
+            wanted = "long" if side == "call" else "short"
+            report = analyze(symbol, direction=wanted)
             code = report.get("verdict", {}).get("verdict", "neutral") \
                 if "error" not in report else "neutral"
-            wanted = "long" if side == "call" else "short"
             if ((code == "long_blocked" and wanted == "long")
                     or (code == "short_blocked" and wanted == "short")):
                 print(f"[entry] skip {symbol} {side} -> zone {code} | {reason}")
                 continue
+            if regime == "RISK_ON":
+                confirmation = risk_on_confirmation(report, side)
+                if confirmation:
+                    print(f"[entry] skip {symbol} {side} -> {confirmation} | {reason}")
+                    continue
             zone_note = f"zone {code}"
         except Exception:  # noqa: BLE001 - a zone bug never blocks the loop
             pass
-        rc, out, err = run([py, "scripts/options_pilot.py",
-                            "--ticker", symbol, "--direction", side,
-                            "--premium-cap", str(args.premium_cap),
-                            "--max-contracts", str(args.max_contracts),
-                            "--max-positions", str(args.max_positions),
-                            pilot_exec])
+        pilot_cmd = [py, "scripts/options_pilot.py",
+                     "--ticker", symbol, "--direction", side,
+                     "--premium-cap", str(args.premium_cap),
+                     "--max-contracts", str(args.max_contracts),
+                     "--max-positions", str(args.max_positions), pilot_exec]
+        pilot_cmd.extend(["--max-iv", str(args.risk_off_max_iv)])
+        rc, out, err = run(pilot_cmd)
         # The pilot's own JSON is the authoritative record of what it did.
         action = _pilot_action(out)
         detail = f"{reason} | {zone_note} | liquid ok | pilot {action}"
@@ -486,14 +526,15 @@ def _run_cycle(args, py: str) -> str | None:
     if placed and not args.no_notify:
         # The notify report must use the cap the desk actually enforces, or
         # the close message disagrees with the loop that printed it: a
-        # watchlist default of 1200 flagged a $1764 APP put "over cap" that
-        # the watch itself (cap 3000) would have accepted.
+        # watchlist default once flagged an order "over cap" that
+        # the watch itself (cap 500) would have accepted.
         rc, out, err = run([py, "scripts/options_watchlist.py", "--send",
                             "--premium-cap", str(args.premium_cap)])
         print(f"[notify] rc={rc} {_tail(out) or _tail(err)}")
 
     print(json.dumps({"exits_ran": not args.no_exits, "screen": screen_date,
-                      "placed": placed, "executed": bool(args.execute)}))
+                      "placed": placed, "executed": bool(args.execute),
+                      "policy_version": POLICY.version, "paper_only": POLICY.paper_only}))
     return placed
 
 

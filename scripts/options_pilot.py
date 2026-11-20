@@ -23,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.options_gate import DEFAULT_MIN_EV_PCT  # noqa: E402
 from robinhood_tools.options_flow import pick_long_option, place_long_option  # noqa: E402
+from robinhood_tools.option_entry_risk import (  # noqa: E402
+    MAX_QUOTED_IV, current_vix, realized_pnl_today, validate_option_entry,
+    validate_quoted_iv)
 from robinhood_tools.paper_flow import lookup_earnings_date  # noqa: E402
 from robinhood_tools.runtime import build_settings  # noqa: E402
 
@@ -31,9 +34,9 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Paper long-options pilot.")
     p.add_argument("--ticker", default="NVDA")
     p.add_argument("--direction", default="call", choices=["call", "put"])
-    p.add_argument("--premium-cap", type=Decimal, default=Decimal("3000"))
-    p.add_argument("--max-contracts", type=int, default=5,
-                   help="owner rule 2026-10-17: raised from 3 to 5")
+    p.add_argument("--premium-cap", type=Decimal, default=Decimal("500"))
+    p.add_argument("--max-contracts", type=int, default=1,
+                   help="hard paper-desk limit: one contract")
     p.add_argument("--qty", type=int, default=0,
                    help="exact contracts (owner-directed); capped by premium-cap")
     p.add_argument("--max-positions", type=int, default=5,
@@ -55,14 +58,27 @@ def parse_args(argv=None):
                    help="simulation paths for the entry odds gate")
     p.add_argument("--min-ev-pct", type=float, default=DEFAULT_MIN_EV_PCT,
                    help="minimum simulated EV on premium to open "
-                        "(default 0 = strictly positive; the owner can "
+                         "(default +10%; the owner can "
                         "set a margin - under the winners-run policy a "
                         "capped loss against an uncapped win prices "
-                        "positive by construction, so the margin is the "
-                        "only part that filters)")
+                         "positive by construction, so the margin is the "
+                         "only part that filters)")
+    p.add_argument("--max-iv", type=float, default=MAX_QUOTED_IV,
+                   help="refuse quoted IV above this fraction; capped at "
+                        f"{MAX_QUOTED_IV:.0%}")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
     return p.parse_args(argv)
+
+
+def iv_cap_block(*, quoted_iv: float | None, max_iv: float) -> str | None:
+    """Return an entry refusal while never exceeding the shared IV ceiling."""
+    effective_cap = MAX_QUOTED_IV if max_iv <= 0 else min(max_iv, MAX_QUOTED_IV)
+    try:
+        validate_quoted_iv(quoted_iv, effective_cap)
+    except PolicyViolation as exc:
+        return str(exc).replace("option entry blocked: ", "")
+    return None
 
 
 def _odds_verdict(quote, ticker: str, today, args) -> dict:
@@ -123,6 +139,16 @@ def main(argv=None) -> int:
                           "note": "use the desk guard/exit path; closes travel review+ledger"}))
         return 0
 
+    daily_pnl = realized_pnl_today(settings.database_path, today)
+    vix = current_vix()
+    try:
+        validate_option_entry(vix=vix, premium=Decimal("0"), contracts=1,
+                              realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "reason": str(exc)}))
+        return 0
+
     data = AlpacaOptionsData.from_values(env)
     spot_q = get_quote(ticker, data_client=AlpacaMarketDataHttpClient.from_values(env),
                        max_age_minutes=args.max_age_minutes)
@@ -157,8 +183,25 @@ def main(argv=None) -> int:
         data=data, underlying=ticker, spot=spot,
         direction="bullish" if args.direction == "call" else "bearish",
         today=today, filters=filters)
+    iv_block = iv_cap_block(
+        quoted_iv=float(quote.iv) if quote.iv is not None else None,
+        max_iv=args.max_iv)
+    if iv_block:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "contract": quote.contract.option_symbol,
+                          "reason": iv_block}))
+        return 0
     auto_qty = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
     contracts = args.qty if args.qty > 0 else auto_qty
+    try:
+        validate_option_entry(
+            vix=vix, premium=Decimal(contracts) * quote.ask * 100,
+            contracts=contracts, realized_pnl_today=daily_pnl)
+    except PolicyViolation as exc:
+        print(json.dumps({"ticker": ticker, "action": "skip",
+                          "contract": quote.contract.option_symbol,
+                          "reason": str(exc)}))
+        return 0
     if args.qty > 0 and quote.ask * contracts * 100 > args.premium_cap:
         print(json.dumps({"ticker": ticker, "action": "skip",
                           "reason": f"directed qty {contracts} costs "
