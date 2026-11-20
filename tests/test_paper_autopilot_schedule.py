@@ -1,0 +1,94 @@
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
+
+from robinhood_tools.market_calendar import MarketSession, entry_session_status
+
+
+ET = ZoneInfo("America/New_York")
+
+
+class FakeCalendar:
+    def __init__(self, *, open_days=None, holiday_days=()):
+        self.open_days = set(open_days or ())
+        self.holiday_days = set(holiday_days)
+
+    def session(self, day):
+        is_open = day in self.open_days
+        return MarketSession(
+            day=day,
+            is_open=is_open,
+            close_time_et="16:00" if is_open else None,
+            source_url="https://example.test/exchange-calendar",
+            verified_at="2026-11-20T14:00:00+00:00",
+            reason="exchange holiday" if day in self.holiday_days else "closed",
+        )
+
+
+def at(hour, minute, *, day=date(2026, 11, 20)):
+    return datetime.combine(day, time(hour, minute), tzinfo=ET)
+
+
+def test_regular_closed_hours_suppress_entry_and_periodic_alerts():
+    day = date(2026, 11, 20)
+    result = entry_session_status(
+        at(8, 30, day=day),
+        clock={"is_open": False},
+        calendar=FakeCalendar(open_days={day}),
+    )
+
+    assert result["status"] == "CLOSED"
+    assert result["can_enter"] is False
+    assert result["can_periodic_alert"] is False
+
+
+def test_weekends_are_closed_even_if_clock_claims_open():
+    saturday = date(2026, 11, 21)
+    result = entry_session_status(
+        at(11, 0, day=saturday),
+        clock={"is_open": True},
+        calendar=FakeCalendar(open_days={saturday}),
+    )
+
+    assert result["status"] == "WEEKEND"
+    assert result["can_enter"] is False
+    assert result["can_periodic_alert"] is False
+
+
+def test_exchange_holidays_suppress_periodic_alerts():
+    holiday = date(2026, 11, 26)
+    result = entry_session_status(
+        at(11, 0, day=holiday),
+        clock={"is_open": False},
+        calendar=FakeCalendar(holiday_days={holiday}),
+    )
+
+    assert result["status"] == "HOLIDAY"
+    assert result["can_enter"] is False
+    assert result["can_periodic_alert"] is False
+
+
+def test_open_session_allows_entry_and_periodic_alerts():
+    day = date(2026, 11, 20)
+    result = entry_session_status(
+        at(11, 0, day=day),
+        clock={"is_open": True},
+        calendar=FakeCalendar(open_days={day}),
+    )
+
+    assert result["status"] == "OPEN"
+    assert result["can_enter"] is True
+    assert result["can_periodic_alert"] is True
+
+
+def test_exit_observation_remains_available_outside_entry_sessions():
+    for day, clock in (
+        (date(2026, 11, 21), {"is_open": False}),
+        (date(2026, 11, 26), {"is_open": False}),
+        (date(2026, 11, 20), {"is_open": False}),
+    ):
+        result = entry_session_status(
+            at(8, 30, day=day),
+            clock=clock,
+            calendar=FakeCalendar(holiday_days={date(2026, 11, 26)}),
+        )
+        assert result["can_observe_exits"] is True
