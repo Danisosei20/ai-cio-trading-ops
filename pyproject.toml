@@ -34,6 +34,7 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = [
+    "robinhood_tools.*",
     "robinhood_tools.event_protection",
     "robinhood_tools.fill_reconciler",
     "robinhood_tools.market_prices",
