@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -77,6 +78,7 @@ def collect_entry_evidence(
         "regime": analysis.get("regime"), "iv": quote.get("iv", analysis.get("iv")),
         "liquidity": liquidity, "earnings_date": analysis.get("earnings_date"),
         "earnings_provenance": analysis.get("earnings_provenance"),
+        "analysis_source": analysis.get("source"),
         "session_status": analysis.get("session_status"),
         "position_status": analysis.get("position_status"),
         "policy_version": analysis.get("policy_version"),
@@ -110,10 +112,30 @@ def _evidence_block_reason(
     if missing:
         return "missing evidence: " + ", ".join(missing)
     quote = evidence["quote"]
+    if not isinstance(quote, dict):
+        return "invalid quote evidence: quote must be an object"
+    if quote.get("source") not in {"alpaca-options"}:
+        return "invalid quote source"
+    if evidence.get("analysis_source") not in {"alpaca-bars", "deterministic-bars"}:
+        return "invalid analysis source"
     if not isinstance(quote, dict) or not all(_positive_number(quote.get(key)) for key in ("bid", "ask", "reviewed_price")):
         return "invalid quote evidence: bid, ask, and reviewed price must be positive"
     if quote["bid"] > quote["ask"]:
         return "invalid quote evidence: bid exceeds ask"
+    quantity = evidence.get("quantity")
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1:
+        return "invalid quantity evidence"
+    if quote.get("quantity") is not None and quote.get("quantity") != quantity:
+        return "invalid quantity evidence: quote quantity mismatch"
+    occ = str(evidence.get("occ_symbol") or "")
+    match = re.fullmatch(r"([A-Z0-9.]{1,6})(\d{6})([CP])(\d{8})", occ)
+    if not match:
+        return "invalid OCC symbol"
+    if match.group(1) != str(evidence["symbol"]).upper():
+        return "invalid OCC underlying"
+    expected_right = "C" if evidence["side"] == "call" else "P"
+    if match.group(3) != expected_right:
+        return "invalid OCC right"
     if not _positive_number(evidence["iv"]):
         return "invalid IV evidence"
     liquidity = evidence["liquidity"]
@@ -138,7 +160,7 @@ def _evidence_block_reason(
             datetime.strptime(str(evidence["earnings_date"]), "%Y-%m-%d")
         except ValueError:
             return "invalid earnings date evidence"
-    if not str(evidence["earnings_provenance"]).strip():
+    if str(evidence["earnings_provenance"]) not in {"SEC/company-calendar", "paper_flow.lookup_earnings_date"}:
         return "invalid earnings provenance evidence"
     if evidence["policy_version"] != active_policy_version:
         return f"policy version mismatch: expected {active_policy_version}"
@@ -201,6 +223,35 @@ def persist_candidate_before_gate(
     return {"action": "accepted", "candidate_id": evidence["candidate_id"], "order": order}
 
 
+def record_preentry_block(
+    db_path, symbol: str, side: str, quote: dict | None, analysis: dict | None,
+    *, reason: str, now: datetime, evidence_root: Path | None = None,
+) -> dict:
+    """Record one early skip/failure before selection or the order gate."""
+    quote = quote or {}
+    analysis = analysis or {}
+    candidate = collect_entry_evidence(symbol, side, quote, analysis, now=now)
+    evidence = build_evidence(candidate, now=now)
+    from robinhood_tools.paper_autopilot import attempt_exists
+    if attempt_exists(db_path, evidence, "blocked", reason):
+        return {"action": "blocked", "duplicate": True, "reason": reason}
+    evidence.update({"action": "blocked", "reason": reason})
+    root = Path(evidence_root) if evidence_root is not None else Path(db_path).parent
+    write_evidence(root, evidence)
+    record_attempt(db_path, evidence, "blocked", reason)
+    return {"action": "blocked", "reason": reason, "candidate_id": evidence["candidate_id"]}
+
+
+def _option_quote_payload(quote, *, quantity: int = 1) -> dict:
+    return {
+        "occ_symbol": quote.contract.option_symbol, "bid": quote.bid,
+        "ask": quote.ask, "reviewed_price": quote.ask, "as_of": quote.quoted_at,
+        "source": "alpaca-options", "iv": quote.iv,
+        "open_interest": quote.open_interest, "volume": quote.volume,
+        "spread": quote.ask - quote.bid, "quantity": quantity,
+    }
+
+
 def collect_market_analysis(symbol: str, market_data, *, now: datetime, earnings_date) -> dict:
     """Build technical evidence from read-only bars and existing math helpers."""
     from robinhood_tools.market_prices import market_regime
@@ -220,6 +271,7 @@ def collect_market_analysis(symbol: str, market_data, *, now: datetime, earnings
     volume_peak = max(recent, key=lambda item: item[3])
     return {
         "as_of": bars[-1].get("t"),
+        "source": "alpaca-bars",
         "vwap": vwap,
         "ema": {"ema_9": ema(closes, 9)[-1], "ema_21": ema(closes, 21)[-1]},
         "poc": volume_peak[2],
@@ -259,9 +311,27 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    settings = build_settings(args.config, args.env_file)
+    ticker = args.ticker.strip().upper()
+    now = datetime.now(timezone.utc)
+    block_db_path = Path("outputs/paper/cio.db")
+
+    def record_block(reason: str, quote_payload: dict | None = None,
+                     analysis: dict | None = None, *, db_path: Path | None = None) -> None:
+        target = db_path or block_db_path
+        record_preentry_block(
+            target, ticker, args.direction, quote_payload or {}, analysis or {},
+            reason=reason, now=now, evidence_root=target.parent,
+        )
+
+    try:
+        settings = build_settings(args.config, args.env_file)
+        block_db_path = settings.database_path
+    except Exception as exc:
+        record_block(f"setup failure: {exc}")
+        raise
     if settings.trading_enabled:
         print("REFUSAL: live kill switch open.", file=sys.stderr)
+        record_block("live trading kill switch is open")
         return 2
 
     import os
@@ -275,9 +345,11 @@ def main(argv=None) -> int:
     import urllib.request
     import re
 
-    env = {**load_env(args.env_file), **os.environ}
-    ticker = args.ticker.strip().upper()
-    now = datetime.now(timezone.utc)
+    try:
+        env = {**load_env(args.env_file), **os.environ}
+    except Exception as exc:
+        record_block(f"environment setup failure: {exc}")
+        raise
     today = now.date()
 
     if args.close:
@@ -285,37 +357,61 @@ def main(argv=None) -> int:
                           "note": "use the desk guard/exit path; closes travel review+ledger"}))
         return 0
 
-    data = AlpacaOptionsData.from_values(env)
-    market_data = AlpacaMarketDataHttpClient.from_values(env)
-    spot_q = get_quote(ticker, data_client=market_data,
-                       max_age_minutes=args.max_age_minutes)
+    try:
+        data = AlpacaOptionsData.from_values(env)
+        market_data = AlpacaMarketDataHttpClient.from_values(env)
+        spot_q = get_quote(ticker, data_client=market_data,
+                           max_age_minutes=args.max_age_minutes)
+    except Exception as exc:
+        record_block(f"market-data setup/lookup failure: {exc}")
+        raise
     spot = spot_q.price
     print(f"{ticker} spot {spot} ({spot_q.source} {spot_q.as_of})")
 
-    req = urllib.request.Request("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-                                 headers={"User-Agent": "desk-options/1.0"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        page = resp.read().decode("utf-8", "replace")
-    m = re.search(r"List of S&amp;P 500 companies.*?(<table.*?</table>)", page, re.S)
-    table = m.group(1) if m else page
-    members = {s.upper().replace(".", "-") for s in re.findall(r">([A-Z]{1,5}(?:\.[A-Z])?)<", table)}
-    snapshot = Sp500Snapshot(symbols=frozenset(members),
-                             as_of=datetime.now(timezone.utc).isoformat(),
-                             source_url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+    try:
+        req = urllib.request.Request("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+                                     headers={"User-Agent": "desk-options/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            page = resp.read().decode("utf-8", "replace")
+        m = re.search(r"List of S&amp;P 500 companies.*?(<table.*?</table>)", page, re.S)
+        table = m.group(1) if m else page
+        members = {s.upper().replace(".", "-") for s in re.findall(r">([A-Z]{1,5}(?:\.[A-Z])?)<", table)}
+        snapshot = Sp500Snapshot(symbols=frozenset(members),
+                                 as_of=now.isoformat(),
+                                 source_url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+    except Exception as exc:
+        record_block(f"universe lookup failure: {exc}", {
+            "as_of": spot_q.as_of, "source": "alpaca-options",
+            "bid": spot_q.price, "ask": spot_q.price,
+            "reviewed_price": spot_q.price,
+        })
+        raise
 
-    quote, rejected = pick_long_option(
-        data=data, underlying=ticker, spot=spot,
-        direction="bullish" if args.direction == "call" else "bearish", today=today)
+    try:
+        quote, rejected = pick_long_option(
+            data=data, underlying=ticker, spot=spot,
+            direction="bullish" if args.direction == "call" else "bearish", today=today)
+    except Exception as exc:
+        record_block(f"option selection failure: {exc}")
+        raise
     auto_qty = min(args.max_contracts, int(args.premium_cap // (quote.ask * 100)))
     contracts = args.qty if args.qty > 0 else auto_qty
+    quote_payload = _option_quote_payload(quote, quantity=contracts if contracts > 0 else 1)
+    if args.qty > args.max_contracts:
+        reason = f"directed qty {args.qty} exceeds max contracts {args.max_contracts}"
+        print(json.dumps({"ticker": ticker, "action": "skip", "reason": reason}))
+        record_block(reason, quote_payload)
+        return 0
     if args.qty > 0 and quote.ask * contracts * 100 > args.premium_cap:
-        print(json.dumps({"ticker": ticker, "action": "skip",
-                          "reason": f"directed qty {contracts} costs "
-                          f"${quote.ask * contracts * 100:.2f} over ${args.premium_cap} cap"}))
+        reason = (f"directed qty {contracts} costs "
+                  f"${quote.ask * contracts * 100:.2f} over ${args.premium_cap} cap")
+        print(json.dumps({"ticker": ticker, "action": "skip", "reason": reason}))
+        record_block(reason, quote_payload)
         return 0
     if contracts < 1:
-        print(json.dumps({"ticker": ticker, "action": "skip",
-                          "reason": f"ask {quote.ask} exceeds ${args.premium_cap} cap"}))
+        reason = f"ask {quote.ask} exceeds ${args.premium_cap} cap"
+        print(json.dumps({"ticker": ticker, "action": "skip", "reason": reason}))
+        record_block(reason, _option_quote_payload(quote, quantity=1))
         return 0
     open_option_positions = 0
     try:
@@ -326,11 +422,15 @@ def main(argv=None) -> int:
         open_option_positions = sum(
             1 for p in _backend.list_positions()
             if len(str(p.get("symbol", ""))) > 10)
-    except Exception:
-        open_option_positions = 0
+    except Exception as exc:
+        reason = f"position lookup failure: {exc}"
+        print(json.dumps({"ticker": ticker, "action": "skip", "reason": reason}))
+        record_block(reason, quote_payload)
+        return 0
     if open_option_positions >= args.max_positions:
-        print(json.dumps({"ticker": ticker, "action": "skip",
-                          "reason": f"{open_option_positions} open option positions (max {args.max_positions})"}))
+        reason = f"{open_option_positions} open option positions (max {args.max_positions})"
+        print(json.dumps({"ticker": ticker, "action": "skip", "reason": reason}))
+        record_block(reason, quote_payload)
         return 0
     rec = {"ticker": ticker, "contract": quote.contract.option_symbol,
            "expiry": quote.contract.expiry, "strike": str(quote.contract.strike),
@@ -347,7 +447,11 @@ def main(argv=None) -> int:
     import uuid as _uuid
 
     candidate_id = f"{ticker}:{today.isoformat()}:long-{args.direction}:{_uuid.uuid4().hex[:8]}"
-    db = CioDatabase(build_settings(args.config, args.env_file).database_path)
+    try:
+        db = CioDatabase(settings.database_path)
+    except Exception as exc:
+        record_block(f"paper database setup failure: {exc}")
+        raise
     db.record_candidate(candidate_id, ticker, "buy",
                         {"source": "options-scout", "contract": quote.contract.option_symbol,
                          "delta": str(quote.delta), "iv": str(quote.iv)})
@@ -365,8 +469,17 @@ def main(argv=None) -> int:
             _dt.strptime(end, "%H:%M")
             override = (start, end)
         except ValueError as exc:
-            raise PolicyViolation(f"Bad --override-window: {exc}") from exc
-    earnings_date = lookup_earnings_date(ticker)
+            reason = f"Bad --override-window: {exc}"
+            record_block(reason, quote_payload)
+            raise PolicyViolation(reason) from exc
+    try:
+        earnings_date = lookup_earnings_date(ticker)
+    except Exception as exc:
+        record_block(
+            f"earnings lookup failure: {exc}", quote_payload,
+            {"as_of": now, "source": "alpaca-bars"},
+        )
+        raise
     try:
         analysis = collect_market_analysis(
             ticker, market_data, now=now, earnings_date=earnings_date)
@@ -379,13 +492,7 @@ def main(argv=None) -> int:
             "session_status": "OPEN", "position_status": "unknown",
             "policy_version": "paper-options-v1", "collection_error": str(exc),
         }
-    option_payload = {
-        "occ_symbol": quote.contract.option_symbol, "bid": quote.bid,
-        "ask": quote.ask, "reviewed_price": quote.ask, "as_of": quote.quoted_at,
-        "source": "alpaca-options", "iv": quote.iv,
-        "open_interest": quote.open_interest, "volume": quote.volume,
-        "spread": quote.ask - quote.bid, "quantity": contracts,
-    }
+    option_payload = _option_quote_payload(quote, quantity=contracts)
     candidate = collect_entry_evidence(
         ticker, args.direction, option_payload, analysis, now=now)
     result = persist_candidate_before_gate(

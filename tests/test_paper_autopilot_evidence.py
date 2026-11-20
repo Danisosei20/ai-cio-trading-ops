@@ -44,6 +44,7 @@ def analysis(as_of: datetime = NOW) -> dict:
         "session_status": "OPEN",
         "position_status": "flat",
         "policy_version": "paper-options-v1",
+        "source": "alpaca-bars",
     }
 
 
@@ -148,7 +149,9 @@ def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
             active_policy_version="desk-v2", evidence_root=tmp_path,
         )
 
-    evidence = collect_entry_evidence("NVDA", "put", quote(), analysis(), now=NOW)
+    put_quote = quote()
+    put_quote["occ_symbol"] = "NVDA261218P00200000"
+    evidence = collect_entry_evidence("NVDA", "put", put_quote, analysis(), now=NOW)
     with pytest.raises(PolicyViolation, match="downstream failure"):
         persist_candidate_before_gate(
             db, evidence, gate=lambda: (_ for _ in ()).throw(PolicyViolation("downstream failure")),
@@ -164,7 +167,9 @@ def test_policy_version_mismatch_and_gate_exception_are_recorded(tmp_path):
 
 def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path):
     db = tmp_path / "autopilot.db"
-    evidence = collect_entry_evidence("NVDA", "put", quote(), analysis(), now=NOW)
+    put_quote = quote()
+    put_quote["occ_symbol"] = "NVDA261218P00200000"
+    evidence = collect_entry_evidence("NVDA", "put", put_quote, analysis(), now=NOW)
     observed = {}
 
     def broker_call():
@@ -184,3 +189,50 @@ def test_order_callback_sees_screened_sqlite_and_json_before_invocation(tmp_path
     assert result["action"] == "accepted"
     assert observed["sqlite"] == [("screened",)]
     assert '"action": "screened"' in observed["artifact"]
+
+
+def test_early_block_helper_writes_one_blocked_attempt_and_artifact(tmp_path):
+    from scripts.options_pilot import record_preentry_block
+
+    record_preentry_block(
+        tmp_path / "autopilot.db", "NVDA", "call", quote(), analysis(),
+        reason="premium cap", now=NOW, evidence_root=tmp_path,
+    )
+    record_preentry_block(
+        tmp_path / "autopilot.db", "NVDA", "call", quote(), analysis(),
+        reason="premium cap", now=NOW, evidence_root=tmp_path,
+    )
+    with sqlite3.connect(tmp_path / "autopilot.db") as connection:
+        rows = connection.execute("SELECT action, reason FROM paper_autopilot_attempts").fetchall()
+    assert rows == [("blocked", "premium cap")]
+    assert len(list((tmp_path / "evidence").glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize("mutator,match", [
+    (lambda q, a: q.update(source="untrusted"), "quote source"),
+    (lambda q, a: a.update(source="untrusted"), "analysis source"),
+    (lambda q, a: q.update(occ_symbol="NVDA261218P00200000"), "right"),
+    (lambda q, a: q.update(occ_symbol="AAPL261218C00200000"), "underlying"),
+    (lambda q, a: a.update(earnings_date="2026-12-01", earnings_provenance="unknown"), "provenance"),
+])
+def test_source_occ_and_semantic_validation_fail_closed(mutator, match, tmp_path):
+    raw_quote, raw_analysis = quote(), analysis()
+    mutator(raw_quote, raw_analysis)
+    evidence = collect_entry_evidence("NVDA", "call", raw_quote, raw_analysis, now=NOW)
+
+    with pytest.raises(PolicyViolation, match=match):
+        persist_candidate_before_gate(
+            tmp_path / "autopilot.db", evidence, gate=lambda: True,
+            broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
+        )
+
+
+def test_quantity_consistency_fails_closed(tmp_path):
+    evidence = collect_entry_evidence("NVDA", "call", quote(), analysis(), now=NOW)
+    evidence["quantity"] = 2
+    evidence["quote"]["quantity"] = 1
+    with pytest.raises(PolicyViolation, match="quantity"):
+        persist_candidate_before_gate(
+            tmp_path / "autopilot.db", evidence, gate=lambda: True,
+            broker_call=lambda: pytest.fail("broker must not be called"), now=NOW,
+        )

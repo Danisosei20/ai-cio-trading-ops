@@ -36,6 +36,7 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "liquidity": None,
     "earnings_date": None,
     "earnings_provenance": None,
+    "analysis_source": None,
     "session_status": None,
     "position_status": None,
     "policy_version": None,
@@ -297,3 +298,13 @@ def record_attempt(
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
+
+
+def attempt_exists(db_path: Path, evidence: dict, action: str, reason: str) -> bool:
+    """Return whether this substantive attempt was already recorded."""
+    fingerprint = candidate_fingerprint(evidence)
+    with _managed_connection(db_path) as connection:
+        return connection.execute(
+            "SELECT 1 FROM paper_autopilot_attempts WHERE fingerprint=? AND action=? AND reason=? LIMIT 1",
+            (fingerprint, action, reason),
+        ).fetchone() is not None
