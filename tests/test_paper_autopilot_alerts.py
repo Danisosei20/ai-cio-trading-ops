@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 from robinhood_tools.paper_autopilot import build_evidence, run_paper_entry, send_entry_alert
@@ -45,6 +46,8 @@ def accepted_result(tmp_path):
         "policy_version": "paper-options-v1",
         "database_path": str(tmp_path / "autopilot.db"),
         "paper_only": True,
+        "mode": "paper_auto",
+        "provenance": "paper",
     }, now=now)
     result = run_paper_entry(
         evidence, execute=True, db_path=tmp_path / "autopilot.db", now=now,
@@ -53,8 +56,23 @@ def accepted_result(tmp_path):
         evidence_root=tmp_path,
     )
     result["evidence"] = evidence
+    result["paper_only"] = True
+    result["mode"] = "paper_auto"
+    result["provenance"] = "paper"
     result["channel_id"] = "C123"
     return result
+
+
+class BlockingNotifier(Notifier):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def send_approval(self, *, channel_id, message):
+        self.started.set()
+        self.release.wait(timeout=5)
+        return super().send_approval(channel_id=channel_id, message=message)
 
 
 def test_accepted_order_alert_has_complete_payload_and_sends_immediately(tmp_path):
@@ -198,7 +216,7 @@ def test_send_success_persistence_failure_is_unknown_and_not_retryable(tmp_path,
 
     def fail_after_intent(*args, **kwargs):
         calls.append(kwargs["status"])
-        if len(calls) > 1:
+        if kwargs["status"] == "sent":
             raise OSError("database became unavailable")
         return original_persist(*args, **kwargs)
 
@@ -211,7 +229,7 @@ def test_send_success_persistence_failure_is_unknown_and_not_retryable(tmp_path,
     assert delivery["last_error"]["code"] == "persistence_error"
     assert len(notifier.messages) == 1
     with sqlite3.connect(tmp_path / "autopilot.db") as db:
-        assert db.execute("SELECT status FROM paper_autopilot_alert_deliveries").fetchone() == ("intent",)
+        assert db.execute("SELECT status FROM paper_autopilot_alert_deliveries").fetchone() == ("unknown_delivery",)
     retry = send_entry_alert(result, notifier=Notifier(),
                              clock=FakeClock(datetime(2026, 11, 20, 15, 30,
                                                       tzinfo=timezone.utc)))
@@ -232,3 +250,66 @@ def test_delivery_state_read_failure_fails_closed_without_sending(tmp_path):
     assert delivery["status"] == "indeterminate"
     assert delivery["last_error"]["code"] == "persistence_read_failed"
     assert notifier.messages == []
+
+
+def test_concurrent_alerts_atomically_claim_one_delivery_owner(tmp_path):
+    result = accepted_result(tmp_path)
+    notifier = BlockingNotifier()
+    clock = FakeClock(datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc))
+    results = []
+
+    first = threading.Thread(target=lambda: results.append(
+        send_entry_alert(result, notifier=notifier, clock=clock)))
+    first.start()
+    assert notifier.started.wait(timeout=5)
+    second = send_entry_alert(result, notifier=Notifier(), clock=clock)
+    notifier.release.set()
+    first.join(timeout=5)
+
+    assert len(results) == 1
+    assert results[0]["sent"] is True
+    assert second["status"] == "indeterminate"
+    assert second["last_error"]["code"] == "delivery_state_indeterminate"
+    assert len(notifier.messages) == 1
+
+
+def test_retrying_state_persistence_failure_stops_before_another_send(tmp_path, monkeypatch):
+    result = accepted_result(tmp_path)
+    notifier = Notifier(failures=1)
+    original = __import__("robinhood_tools.paper_autopilot", fromlist=["_persist_alert_delivery"])._persist_alert_delivery
+
+    def fail_retry(*args, **kwargs):
+        if kwargs["status"] == "retrying":
+            raise OSError("retry state unavailable")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("robinhood_tools.paper_autopilot._persist_alert_delivery", fail_retry)
+    delivery = send_entry_alert(result, notifier=notifier,
+                                clock=FakeClock(datetime(2026, 11, 20, 15, 30,
+                                                         tzinfo=timezone.utc)))
+
+    assert delivery["status"] == "indeterminate"
+    assert delivery["last_error"]["code"] == "retry_persistence_failed"
+    assert len(notifier.messages) == 1
+
+
+def test_live_misrouted_or_incoherent_accepted_result_is_refused(tmp_path):
+    cases = [
+        {"mode": "live_approval"},
+        {"provenance": "live"},
+        {"paper_only": False},
+        {"order": {"status": "rejected", "order_id": "order-1"}},
+    ]
+    for index, changes in enumerate(cases):
+        result = accepted_result(tmp_path / str(index))
+        result.update(changes)
+        notifier = Notifier()
+
+        delivery = send_entry_alert(result, notifier=notifier,
+                                    clock=FakeClock(datetime(2026, 11, 20, 15, 30,
+                                                             tzinfo=timezone.utc)))
+
+        assert delivery["status"] == "blocked"
+        assert delivery["last_error"] is not None, (changes, delivery, result.get("action"), result.get("reason"))
+        assert delivery["last_error"]["code"] == "paper_alert_refused"
+        assert notifier.messages == []

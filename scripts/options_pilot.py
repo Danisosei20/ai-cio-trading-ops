@@ -101,6 +101,9 @@ def collect_entry_evidence(
         "analysis_source": analysis.get("source"),
         "session_status": analysis.get("session_status"),
         "position_status": analysis.get("position_status"),
+        "paper_only": True,
+        "mode": "paper_auto",
+        "provenance": "paper",
         "policy_version": analysis.get("policy_version"),
         "freshness": {
             "quote": {"observed_at_utc": quote_time.isoformat() if quote_time else None, "max_age_minutes": 5},

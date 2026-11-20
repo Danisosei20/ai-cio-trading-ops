@@ -39,6 +39,9 @@ _EVIDENCE_DEFAULTS: dict[str, Any] = {
     "analysis_source": None,
     "session_status": None,
     "position_status": None,
+    "paper_only": None,
+    "mode": None,
+    "provenance": None,
     "policy_version": None,
     "freshness": None,
     "gate_results": None,
@@ -68,7 +71,7 @@ _STATUS_PRECEDENCE = {
     "unknown_submitted": 50, "unknown_reconciliation": 50,
 }
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
-_NON_ENTRY_EVIDENCE_FIELDS = {"order", "thesis", "slack"}
+_NON_ENTRY_EVIDENCE_FIELDS = {"order", "thesis", "slack", "paper_only", "mode", "provenance"}
 
 
 def _json_value(value: Any) -> Any:
@@ -340,13 +343,14 @@ def _connect(db_path: Path, *, timeout: float = 10, busy_timeout_ms: int = 10000
                 order_status TEXT, evidence_reference TEXT,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT, sent_at TEXT, message_ts TEXT,
-                message_link TEXT, updated_at TEXT NOT NULL
+                message_link TEXT, lease_owner TEXT, lease_expires_at TEXT,
+                updated_at TEXT NOT NULL
             )"""
         )
         alert_columns = {row[1] for row in connection.execute(
             "PRAGMA table_info(paper_autopilot_alert_deliveries)"
         )}
-        for column in ("order_status", "evidence_reference"):
+        for column in ("order_status", "evidence_reference", "lease_owner", "lease_expires_at"):
             if column not in alert_columns:
                 connection.execute(
                     f"ALTER TABLE paper_autopilot_alert_deliveries ADD COLUMN {column} TEXT"
@@ -787,23 +791,53 @@ def _persist_alert_delivery(
     last_error: str | None, sent_at: str | None = None,
     message_ts: str | None = None, message_link: str | None = None,
     order_status: str | None = None, evidence_reference: str | None = None,
+    lease_owner: str | None = None, lease_expires_at: str | None = None,
 ) -> None:
     with _managed_connection(db_path) as connection:
         connection.execute(
             """INSERT INTO paper_autopilot_alert_deliveries
                (candidate_id, order_id, order_status, evidence_reference, status, attempts, last_error, sent_at,
-                message_ts, message_link, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                message_ts, message_link, lease_owner, lease_expires_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(candidate_id) DO UPDATE SET order_id=excluded.order_id,
                  order_status=excluded.order_status, evidence_reference=excluded.evidence_reference,
                  status=excluded.status, attempts=excluded.attempts,
                  last_error=excluded.last_error, sent_at=excluded.sent_at,
                  message_ts=excluded.message_ts, message_link=excluded.message_link,
+                 lease_owner=excluded.lease_owner, lease_expires_at=excluded.lease_expires_at,
                  updated_at=excluded.updated_at""",
             (str(evidence["candidate_id"]), order_id, order_status, evidence_reference,
              status, attempts, last_error, sent_at, message_ts, message_link,
+             lease_owner, lease_expires_at,
              datetime.now(timezone.utc).isoformat()),
         )
+
+
+def _claim_alert_delivery(
+    db_path: Path, evidence: dict, order_id: str, *, order_status: str,
+    evidence_reference: str, lease_seconds: int = 600,
+) -> tuple[str, tuple[Any, ...] | None]:
+    """Atomically create the single sender row, or observe its owner/state."""
+    owner = str(uuid.uuid4())
+    expires = _timestamp(datetime.now(timezone.utc) + timedelta(seconds=lease_seconds))
+    with _managed_connection(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        prior = connection.execute(
+            "SELECT status, attempts, sent_at, message_ts, message_link, lease_owner "
+            "FROM paper_autopilot_alert_deliveries WHERE candidate_id=?",
+            (str(evidence["candidate_id"]),),
+        ).fetchone()
+        if prior is not None:
+            return owner, prior
+        connection.execute(
+            """INSERT INTO paper_autopilot_alert_deliveries
+               (candidate_id, order_id, order_status, evidence_reference, status, attempts,
+                last_error, lease_owner, lease_expires_at, updated_at)
+               VALUES (?, ?, ?, ?, 'intent', 0, NULL, ?, ?, ?)""",
+            (str(evidence["candidate_id"]), order_id, order_status, evidence_reference,
+             owner, expires, datetime.now(timezone.utc).isoformat()),
+        )
+        return owner, None
 
 
 def send_entry_alert(
@@ -864,6 +898,24 @@ def send_entry_alert(
         return {"sent": False, "attempts": 0, "last_error": error,
                 "sent_at": None, "status": "indeterminate"}
 
+    def refusal(message: str) -> dict:
+        error = {"code": "paper_alert_refused", "message": message}
+        evidence["slack"] = {"status": "refused", "attempts": 0, "error": error}
+        try:
+            if result.get("evidence_root") is not None:
+                write_evidence(Path(result["evidence_root"]), evidence)
+            _persist_alert_delivery(
+                db_path, evidence, order_id, status="refused", attempts=0,
+                last_error=error["code"], order_status=str(order.get("status", "")),
+                evidence_reference=evidence_reference,
+            )
+        except Exception as exc:
+            error["persistence_error"] = str(exc) or type(exc).__name__
+            return {"sent": False, "attempts": 0, "last_error": error,
+                    "sent_at": None, "status": "indeterminate"}
+        return {"sent": False, "attempts": 0, "last_error": error,
+                "sent_at": None, "status": "blocked"}
+
     try:
         with _managed_connection(db_path) as connection:
             prior = connection.execute(
@@ -881,6 +933,15 @@ def send_entry_alert(
             "delivery_state_indeterminate",
             f"existing delivery state is {prior[0]}; reconciliation is required before retry",
         )
+
+    paper_only = result.get("paper_only", evidence.get("paper_only"))
+    mode = result.get("mode", evidence.get("mode"))
+    provenance = result.get("provenance", evidence.get("provenance"))
+    if paper_only is not True or provenance != "paper" or mode != "paper_auto":
+        return refusal("accepted order lacks explicit paper-only provenance and paper_auto mode")
+    order_status = str(order.get("status", "")).lower()
+    if order_status != "accepted" or str(order.get("order_id") or order.get("id") or "") != order_id:
+        return refusal("accepted result has incoherent order id or status")
 
     configured_error = result.get("notifier_error")
     if configured_error:
@@ -908,13 +969,21 @@ def send_entry_alert(
                   os.environ.get("SLACK_CHANNEL_ID", "") or
                   getattr(notifier, "_allowed_channel_id", ""))
     try:
-        _persist_alert_delivery(
-            db_path, evidence, order_id, status="intent", attempts=0, last_error=None,
-            order_status=str(order.get("status", "accepted")),
+        owner, claimed_prior = _claim_alert_delivery(
+            db_path, evidence, order_id, order_status=order_status,
             evidence_reference=evidence_reference,
         )
     except Exception as exc:
         return persistence_failure("persistence_write_failed", str(exc) or type(exc).__name__)
+    if claimed_prior is not None:
+        if claimed_prior[0] == "sent":
+            return {"sent": True, "attempts": claimed_prior[1], "last_error": None,
+                    "sent_at": claimed_prior[2], "status": "sent", "message_ts": claimed_prior[3],
+                    "message_link": claimed_prior[4]}
+        return persistence_failure(
+            "delivery_state_indeterminate",
+            f"delivery was claimed by another worker in state {claimed_prior[0]}",
+        )
     attempts, last_error, delay = 0, None, 1
     while attempts == 0 or _clock_now(clock).timestamp() <= deadline:
         attempts += 1
@@ -936,8 +1005,11 @@ def send_entry_alert(
                                         attempts=attempts, last_error=last_error["code"],
                                         order_status=str(order.get("status", "accepted")),
                                         evidence_reference=evidence_reference)
-            except Exception:
-                pass
+            except Exception as exc:
+                retry_error = {"code": "retry_persistence_failed",
+                               "message": str(exc) or type(exc).__name__}
+                return {"sent": False, "attempts": attempts, "last_error": retry_error,
+                        "sent_at": None, "status": "indeterminate"}
             _clock_sleep(clock, sleep_for)
             delay = min(delay * 2, 60)
             continue
