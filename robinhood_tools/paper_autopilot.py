@@ -58,6 +58,7 @@ _VOLATILE_FINGERPRINT_FIELDS = {
     "evidence_type", "audit_history", "order", "slack",
 }
 _ORDER_FIELDS = frozenset({"id", "order_id", "status", "side", "symbol", "occ_symbol", "quantity", "price", "submitted_at"})
+_STATUS_PRECEDENCE = {"screened": 10, "blocked": 20, "accepted": 30}
 _CREDENTIAL_KEY = re.compile(r"(?:api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|authorization|bearer)")
 
 
@@ -132,6 +133,22 @@ def _persisted_order(order: dict | None) -> dict | None:
     return _json_value({key: value for key, value in order.items() if key in _ORDER_FIELDS})
 
 
+def _event_key(event: dict) -> str:
+    return json.dumps(event, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _merge_history(histories: list[list[dict]]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for history in histories:
+        for event in history:
+            key = _event_key(event)
+            if key not in seen:
+                seen.add(key)
+                merged.append(event)
+    return merged
+
+
 def _deduplicate_attempts(connection: sqlite3.Connection) -> None:
     """Collapse pre-unique-index duplicates without discarding transition history."""
     fingerprints = connection.execute(
@@ -147,27 +164,35 @@ def _deduplicate_attempts(connection: sqlite3.Connection) -> None:
         ).fetchall()
         keep = rows[0]
         merged = json.loads(keep[2])
-        history = list(merged.get("audit_history", []))
+        histories = []
         for row in rows:
             row_evidence = json.loads(row[2])
             row_history = row_evidence.get("audit_history", [])
             if row_history:
-                history.extend(row_history)
+                histories.append(row_history)
             else:
-                history.append({
+                histories.append([{
                     "action": row[3], "reason": row[5],
                     "order": json.loads(row[6]) if row[6] else None,
                     "at": row[7],
-                })
-        merged["audit_history"] = history
-        latest = rows[-1]
+                }])
+        merged["audit_history"] = _merge_history(histories)
+        effective = max(
+            enumerate(rows),
+            key=lambda item: (_STATUS_PRECEDENCE.get(item[1][4] or item[1][3], 0), item[0]),
+        )[1]
+        effective_action = effective[3]
+        effective_order = effective[6]
+        if effective_action == "accepted" and not effective_order:
+            effective_order = next((row[6] for row in reversed(rows) if row[3] == "accepted" and row[6]), None)
+        merged.update({"action": effective_action, "status": effective[4], "reason": effective[5]})
         connection.execute(
             """UPDATE paper_autopilot_attempts
                SET evidence=?, action=?, status=?, reason=?, order_payload=?
                WHERE id=?""",
             (
                 json.dumps(merged, sort_keys=True, separators=(",", ":"), allow_nan=False),
-                latest[3], latest[4], latest[5], latest[6], keep[0],
+                effective_action, effective[4], effective[5], effective_order, keep[0],
             ),
         )
         connection.execute(
@@ -253,6 +278,10 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             connection.execute(
                 "ALTER TABLE paper_autopilot_attempts ADD COLUMN status TEXT NOT NULL DEFAULT 'screened'"
             )
+        connection.execute(
+            "UPDATE paper_autopilot_attempts SET status=action "
+            "WHERE status='screened' AND action <> 'screened'"
+        )
         _deduplicate_attempts(connection)
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_autopilot_attempts_fingerprint "
@@ -360,13 +389,29 @@ def record_attempt(
         connection.execute("BEGIN IMMEDIATE")
         fingerprint = candidate_fingerprint(evidence)
         existing = connection.execute(
-            "SELECT id, candidate_id, evidence FROM paper_autopilot_attempts WHERE fingerprint=? LIMIT 1",
+            "SELECT id, candidate_id, evidence, action, status, reason, order_payload "
+            "FROM paper_autopilot_attempts WHERE fingerprint=? LIMIT 1",
             (fingerprint,),
         ).fetchone()
         history = []
         if existing:
             evidence["candidate_id"] = existing[1]
-            history = json.loads(existing[2]).get("audit_history", [])
+            existing_evidence = json.loads(existing[2])
+            history = existing_evidence.get("audit_history", [])
+            current_action = existing[4] or existing[3]
+            current_precedence = _STATUS_PRECEDENCE.get(current_action, 0)
+            incoming_precedence = _STATUS_PRECEDENCE.get(action, 0)
+            effective_action = current_action if current_precedence > incoming_precedence else action
+            effective_reason = existing[5] if current_precedence > incoming_precedence else reason
+            effective_order = existing[6] if current_precedence > incoming_precedence else json.dumps(
+                _persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False
+            )
+            if current_action == "accepted" and not effective_order and existing[6]:
+                effective_order = existing[6]
+        else:
+            effective_action = action
+            effective_reason = reason
+            effective_order = json.dumps(_persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False)
         event = {
             "action": action,
             "reason": reason,
@@ -374,16 +419,19 @@ def record_attempt(
             "at": datetime.now(timezone.utc).isoformat(),
         }
         history.append(event)
-        evidence.update({"action": action, "status": action, "reason": reason, "audit_history": history})
+        evidence.update({
+            "action": effective_action, "status": effective_action,
+            "reason": effective_reason, "audit_history": history,
+        })
         evidence_payload = _persisted_evidence(evidence)
-        order_payload = json.dumps(_persisted_order(order), sort_keys=True, separators=(",", ":"), allow_nan=False)
+        order_payload = effective_order
         encoded_evidence = json.dumps(evidence_payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
         if existing:
             connection.execute(
                 """UPDATE paper_autopilot_attempts
                    SET candidate_id=?, evidence=?, action=?, status=?, reason=?, order_payload=?, created_at=?
                    WHERE id=?""",
-                (evidence["candidate_id"], encoded_evidence, action, action, reason, order_payload,
+                (evidence["candidate_id"], encoded_evidence, effective_action, effective_action, effective_reason, order_payload,
                  datetime.now(timezone.utc).isoformat(), existing[0]),
             )
         else:
@@ -391,7 +439,7 @@ def record_attempt(
                 """INSERT INTO paper_autopilot_attempts
                    (candidate_id, fingerprint, evidence, action, status, reason, order_payload, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (evidence["candidate_id"], fingerprint, encoded_evidence, action, action, reason,
+                (evidence["candidate_id"], fingerprint, encoded_evidence, effective_action, effective_action, effective_reason,
                  order_payload, datetime.now(timezone.utc).isoformat()),
             )
 

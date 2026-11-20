@@ -249,6 +249,56 @@ def test_record_attempt_upserts_one_row_and_keeps_json_audit_history(tmp_path):
     assert [item["action"] for item in history] == ["screened", "accepted"]
 
 
+def test_record_attempt_does_not_downgrade_accepted_terminal_state(tmp_path):
+    db = tmp_path / "autopilot.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+
+    record_attempt(db, evidence, "accepted", "paper order accepted", {"order_id": "paper-1"})
+    record_attempt(db, evidence, "blocked", "duplicate blocked update")
+
+    with sqlite3.connect(db) as connection:
+        action, status, reason, order_payload, encoded = connection.execute(
+            "SELECT action, status, reason, order_payload, evidence FROM paper_autopilot_attempts"
+        ).fetchone()
+    assert (action, status, reason) == ("accepted", "accepted", "paper order accepted")
+    assert json.loads(order_payload) == {"order_id": "paper-1"}
+    assert [event["action"] for event in json.loads(encoded)["audit_history"]] == [
+        "accepted", "blocked"
+    ]
+
+
+def test_legacy_duplicate_migration_deduplicates_existing_history(tmp_path):
+    db = tmp_path / "legacy.db"
+    evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
+    fingerprint = candidate_fingerprint(evidence)
+    history = [{"action": "screened", "reason": "seen", "order": None, "at": "t1"}]
+    encoded = json.dumps({**evidence, "audit_history": history}, sort_keys=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            """CREATE TABLE paper_autopilot_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL, evidence TEXT NOT NULL, action TEXT NOT NULL,
+                reason TEXT NOT NULL, order_payload TEXT, created_at TEXT NOT NULL
+            )"""
+        )
+        connection.executemany(
+            """INSERT INTO paper_autopilot_attempts
+               (candidate_id, fingerprint, evidence, action, reason, order_payload, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (evidence["candidate_id"], fingerprint, encoded, "screened", "seen", None, "t1"),
+                (evidence["candidate_id"], fingerprint, encoded, "screened", "seen", None, "t1"),
+            ],
+        )
+
+    record_attempt(db, evidence, "screened", "seen")
+
+    with sqlite3.connect(db) as connection:
+        persisted = json.loads(connection.execute("SELECT evidence FROM paper_autopilot_attempts").fetchone()[0])
+    assert persisted["audit_history"][0] == history[0]
+    assert len(persisted["audit_history"]) == 2
+
+
 def test_concurrent_record_attempts_upsert_one_unique_fingerprint_row(tmp_path):
     db = tmp_path / "autopilot.db"
     evidence = build_evidence(candidate(), now=datetime(2026, 11, 20, tzinfo=timezone.utc))
