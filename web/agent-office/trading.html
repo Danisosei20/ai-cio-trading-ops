@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#050a12">
-<title>Trading Desk — Live</title>
+<title>Trading Desk — Paper / Automation Paused</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/office.css">
 <style>
@@ -216,7 +216,7 @@
 </head>
 <body>
 <header class="top">
-  <h1><span class="live-dot"></span>TRADING DESK — LIVE</h1>
+  <h1><span class="live-dot"></span>TRADING DESK — PAPER / AUTOMATION PAUSED</h1>
   <a href="/pipeline">pipeline</a>
   <a href="/">office</a>
   <div class="spacer"></div>
@@ -421,7 +421,12 @@
   }
 
   /* ---------- Positions table ---------- */
-  function renderPositions(positions) {
+  function renderPositions(positions, status) {
+    if (status === "unavailable") {
+      byId("positions-dir").innerHTML = emptyBox("Broker position data unavailable — position state is unknown");
+      byId("positions").innerHTML = "";
+      return;
+    }
     var el = byId("positions");
     if (!positions || !positions.length) {
       el.innerHTML = emptyBox("No open positions — desk is in cash");
@@ -468,8 +473,12 @@
   }
 
   /* ---------- Working orders ---------- */
-  function renderOpenOrders(orders) {
+  function renderOpenOrders(orders, status) {
     var el = byId("open-orders");
+    if (status === "unavailable") {
+      el.innerHTML = emptyBox("Broker order data unavailable — open-order state is unknown");
+      return;
+    }
     if (!orders || !orders.length) {
       el.innerHTML = emptyBox("No open orders");
       return;
@@ -584,10 +593,10 @@
     try { renderObjective(data.objective); } catch (e) { showError("objective: " + e.message); }
     try {
       renderDirectionSplit(data.positions_by_direction);
-      renderPositions(data.positions);
+      renderPositions(data.positions, data.positions_status);
     } catch (e) { showError("positions: " + e.message); }
     try { renderToday(data.today); } catch (e) { showError("today: " + e.message); }
-    try { renderOpenOrders(data.open_orders); } catch (e) { showError("orders: " + e.message); }
+    try { renderOpenOrders(data.open_orders, data.open_orders_status); } catch (e) { showError("orders: " + e.message); }
     try { renderReconciliation(data.reconciliation); } catch (e) { showError("reconciliation: " + e.message); }
     try { renderPositionOdds(data.position_odds); } catch (e) { showError("odds: " + e.message); }
     try { renderStrategyPerf(data.strategy_performance); } catch (e) { showError("performance: " + e.message); }
