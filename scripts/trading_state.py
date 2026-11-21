@@ -170,7 +170,7 @@ def _position_direction(symbol: str, qty: float) -> str:
     return "long"
 
 
-def _positions() -> list[dict]:
+def _positions() -> list[dict] | None:
     try:
         from robinhood_tools.alpaca_paper import (AlpacaPaperBackend,
                                                   AlpacaPaperHttpTransport)
@@ -189,12 +189,18 @@ def _positions() -> list[dict]:
             out.append(pos)
         return out
     except Exception:  # noqa: BLE001
-        return []
+        return None
 
 
-def _positions_by_direction() -> dict:
+def _positions_by_direction(positions: list[dict] | None = None) -> dict:
     """Split positions into long and short with aggregated P/L."""
-    positions = _positions()
+    if positions is None:
+        positions = _positions()
+    if positions is None:
+        return {"status": "unavailable",
+                "long": {"count": None, "unrealized_pl": None, "positions": []},
+                "short": {"count": None, "unrealized_pl": None, "positions": []},
+                "total_unrealized_pl": None}
     long_positions = [p for p in positions if p.get("direction") == "long"]
     short_positions = [p for p in positions if p.get("direction") == "short"]
 
@@ -216,7 +222,7 @@ def _positions_by_direction() -> dict:
     }
 
 
-def _open_orders() -> list[dict]:
+def _open_orders() -> list[dict] | None:
     """Unfilled orders at the broker.
 
     Added because the desk had a live short it could not see: a limit order
@@ -243,7 +249,7 @@ def _open_orders() -> list[dict]:
                         "submitted_at": str(o.get("submitted_at", ""))})
         return out
     except Exception:  # noqa: BLE001 - an unreadable book is not an empty one
-        return []
+        return None
 
 
 def _strategy_performance() -> dict:
@@ -335,17 +341,21 @@ def _recent_shadows(limit: int = 8) -> list[dict]:
 def state() -> dict:
     today = datetime.now(ET).date().isoformat()
     positions = _positions()
-    held = {str(p.get("symbol", "")).upper() for p in positions}
+    open_orders = _open_orders()
+    position_rows = positions or []
+    held = {str(p.get("symbol", "")).upper() for p in position_rows}
     return {
         "generated_at": datetime.now(ET).isoformat(),
         "date": today,
         "regime": _live_regime(),
         "objective": _objective(today),
-        "positions": positions,
-        "positions_by_direction": _positions_by_direction(),
+        "positions": position_rows,
+        "positions_status": "ok" if positions is not None else "unavailable",
+        "positions_by_direction": _positions_by_direction(positions),
         "today": _today_records(today),
         "option_entries": _option_entries(today),
-        "open_orders": _open_orders(),
+        "open_orders": open_orders,
+        "open_orders_status": "ok" if open_orders is not None else "unavailable",
         "reconciliation": _reconciliation(),
         "position_odds": _position_odds(held),
         "scorecard": _scorecard(),

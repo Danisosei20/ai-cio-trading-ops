@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from scripts import desk_safety_status  # noqa: E402
 from scripts.office_state import snapshot  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
@@ -18,6 +19,31 @@ SESSION_START = "10:15"
 SESSION_END = "15:45"
 
 _MARKET_CLOCK_CACHE = {"value": None, "fetched_at": 0.0}
+
+# Safety posture is read-only and changes slowly. Cache the whole payload for
+# 30s so the 2s status poll never re-runs schtasks or the broker read.
+_SAFETY = {"payload": None, "at": 0.0}
+_SAFETY_TTL = 30.0
+
+
+def _safety_payload() -> dict:
+    now = time.monotonic()
+    if _SAFETY["payload"] is None or now - _SAFETY["at"] >= _SAFETY_TTL:
+        try:
+            payload = desk_safety_status.snapshot(ROOT)
+        except Exception:  # noqa: BLE001 - a broken reader fails closed
+            payload = {
+                "entries": "UNKNOWN", "mode": "UNKNOWN", "account": "UNKNOWN",
+                "certification": {"status": "NOT VERIFIED", "generated_at": "",
+                                  "label": "NOT VERIFIED"},
+                "reconciliation": {"status": "never run", "orphans": 0},
+                "protective": {"status": "UNKNOWN", "tasks": []},
+                "alerts": "NOT VERIFIED",
+                "generated_at": datetime.now(ET).isoformat(),
+            }
+        _SAFETY["payload"] = payload
+        _SAFETY["at"] = now
+    return _SAFETY["payload"]
 
 
 def _alpaca_market_clock() -> str | None:
@@ -70,7 +96,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = self.path.split("?", 1)[0]
         if route == "/api/status":
-            body = json.dumps({**snapshot(ROOT), "session": trading_window()}).encode()
+            body = json.dumps({**snapshot(ROOT), "session": trading_window(),
+                               "safety": _safety_payload()}).encode()
+            mime = "application/json"
+        elif route == "/api/safety":
+            body = json.dumps(_safety_payload()).encode()
             mime = "application/json"
         elif route == "/api/session":
             body = json.dumps(trading_window()).encode()
