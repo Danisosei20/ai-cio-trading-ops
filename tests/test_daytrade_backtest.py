@@ -10,7 +10,6 @@ desk it claims to measure.
 """
 import sys
 import unittest
-from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,13 +23,12 @@ from scripts.daytrade_backtest import (
     _simulate_exit,
 )
 from scripts.daytrade_scout import classify_direction
-from robinhood_tools.market_prices import market_regime
 
 
 def _bars(specs):
     return [{"datetime": f"2026-11-05 10:{i:02d}:00-05:00",
-             "open": o, "high": h, "low": l, "close": c, "volume": v}
-            for i, (o, h, l, c, v) in enumerate(specs)]
+             "open": o, "high": h, "low": low, "close": c, "volume": v}
+            for i, (o, h, low, c, v) in enumerate(specs)]
 
 
 class ClassificationTests(unittest.TestCase):

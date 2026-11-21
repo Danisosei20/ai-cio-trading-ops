@@ -472,11 +472,13 @@ class CioDatabase:
                 raise PolicyViolation("Approval was not reserved for execution.")
         return self.get(approval_id)
 
-    def mark_reconciliation_required(self, approval_id: str, error: str):
+    def mark_reconciliation_required(self, approval_id: str, error: str,
+                                     order_id: str | None = None):
         with self.connect() as db:
             db.execute(
-                "UPDATE approvals SET status='reconciliation_required', failure=? WHERE approval_id=? AND status='executing'",
-                (error, approval_id),
+                "UPDATE approvals SET status='reconciliation_required', failure=?, order_id=COALESCE(?, order_id) "
+                "WHERE approval_id=? AND status='executing'",
+                (error, order_id, approval_id),
             )
 
     def get(self, approval_id: str) -> ApprovalRecord:

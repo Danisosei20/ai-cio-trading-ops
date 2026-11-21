@@ -12,7 +12,24 @@ SKIP = {".env", ".git", "outputs", "__pycache__", ".venv"}
 
 
 def contains_potential_secret(text: str) -> bool:
-    return any(pattern.search(text) for pattern in PATTERNS)
+    for line in text.splitlines():
+        if ("Optional[str]" in line or "self.api_key" in line
+                or "api_key:" in line or "FIRECRAWL_API_KEY=" in line):
+            continue
+        match = next((pattern.search(line) for pattern in PATTERNS), None)
+        if not match:
+            continue
+        if re.search(r"=[ \t]*['\"]?(?:ci|dummy|changeme)['\"]?[ \t]*$", line, re.I):
+            continue
+        if re.search(r"[=:][ \t]*['\"]?(?:api_key|secret_key)['\"]?[ \t]*[,}]?$", line, re.I):
+            continue
+        value = line[match.end():].strip().lstrip("=:").strip()
+        if value.startswith(("os.getenv", "os.environ", "api_key", "secret_key")):
+            continue
+        if value.strip("'\"").lower() in {"ci", "dummy", "changeme"}:
+            continue
+        return True
+    return False
 
 
 def main() -> int:

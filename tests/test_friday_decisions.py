@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import ast
 import unittest
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 

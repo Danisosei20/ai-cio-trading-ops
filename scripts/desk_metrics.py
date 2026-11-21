@@ -206,7 +206,6 @@ def load_trades(days: int = 30) -> list[dict]:
 
 
 def main(argv=None) -> int:
-    import argparse
     p = argparse.ArgumentParser(description="Desk risk-adjusted metrics.")
     p.add_argument("--days", type=int, default=30, help="lookback days")
     p.add_argument("--json", action="store_true", help="machine-readable output")

@@ -1,5 +1,4 @@
 """Tests for the trade state machine."""
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,7 +76,7 @@ class TestTradeState(unittest.TestCase):
     def test_idempotency(self):
         with tempfile.TemporaryDirectory() as d:
             sm = TradeStateMachine(state_path=Path(d) / "state.json")
-            trade = sm.create_trade("NVDA", "long", "orb_breakout",
+            sm.create_trade("NVDA", "long", "orb_breakout",
                                     client_order_id="NVDA-2026-11-04-001")
             self.assertTrue(sm.check_idempotency("NVDA-2026-11-04-001"))
             self.assertFalse(sm.check_idempotency("NONEXISTENT"))
@@ -105,7 +104,7 @@ class TestTradeState(unittest.TestCase):
             sm.transition(t1.id, TradeState.ORDER_PENDING)
             sm.transition(t1.id, TradeState.POSITION_OPEN)
             sm.mark_closed(t1.id, "target", 50.0)
-            t2 = sm.create_trade("TSLA", "short", "vwap_rejection")
+            sm.create_trade("TSLA", "short", "vwap_rejection")
             s = sm.summary()
             self.assertEqual(s["total_trades"], 2)
             self.assertEqual(s["open"], 1)

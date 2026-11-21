@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.overnight_pilot import (
     _calc_position_size, _calc_reward_to_risk, _compute_ticker_score,
-    _ema, _ema_slope, _rel_strength, _score_setup, _validate_setup, _vwap,
+    _ema, _rel_strength, _validate_setup, _vwap,
 )
 
 

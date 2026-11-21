@@ -30,7 +30,6 @@ from scripts.options_time_machine import (
 class SimulateOptionOddsTest(unittest.TestCase):
     def test_the_desk_default_lets_winners_run(self):
         # The simulator ships the same default as the guard: no take-profit.
-        import argparse
 
         from scripts.options_time_machine import parse_args
 

@@ -271,7 +271,6 @@ def scenarios_entry_funnel() -> None:
     what the operator sees in the log when an entry does not appear.
     """
     from scripts.tradingagents_paper_auto import regime_gate_passes
-    from robinhood_tools.errors import PolicyViolation
     from robinhood_tools.loss_memory import RoundTrip, loss_streak_verdict
     from robinhood_tools.options_flow import weekend_gap_block
     from robinhood_tools.options_gate import entry_odds_verdict

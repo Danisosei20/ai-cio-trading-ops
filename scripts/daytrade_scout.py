@@ -113,8 +113,6 @@ def classify_direction(price: float, vwap: float | None, or_low: float,
     """
     price_above_vwap = vwap is not None and price > vwap
     price_below_vwap = vwap is not None and price < vwap
-    price_above_or_high = price >= or_high
-    price_below_or_low = price <= or_low
 
     if price_above_vwap and price >= or_low:
         return "long"

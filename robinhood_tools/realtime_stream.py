@@ -28,8 +28,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
-import ssl
 from typing import Callable, Optional
 
 import websockets

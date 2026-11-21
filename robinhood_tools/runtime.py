@@ -292,23 +292,29 @@ def _build_paper_service(
     *, settings: RuntimeSettings, sp500_snapshot, env_path=".env", authorizer=None,
     transport: AlpacaPaperTransport | None = None,
     earliest: str | None, latest: str | None,
+    session_clock: dict | None = None, exchange_calendar=None,
+    session_now: datetime | None = None,
 ):
     settings.require_paper_trading()
     values = {**load_env(env_path), **os.environ}
     paper_transport = transport or AlpacaPaperHttpTransport.from_values(values)
     paper_backend = AlpacaPaperBackend(paper_transport)
+    from .market_calendar import AlpacaExchangeCalendar, entry_session_status
+
+    calendar = exchange_calendar or AlpacaExchangeCalendar(paper_transport)
 
     def require_open_paper_session() -> None:
         if earliest is not None and latest is not None:
-            from datetime import datetime as _datetime
-
-            now_et = _datetime.now(ZoneInfo("America/New_York"))
-            if now_et.weekday() >= 5:
-                raise PolicyViolation("Weekend; strategy session closed.")
-            start = _datetime.strptime(earliest, "%H:%M").time()
-            end = _datetime.strptime(latest, "%H:%M").time()
-            if not start <= now_et.time().replace(tzinfo=None) <= end:
-                raise PolicyViolation(f"Outside strategy session {earliest}-{latest} ET.")
+            now_et = session_now or datetime.now(ZoneInfo("America/New_York"))
+            status = entry_session_status(
+                now_et,
+                clock=session_clock if session_clock is not None else paper_backend.market_clock(),
+                calendar=calendar,
+                earliest_entry_et=earliest,
+                latest_entry_et=latest,
+            )
+            if not status["can_enter"]:
+                raise PolicyViolation(str(status["reason"]))
         else:
             settings.require_paper_execution()
         if settings.paper_autonomy.regular_session_only and not paper_backend.market_clock().get("is_open"):
@@ -327,15 +333,21 @@ def build_paper_options_service(
     transport=None,
     earliest_entry_et: str | None = None,
     latest_entry_et: str | None = None,
+    session_clock: dict | None = None, exchange_calendar=None,
+    session_now: datetime | None = None,
 ):
     """Paper service wired to the options backend (long-only enforced there)."""
     from .alpaca_options import AlpacaOptionsBackend
 
     settings.require_paper_trading()
+    earliest_entry_et = earliest_entry_et or settings.paper_autonomy.earliest_entry_time_et
+    latest_entry_et = latest_entry_et or settings.paper_autonomy.latest_entry_time_et
     _base = _build_paper_service(
         settings=settings, sp500_snapshot=sp500_snapshot, env_path=env_path,
         authorizer=authorizer, transport=transport,
-        earliest=earliest_entry_et, latest=latest_entry_et)
+        earliest=earliest_entry_et, latest=latest_entry_et,
+        session_clock=session_clock, exchange_calendar=exchange_calendar,
+        session_now=session_now)
     options_backend = AlpacaOptionsBackend(_base.backend.transport)
     return RobinhoodTradingService(
         options_backend, authorizer=authorizer,

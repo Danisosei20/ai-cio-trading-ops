@@ -30,7 +30,7 @@ import argparse
 import json
 import random
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
