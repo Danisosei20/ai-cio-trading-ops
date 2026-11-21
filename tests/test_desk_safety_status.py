@@ -4,8 +4,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import scripts.desk_safety_status as dss
-
 from scripts.desk_safety_status import (
     classify_mode,
     classify_entries,
