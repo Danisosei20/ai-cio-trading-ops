@@ -1,14 +1,108 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080f19"><title>Nexus — the trading office</title><link rel="stylesheet" href="/office.css"></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a0f14">
+<title>Nexus — the trading office</title>
+<link rel="stylesheet" href="/office.css">
+</head>
 <body>
-<header><a class="brand" href="/"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 7v13l-13 7L3 23V10Z M3 10l13 7 13-7 M16 17v13 M9 7l14 7"/></svg><span>Nexus<small>The trading intelligence office</small></span></a><div class="controls"><span id="clock"></span><span id="session"></span><span id="safety-badge" class="safety-badge unknown">Checking…</span><span id="mode" class="mode">Connecting</span><button id="demo" aria-pressed="false">Watch demo</button></div></header>
+<header>
+  <a class="brand" href="/" aria-label="Nexus home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 7v13l-13 7L3 23V10Z M3 10l13 7 13-7 M16 17v13 M9 7l14 7"/></svg>
+    <span class="brand-word">Nexus<small>Trading intelligence office</small></span>
+  </a>
+  <div class="controls">
+    <span id="clock" class="clock"></span>
+    <span id="session" class="session-pill">—</span>
+    <span id="safety-badge" class="safety-badge unknown">Checking…</span>
+    <span id="mode" class="mode">Connecting</span>
+    <button id="demo" class="primary" aria-pressed="false">Watch demo</button>
+  </div>
+</header>
+
 <main>
-<section class="world" aria-label="Interactive AI command centre">
-<div class="world-top"><div><h1>Intelligence, in motion.</h1><p id="subtitle">Connecting to your fleet…</p></div><span class="room-tag">Five agents <span>·</span> One research network</span></div>
-<div class="viewport"><canvas id="office" width="1440" height="1000" role="img" aria-label="Futuristic isometric office with robotic agents, holographic desks and a suspended intelligence core. Agent status is available in the team buttons below."></canvas><div class="scene-caption"><span id="scene-note">Idle movement is ambient</span><div class="view-controls"><button id="motion" aria-pressed="false" title="Pause animation">Pause</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="fit">Fit</button><button id="fullscreen">Full screen</button></div></div></div>
-<div id="team" aria-label="Your team"></div>
-</section>
-<aside><div class="aside-head"><h2>Agent interface</h2><span id="connection-dot"></span></div><section class="safety"><h2>Safety &amp; trading status</h2><dl class="safety-rows"><dt>Entries</dt><dd id="safety-entries">—</dd><dt>Mode</dt><dd id="safety-mode">—</dd><dt>Account</dt><dd id="safety-account">—</dd><dt>Last certification</dt><dd id="safety-cert">—</dd><dt>Reconciliation</dt><dd id="safety-recon">—</dd><dt>Protective schedulers</dt><dd id="safety-protective">—</dd><dt>Alerts</dt><dd id="safety-alerts">—</dd></dl><p id="safety-note"></p></section><section class="inspector"><div class="portrait" id="portrait"></div><span id="detail-role">Screen</span><h3 id="detail-title">Finding the shortlist</h3><p id="detail-copy"></p><div id="detail-state">Waiting</div></section><section class="activity"><div class="activity-heading"><h2>Signal stream</h2><span id="journal-tag">Real fleet</span></div><ol id="journal"></ol></section><section class="run"><div><span id="run-label">Last recorded run</span><strong id="completion">0 / 5</strong></div><div class="progress"><i id="progress"></i></div><p id="run-id">No run recorded</p></section><p id="connection" role="status">Connecting…</p></aside>
-</main><footer><span><i></i> Observe & research only</span><span>Click a worker to visit their desk.</span><span>The office never starts trades.</span></footer>
-<script src="/scene.js"></script><script src="/office.js"></script></body></html>
+  <section class="world" aria-label="Interactive AI command centre">
+    <div class="world-top">
+      <div class="title-block">
+        <span class="eyebrow">The fleet · live view</span>
+        <h1>Intelligence, in motion.</h1>
+        <p id="subtitle">Connecting to your fleet…</p>
+      </div>
+      <span class="room-tag">Five agents <span>·</span> One research network</span>
+    </div>
+
+    <div class="viewport">
+      <div class="stage" aria-hidden="true"></div>
+      <canvas id="office" width="1440" height="1000" role="img" aria-label="Isometric office with robotic agents, holographic desks and a suspended intelligence core. Agent status is available in the team buttons below."></canvas>
+      <div class="scene-caption">
+        <span id="scene-note">Idle movement is ambient</span>
+        <div class="view-controls" role="group" aria-label="Scene controls">
+          <button id="motion" aria-pressed="false" title="Pause animation">Pause</button>
+          <button id="zoom-out" aria-label="Zoom out">−</button>
+          <button id="zoom-in" aria-label="Zoom in">+</button>
+          <button id="fit">Fit</button>
+          <button id="fullscreen">Full screen</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="team" aria-label="Your team"></div>
+  </section>
+
+  <aside>
+    <section class="safety" aria-label="Safety and trading status">
+      <div class="safety-head">
+        <span class="eyebrow">Desk posture</span>
+        <span class="safety-dot" aria-hidden="true"></span>
+      </div>
+      <h2>Safety &amp; trading status</h2>
+      <dl class="safety-rows">
+        <dt>Entries</dt><dd id="safety-entries">—</dd>
+        <dt>Mode</dt><dd id="safety-mode">—</dd>
+        <dt>Account</dt><dd id="safety-account">—</dd>
+        <dt>Certification</dt><dd id="safety-cert">—</dd>
+        <dt>Reconciliation</dt><dd id="safety-recon">—</dd>
+        <dt>Protective tasks</dt><dd id="safety-protective">—</dd>
+        <dt>Alerts</dt><dd id="safety-alerts">—</dd>
+      </dl>
+      <p id="safety-note"></p>
+    </section>
+
+    <div class="aside-head">
+      <h2>Agent interface</h2>
+      <span id="connection-dot" title="Feed status"></span>
+    </div>
+
+    <section class="inspector">
+      <div class="portrait" id="portrait"></div>
+      <span id="detail-role">Screen</span>
+      <h3 id="detail-title">Finding the shortlist</h3>
+      <p id="detail-copy"></p>
+      <div id="detail-state">Waiting</div>
+    </section>
+
+    <section class="activity">
+      <div class="activity-heading"><h2>Signal stream</h2><span id="journal-tag">Real fleet</span></div>
+      <ol id="journal"></ol>
+    </section>
+
+    <section class="run">
+      <div><span id="run-label">Last recorded run</span><strong id="completion">0 / 5</strong></div>
+      <div class="progress"><i id="progress"></i></div>
+      <p id="run-id">No run recorded</p>
+    </section>
+    <p id="connection" role="status">Connecting…</p>
+  </aside>
+</main>
+
+<footer>
+  <span><i></i> Read-only viewer</span>
+  <span>Click a worker to visit their desk.</span>
+  <span>The viewer never starts trades.</span>
+</footer>
+
+<script src="/scene.js"></script><script src="/office.js"></script>
+</body>
+</html>
