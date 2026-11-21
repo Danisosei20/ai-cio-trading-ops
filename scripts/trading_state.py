@@ -56,6 +56,8 @@ def _reconciliation() -> dict:
         "fills_already_known": doc.get("fills_already_known", 0),
         "lifecycles_closed": doc.get("lifecycles_closed", 0),
         "orphan_orders": doc.get("orphan_orders", []),
+        "historical_orders": doc.get("historical_orders", []),
+        "external_orders": doc.get("external_orders", []),
         "unattributed_exits": doc.get("unattributed_exits", []),
         "errors": doc.get("errors", []),
     }

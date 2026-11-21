@@ -57,6 +57,54 @@ class ReconcilerTestCase(unittest.TestCase):
         # A fill the ledger never authorized is reported, not absorbed.
         self.assertEqual(report.orphan_orders, ["RDDT270115P00095000:ord-buy-1"])
 
+    def test_pre_tracking_orders_are_not_reported_as_orphans(self):
+        # Approval rows only carry order_id from 2026-10-27. Orders from
+        # before that date are a bookkeeping gap, not unauthorized trades.
+        orders = [order("ord-pre-track", "QQQ261016C00750000", "buy")]
+        fills = {"ord-pre-track": [fill("f-pre", "3", "2.10")]}
+        report = reconcile_desk_fills(
+            database=self.db, orders=orders, fills_by_order=fills,
+            historical_order_ids={"ord-pre-track"},
+            now_iso="2026-11-21T08:00:00Z")
+        self.assertEqual(report.orphan_orders, [])
+        self.assertEqual(report.historical_orders, ["QQQ261016C00750000:ord-pre-track"])
+        self.assertEqual(report.fills_recorded, 1)
+
+    def test_a_real_orphan_stays_flagged_when_history_is_registered(self):
+        orders = [order("ord-unknown", "MRVL261218P00145000", "buy")]
+        fills = {"ord-unknown": [fill("f-u", "1", "27.30")]}
+        report = reconcile_desk_fills(
+            database=self.db, orders=orders, fills_by_order=fills,
+            historical_order_ids={"ord-pre-track"},
+            now_iso="2026-11-21T08:00:00Z")
+        self.assertEqual(report.orphan_orders, ["MRVL261218P00145000:ord-unknown"])
+        self.assertEqual(report.historical_orders, [])
+
+    def test_external_bot_order_is_classified_not_a_desk_orphan(self):
+        # day-trader-skill/trader-broker places market orders without a
+        # client_order_id; Alpaca supplies a plain UUID. Those are legitimate
+        # external orders, not desk approval failures — but they must stay
+        # visible, never silently absorbed.
+        orders = [{"id": "ord-ext", "symbol": "MRVL261218P00145000",
+                   "side": "buy", "status": "filled", "qty": "1",
+                   "client_order_id": "988e126b-e874-4fb3-a4b6-b0ce0c3bac84"}]
+        fills = {"ord-ext": [fill("f-ext", "1", "27.30")]}
+        report = reconcile_desk_fills(database=self.db, orders=orders,
+                                      fills_by_order=fills)
+        self.assertEqual(report.orphan_orders, [])
+        self.assertEqual(report.external_orders, ["MRVL261218P00145000:ord-ext"])
+        self.assertEqual(report.fills_recorded, 1)
+
+    def test_desk_prefixed_order_without_approval_stays_an_orphan(self):
+        orders = [{"id": "ord-desk", "symbol": "NVDA", "side": "buy",
+                   "status": "filled", "qty": "2",
+                   "client_order_id": "cio-opt-abc123"}]
+        fills = {"ord-desk": [fill("f-desk", "2", "100")]}
+        report = reconcile_desk_fills(database=self.db, orders=orders,
+                                      fills_by_order=fills)
+        self.assertEqual(report.orphan_orders, ["NVDA:ord-desk"])
+        self.assertEqual(report.external_orders, [])
+
     def test_buy_fill_drives_a_lifecycle_open(self):
         orders = [order("ord-buy-2", "INTC261120P00055000", "buy")]
         fills = {"ord-buy-2": [fill("f2", "10", "3.10")]}

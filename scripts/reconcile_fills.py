@@ -81,10 +81,16 @@ def run(args) -> dict:
     approvals_by_order = {str(row.get("order_id", "")): row
                           for row in db.list_approvals(100000)
                           if row.get("order_id")}
+    history_path = ROOT / "config" / "historical_orders.json"
+    try:
+        historical = set(json.loads(history_path.read_text(encoding="utf-8")).get("order_ids", []))
+    except (OSError, ValueError):  # a missing registry only loses the classification
+        historical = set()
 
     report = reconcile_desk_fills(
         database=db, orders=orders, fills_by_order=fills_by_order,
         approvals_by_order=approvals_by_order,
+        historical_order_ids=historical,
         now_iso=datetime.now(ET).isoformat())
     payload = report.as_dict()
 
@@ -116,6 +122,8 @@ def main(argv=None) -> int:
             "lifecycles_opened": payload["lifecycles_opened"],
             "lifecycles_closed": payload["lifecycles_closed"],
             "orphan_orders": payload["orphan_orders"],
+            "historical_orders": payload["historical_orders"],
+            "external_orders": payload["external_orders"],
             "unattributed_exits": payload["unattributed_exits"],
             "errors": payload["errors"],
         }, indent=2))
