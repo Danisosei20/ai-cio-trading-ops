@@ -157,15 +157,20 @@ def task_state(name: str, *, now: float | None = None) -> str | None:
     return state
 
 
-def account_state(env: dict) -> str:
-    """Read broker positions through the paper-only transport, fail closed."""
+def account_state() -> str:
+    """Read broker positions through the paper-only transport, fail closed.
+
+    No-argument by design: it is the default probe `snapshot` calls.
+    """
     try:
         from robinhood_tools.alpaca_paper import (
             AlpacaPaperBackend,
             AlpacaPaperHttpTransport,
         )
+        from robinhood_tools.settings import load_env
 
-        merged = {**env, **os.environ}
+        # Full local env is needed for broker auth; nothing here is emitted.
+        merged = {**load_env(str(ROOT / ".env")), **os.environ}
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(merged))
         return "FLAT" if not backend.list_positions() else "POSITIONS OPEN"
     except Exception:  # noqa: BLE001 - an unreadable book is not an empty one

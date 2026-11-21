@@ -2,6 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import scripts.desk_safety_status as dss
 
 from scripts.desk_safety_status import (
     classify_mode,
@@ -68,6 +71,20 @@ class ClassifierTests(unittest.TestCase):
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_default_account_probe_is_callable_without_arguments(self):
+        """snapshot invokes the real default probe with no args."""
+        class FakeBackend:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def list_positions(self):
+                return []
+
+        with patch("robinhood_tools.alpaca_paper.AlpacaPaperBackend", FakeBackend):
+            with tempfile.TemporaryDirectory() as d:
+                s = snapshot(Path(d), env={}, query=lambda n: "Disabled")
+        self.assertEqual(s["account"], "FLAT")
+
     def test_missing_files_yield_unknown_and_not_verified(self):
         with tempfile.TemporaryDirectory() as d:
             s = snapshot(Path(d), env={}, query=lambda n: "Disabled",
