@@ -1,0 +1,20 @@
+{
+  "_note": "Broker orders placed before approval rows began carrying order_id (2026-10-27). These are a bookkeeping gap, not unauthorized trades. They stay out of the orphan list but remain visible in order_fills. Do not add orders dated 2026-10-27 or later.",
+  "order_ids": [
+    "3f1d0b6b-a5ef-4662-b1a3-584f600313da",
+    "fbc169ad-3aee-40df-a19d-2f08317d6d55",
+    "a6ed9e59-132a-4ae8-81d1-046b343eec73",
+    "55455dca-4354-48c7-be87-bac64153297a",
+    "9cd84755-a1f9-42b5-95e0-6ffe0cff17dd",
+    "45eaea9f-63c2-43d1-973e-0a6986b77656",
+    "4770b6b7-e859-42af-9b60-f60e5273da2c",
+    "5fbd2fbf-0c02-47f1-b33f-78e1b725ba52",
+    "c4ea0483-4a5f-4a19-875f-0e9a515a27d4",
+    "817f4cb9-2d35-46cb-a994-26e5087e3ff7",
+    "d5e3182b-b216-4292-a28c-f5d3579fb1af",
+    "a91c4966-f532-4af1-9003-291bfdfbbfb6",
+    "28d04ad8-a45e-4d6d-921a-30ea825e6f2c",
+    "7940166f-ff2c-437c-9a26-7cba4ce026c4",
+    "b9982399-6b88-4d7b-b0dc-63e521e07f42"
+  ]
+}

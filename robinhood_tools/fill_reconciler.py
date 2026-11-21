@@ -34,6 +34,24 @@ from .reconciliation import Fill, reconcile_order
 OCC = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
 FILLED_STATES = {"filled", "partially_filled"}
 
+# Desk-placed orders carry a client_order_id that identifies their origin:
+# cio-/cio-opt- (gated equity/option flow) or TICKER:date:setup (day/overnight).
+# Anything else (e.g. an Alpaca-generated UUID) came from another bot/client.
+_DESK_CLIENT_PREFIXES = ("cio-",)
+_DESK_CLIENT_SEPARATOR = ":"
+
+
+def _is_external_order(order: Mapping) -> bool:
+    """True when the client id proves the order did not come from this desk."""
+    client_id = str(order.get("client_order_id") or "")
+    if not client_id:
+        return False  # unknown origin: stay an orphan, never assume external
+    if client_id.startswith(_DESK_CLIENT_PREFIXES):
+        return False
+    if _DESK_CLIENT_SEPARATOR in client_id:
+        return False
+    return True
+
 
 def option_multiplier(symbol: str) -> Decimal:
     """Contracts are quoted per share; an option position is 100x that."""
@@ -68,6 +86,8 @@ class ReconcileReport:
     lifecycles_closed: int = 0
     unattributed_exits: list[str] = field(default_factory=list)
     orphan_orders: list[str] = field(default_factory=list)
+    historical_orders: list[str] = field(default_factory=list)
+    external_orders: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -82,6 +102,8 @@ class ReconcileReport:
             "lifecycles_closed": self.lifecycles_closed,
             "unattributed_exits": self.unattributed_exits,
             "orphan_orders": self.orphan_orders,
+            "historical_orders": self.historical_orders,
+            "external_orders": self.external_orders,
             "errors": self.errors,
         }
 
@@ -90,6 +112,7 @@ def reconcile_desk_fills(*, database: CioDatabase,
                          orders: Sequence[Mapping],
                          fills_by_order: Mapping[str, Sequence[Fill]],
                          approvals_by_order: Mapping[str, Mapping] | None = None,
+                         historical_order_ids: set[str] | None = None,
                          now_iso: str = "") -> ReconcileReport:
     """Record broker fills into the desk ledger and drive lifecycles.
 
@@ -101,6 +124,7 @@ def reconcile_desk_fills(*, database: CioDatabase,
     """
     report = ReconcileReport(generated_at=now_iso)
     approvals_by_order = approvals_by_order or {}
+    historical_order_ids = historical_order_ids or set()
     try:
         known = database.known_order_ids()
     except Exception as exc:  # noqa: BLE001 - report, never throw
@@ -117,7 +141,12 @@ def reconcile_desk_fills(*, database: CioDatabase,
             continue
         report.orders_at_broker += 1
         if order_id not in known:
-            report.orphan_orders.append(f"{symbol}:{order_id}")
+            if order_id in historical_order_ids:
+                report.historical_orders.append(f"{symbol}:{order_id}")
+            elif _is_external_order(order):
+                report.external_orders.append(f"{symbol}:{order_id}")
+            else:
+                report.orphan_orders.append(f"{symbol}:{order_id}")
         if status not in FILLED_STATES:
             continue
         report.filled_orders += 1
@@ -151,6 +180,8 @@ def reconcile_desk_fills(*, database: CioDatabase,
             report.errors.append(f"lifecycle {symbol}: {type(exc).__name__}: {exc}")
 
     report.orphan_orders.sort()
+    report.historical_orders.sort()
+    report.external_orders.sort()
     report.unattributed_exits.sort()
     return report
 

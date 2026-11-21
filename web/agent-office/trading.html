@@ -338,12 +338,16 @@
       return;
     }
     var orphans = (r.orphan_orders || []).length;
+    var historical = (r.historical_orders || []).length;
+    var external = (r.external_orders || []).length;
     var unattr = (r.unattributed_exits || []).length;
     var stamp = (r.generated_at || "").replace("T", " ").slice(0, 16);
     el.textContent = "Ledger: " + (r.fills_recorded || 0) + " fills recorded"
       + " | " + (r.fills_already_known || 0) + " known"
       + " | " + (r.lifecycles_closed || 0) + " round-trips closed"
       + " | " + orphans + " orphan orders"
+      + (historical ? " | " + historical + " pre-tracking orders" : "")
+      + (external ? " | " + external + " external-bot orders" : "")
       + (unattr ? " | " + unattr + " unattributed exits" : "")
       + " | reconciled " + stamp;
     el.style.color = (r.status === "ok" && !orphans && !unattr) ? "var(--good)"
