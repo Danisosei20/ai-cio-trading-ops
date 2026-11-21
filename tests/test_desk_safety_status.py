@@ -1,12 +1,16 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.desk_safety_status import (
     classify_mode,
     classify_entries,
     classify_certification,
     classify_reconciliation,
-    ENTRY_TASKS,
+    snapshot,
     PROTECTIVE_TASKS,
+    ENTRY_TASKS,
     NEUTRAL_TASKS,
 )
 
@@ -61,3 +65,42 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(len(PROTECTIVE_TASKS), 3)
         self.assertEqual(len(NEUTRAL_TASKS), 2)
         self.assertEqual(len(set(ENTRY_TASKS) | set(PROTECTIVE_TASKS) | set(NEUTRAL_TASKS)), 9)
+
+
+class SnapshotTests(unittest.TestCase):
+    def test_missing_files_yield_unknown_and_not_verified(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = snapshot(Path(d), env={}, query=lambda n: "Disabled",
+                         account_probe=lambda: "UNKNOWN")
+        self.assertEqual(s["certification"]["status"], "NOT VERIFIED")
+        self.assertEqual(s["reconciliation"]["status"], "never run")
+        self.assertEqual(s["account"], "UNKNOWN")
+        self.assertEqual(s["alerts"], "NOT VERIFIED")
+
+    def test_broker_failure_is_unknown(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = snapshot(Path(d), env={"TRADING_ENABLED": "false",
+                "TRADING_MODE": "paper_auto", "PAPER_TRADING_ENABLED": "true"},
+                query=lambda n: "Disabled", account_probe=lambda: "UNKNOWN")
+        self.assertEqual(s["account"], "UNKNOWN")
+        self.assertEqual(s["mode"], "PAPER ONLY")
+
+    def test_flat_account_and_protective_tasks(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "outputs/certification").mkdir(parents=True)
+            (root / "outputs/certification/paper_certification.json").write_text(
+                json.dumps({"verdict": "PASS", "generated_at": "2026-11-20T20:09:00"}))
+            (root / "outputs/paper").mkdir(parents=True)
+            (root / "outputs/paper/fill_reconciliation.json").write_text(
+                json.dumps({"status": "ok", "orphan_orders": ["x"]}))
+            s = snapshot(root, env={"TRADING_ENABLED": "false",
+                "TRADING_MODE": "paper_auto", "PAPER_TRADING_ENABLED": "true"},
+                query=lambda n: "Ready" if n in PROTECTIVE_TASKS else "Disabled",
+                account_probe=lambda: "FLAT")
+        self.assertEqual(s["account"], "FLAT")
+        self.assertEqual(s["entries"], "PAUSED")
+        self.assertEqual(s["certification"]["status"], "PASS")
+        self.assertEqual(s["reconciliation"]["orphans"], 1)
+        self.assertEqual(s["protective"]["status"], "ENABLED")
+        self.assertEqual(set(s["protective"]["tasks"]), set(PROTECTIVE_TASKS))

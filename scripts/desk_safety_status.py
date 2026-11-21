@@ -9,6 +9,20 @@ NOT VERIFIED, never a reassuring default. No secrets are emitted.
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+ET = ZoneInfo("America/New_York")
+
+# Only these flag values are emitted. Keys/tokens never leave this module.
+_ALLOWED_ENV_KEYS = ("TRADING_ENABLED", "PAPER_TRADING_ENABLED", "TRADING_MODE")
+
 # The nine registered desk tasks, classified by what they do.
 # Entry tasks drive the ENTRIES PAUSED badge; protective tasks are the
 # independent exits/flattening/watchdog that stay enabled while entries are
@@ -87,3 +101,104 @@ def classify_reconciliation(doc: dict | None) -> dict:
     orphans = doc.get("orphan_orders") or []
     count = len(orphans) if isinstance(orphans, list) else 0
     return {"status": str(doc.get("status") or "unknown"), "orphans": count}
+
+
+def read_env(path: Path) -> dict:
+    """Read only the three safety flags from a KEY=VALUE .env file."""
+    values: dict[str, str] = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if "=" not in line or line.strip().startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            name = key.strip()
+            if name in _ALLOWED_ENV_KEYS:
+                values[name] = value.strip().strip('"').strip("'")
+    except (OSError, ValueError, UnicodeError):
+        pass
+    return values
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+_TASK_CACHE: dict[str, tuple[float, str | None]] = {}
+_TASK_TTL = 30.0
+
+
+def task_state(name: str, *, now: float | None = None) -> str | None:
+    """Cached read of a Windows scheduled task's state, or None on failure.
+
+    Cached for 30s so the 2s office poll never spawns nine schtasks calls
+    per cycle. Both successes and failures are cached.
+    """
+    current = time.monotonic() if now is None else now
+    cached = _TASK_CACHE.get(name)
+    if cached is not None and current - cached[0] < _TASK_TTL:
+        return cached[1]
+    state: str | None = None
+    try:
+        proc = subprocess.run(
+            ["schtasks", "/Query", "/TN", name, "/FO", "LIST", "/V"],
+            capture_output=True, text=True, timeout=15)
+        if proc.returncode == 0:
+            for line in proc.stdout.splitlines():
+                if line.strip().startswith("Scheduled Task State:"):
+                    state = line.split(":", 1)[1].strip() or None
+                    break
+    except (OSError, subprocess.SubprocessError):
+        state = None
+    _TASK_CACHE[name] = (current, state)
+    return state
+
+
+def account_state(env: dict) -> str:
+    """Read broker positions through the paper-only transport, fail closed."""
+    try:
+        from robinhood_tools.alpaca_paper import (
+            AlpacaPaperBackend,
+            AlpacaPaperHttpTransport,
+        )
+
+        merged = {**env, **os.environ}
+        backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(merged))
+        return "FLAT" if not backend.list_positions() else "POSITIONS OPEN"
+    except Exception:  # noqa: BLE001 - an unreadable book is not an empty one
+        return "UNKNOWN"
+
+
+def snapshot(root: Path, *, env: dict | None = None, query=None,
+             account_probe=None) -> dict:
+    """Assemble the full fail-closed safety payload for the office viewer."""
+    root = Path(root)
+    if env is None:
+        env = read_env(root / ".env")
+    query = query or task_state
+    account_probe = account_probe or account_state
+
+    cert = classify_certification(
+        _read_json(root / "outputs/certification/paper_certification.json"))
+    recon = classify_reconciliation(
+        _read_json(root / "outputs/paper/fill_reconciliation.json"))
+    protective_states = {name: query(name) for name in PROTECTIVE_TASKS}
+    protective_ok = all(state in _ENABLED_STATES
+                        for state in protective_states.values())
+
+    return {
+        "entries": classify_entries({name: query(name) for name in ENTRY_TASKS}),
+        "mode": classify_mode(env),
+        "account": account_probe(),
+        "certification": cert,
+        "reconciliation": recon,
+        "protective": {
+            "status": "ENABLED" if protective_ok else "UNKNOWN",
+            "tasks": list(PROTECTIVE_TASKS),
+        },
+        "alerts": "NOT VERIFIED",
+        "generated_at": datetime.now(ET).isoformat(),
+    }
