@@ -23,3 +23,19 @@ class SafetyMarkupTest(unittest.TestCase):
                     ".safety-badge.unknown", ".safety"):
             self.assertIn(cls, self.css)
         self.assertIn("order: -1", self.css)
+
+
+class SafetyRenderTest(unittest.TestCase):
+    def setUp(self):
+        self.js = Path("web/agent-office/office.js").read_text(encoding="utf-8")
+
+    def test_render_safety_called_from_render_panel(self):
+        self.assertIn("renderSafety(", self.js)
+
+    def test_demo_guard_present(self):
+        self.assertIn("DEMO — status not evaluated", self.js)
+
+    def test_badge_classes_used(self):
+        for cls in ("safety-badge paused", "safety-badge active",
+                    "safety-badge unknown"):
+            self.assertIn(cls, self.js)
