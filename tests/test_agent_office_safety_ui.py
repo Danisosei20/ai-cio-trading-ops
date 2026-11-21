@@ -39,3 +39,11 @@ class SafetyRenderTest(unittest.TestCase):
         for cls in ("safety-badge paused", "safety-badge active",
                     "safety-badge unknown"):
             self.assertIn(cls, self.js)
+
+    def test_disconnect_does_not_show_stale_posture(self):
+        # A failed poll must clear the cached safety payload, and the renderer
+        # must fail closed while the feed is down.
+        self.assertIn("safety:undefined", self.js)
+        body = self.js.split("function renderSafety")[1].split("function renderPanel")[0]
+        self.assertIn("!connected", body)
+        self.assertIn("Feed disconnected", body)
