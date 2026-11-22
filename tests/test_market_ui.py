@@ -75,6 +75,15 @@ class MarketUITests(unittest.TestCase):
         js = JS.read_text(encoding="utf-8")
         self.assertIn("URLSearchParams", js)
 
+    def test_market_deep_link_syncs_picker(self):
+        js = JS.read_text(encoding="utf-8")
+        self.assertIn("symbolsEl.value = linkedSymbol", js)
+        self.assertIn("symbolsEl.options", js)
+
+    def test_market_symbol_list_is_filtered(self):
+        js = JS.read_text(encoding="utf-8")
+        self.assertIn(r"/^[A-Z0-9._-]{1,8}$/", js)
+
 
 class MarketRouteTests(unittest.TestCase):
     @classmethod

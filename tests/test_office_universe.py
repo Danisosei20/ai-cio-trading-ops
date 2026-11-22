@@ -20,6 +20,9 @@ class OfficeUniverseTests(unittest.TestCase):
         for token in ("/api/symbols", "/market?symbol=", "No sourced symbols yet"):
             self.assertIn(token, self.js)
 
+    def test_universe_symbol_list_is_filtered(self):
+        self.assertIn(r"/^[A-Z0-9._-]{1,8}$/", self.js)
+
     def test_universe_no_new_color(self):
         self.assertIn("/* Universe */", self.css)
         start = self.css.index("/* Universe */")

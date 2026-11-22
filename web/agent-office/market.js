@@ -266,10 +266,16 @@
       for (const raw of data.symbols) {
         const sym = text(raw).trim();
         if (!sym) continue;
+        if (!/^[A-Z0-9._-]{1,8}$/.test(sym)) continue;
         const opt = document.createElement('option');
         opt.value = sym;
         opt.textContent = sym;
         symbolsEl.append(opt);
+      }
+      // Deep link: reflect the linked symbol in the picker only when it is a loaded option.
+      // Otherwise leave the placeholder selected (e.g. an ad-hoc/custom symbol).
+      if (linkedSymbol && Array.from(symbolsEl.options).some(o => o.value === linkedSymbol)) {
+        symbolsEl.value = linkedSymbol;
       }
     } catch (_) {
       // Fail closed: keep only the placeholder and disable the picker; never fabricate symbols.
