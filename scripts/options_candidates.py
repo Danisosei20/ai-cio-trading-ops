@@ -4,8 +4,8 @@ Candidates come from the desk's own Time Machine artifact and rejections from
 its gate dry-run artifact (``outputs/simulation/*options_*.json``). No manifest
 and no hardcoded ticker is consulted: the artifacts on disk are the only source
 of truth. Every emitted row carries the artifact (and timestamp) that produced
-it, non-finite numbers drop their row, and a broken primary artifact fails
-closed to ``unavailable`` rather than showing a reassuring guessed list.
+it, non-finite numbers drop their row, and a missing/broken required artifact
+fails closed to ``unavailable`` rather than a reassuring guessed empty table.
 """
 from __future__ import annotations
 
@@ -118,18 +118,30 @@ def _candidates(rows: object, source: str) -> list[dict]:
 
 
 def _rejected(rows: object, source: str) -> list[dict]:
-    """Map gate errors to rejection rows; skip malformed/errorless entries."""
+    """Map gate failures to rejection rows; skip approved and malformed rows.
+
+    The dry-run writer emits three shapes: a quote/API failure (``error``), a
+    missing vol estimate (``approved: false`` + ``reason``), and a real policy
+    verdict from ``entry_odds_verdict()`` (``approved`` bool + ``reason``). All
+    three are rejections when they carry an explanation; an approved verdict is
+    a pass, not a rejection.
+    """
     result: list[dict] = []
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
+        if row.get("approved") is True:
+            continue
         error = row.get("error")
-        if not isinstance(error, str) or not error.strip():
+        error_text = error.strip() if isinstance(error, str) else ""
+        reason = row.get("reason")
+        reason_text = reason.strip() if isinstance(reason, str) else ""
+        if not error_text and not (row.get("approved") is False and reason_text):
             continue
         result.append({
             "underlying": _text(row.get("symbol")),
             "right": _text(row.get("side")),
-            "reason": error.strip(),
+            "reason": error_text or reason_text,
             "source": source,
         })
     return result
@@ -141,23 +153,23 @@ def option_candidates(root: Path) -> dict:
 
     tm_path = _latest(root, TIME_MACHINE_GLOB)
     tm_doc = _read_json(tm_path) if tm_path is not None else None
-    if tm_path is not None:
-        if tm_doc is None:
-            return _unavailable("unparsable options time-machine artifact")
-        if not isinstance(tm_doc.get("results"), list):
-            return _unavailable("malformed options time-machine results")
+    if tm_doc is None:
+        return _unavailable("missing or unparsable options time-machine artifact")
+    if not isinstance(tm_doc.get("results"), list):
+        return _unavailable("malformed options time-machine results")
 
     gate_path = _latest(root, GATE_GLOB)
     gate_doc = _read_json(gate_path) if gate_path is not None else None
+    if gate_doc is None:
+        return _unavailable("missing or unparsable options gate artifact")
+    if not isinstance(gate_doc.get("candidates"), list):
+        return _unavailable("malformed options gate candidates")
 
-    tm_source = (_artifact_source(root, tm_path, tm_doc)
-                 if tm_doc is not None else "")
-    gate_source = (_artifact_source(root, gate_path, gate_doc)
-                   if gate_doc is not None else "")
+    tm_source = _artifact_source(root, tm_path, tm_doc)
+    gate_source = _artifact_source(root, gate_path, gate_doc)
 
-    candidates = _candidates(tm_doc.get("results"), tm_source) if tm_doc else []
-    rejected = (_rejected(gate_doc.get("candidates"), gate_source)
-                if gate_doc else [])
+    candidates = _candidates(tm_doc.get("results"), tm_source)
+    rejected = _rejected(gate_doc.get("candidates"), gate_source)
     if not candidates and not rejected:
         return _unavailable("no option candidates or rejections in desk artifacts")
 

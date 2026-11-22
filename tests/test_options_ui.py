@@ -48,7 +48,7 @@ class OptionsUITests(unittest.TestCase):
         self.assertIn('id="options-candidates"', html)
         self.assertIn('id="options-rejected"', html)
         for heading in ("Contract", "Underlying", "Side", "Strike", "Expiry",
-                        "DTE", "Premium", "Delta", "EV%", "Target/stop", "Source"):
+                        "DTE", "Premium", "Delta", "EV%", "EV$", "Target/stop", "Source"):
             self.assertIn(heading, html)
         for heading in ("Reason",):
             self.assertIn(heading, html)
@@ -79,6 +79,24 @@ class OptionsUITests(unittest.TestCase):
         js = JS.read_text(encoding="utf-8")
         for token in ("setInterval", "requestAnimationFrame"):
             self.assertNotIn(token, js)
+
+    def test_table_headers_stick_with_solid_background(self):
+        html = HTML.read_text(encoding="utf-8")
+        self.assertIn(".options-table-wrap th", html)
+        rule = html.split(".options-table-wrap th", 1)[1].split("}", 1)[0]
+        self.assertIn("position: sticky", rule)
+        self.assertIn("top: 0", rule)
+        self.assertIn("background: var(--surface)", rule)
+
+    def test_ev_dollar_column_is_rendered(self):
+        html = HTML.read_text(encoding="utf-8")
+        js = JS.read_text(encoding="utf-8")
+        self.assertIn('<th scope="col">EV$</th>', html)
+        self.assertIn('colspan="12"', html)
+        self.assertNotIn('colspan="11"', html)
+        self.assertIn("c.ev_usd", js)
+        self.assertIn("'$' + fmt(c.ev_usd)", js)
+        self.assertIn("emptyState(candidatesEl, 12,", js)
 
     def test_options_renderer_formats_numbers_and_shows_every_source(self):
         js = JS.read_text(encoding="utf-8")

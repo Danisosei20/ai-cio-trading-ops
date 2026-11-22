@@ -65,7 +65,14 @@
     margin-bottom: 16px;
   }
   .options-panel > h2 { margin-bottom: 13px; }
-  .options-table-wrap { width: 100%; overflow-x: auto; }
+  /* Bounded scroll region so sticky headers work with 100+ rows. */
+  .options-table-wrap { width: 100%; max-height: 60vh; overflow: auto; }
+  .options-table-wrap th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface); /* solid, opaque header over scrolling rows */
+  }
   table.options-table {
     width: 100%;
     border-collapse: collapse;
@@ -151,12 +158,13 @@
             <th scope="col">Premium</th>
             <th scope="col">Delta</th>
             <th scope="col">EV%</th>
+            <th scope="col">EV$</th>
             <th scope="col">Target/stop odds</th>
             <th scope="col">Source</th>
           </tr>
         </thead>
         <tbody id="options-candidates">
-          <tr><td class="options-empty" colspan="11">Waiting for data</td></tr>
+          <tr><td class="options-empty" colspan="12">Waiting for data</td></tr>
         </tbody>
       </table>
     </div>

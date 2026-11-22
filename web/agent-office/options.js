@@ -45,7 +45,7 @@
 
   function unavailable(reason) {
     statusEl.textContent = 'data unavailable' + (reason ? ' \u2014 ' + reason : '');
-    emptyState(candidatesEl, 11, 'data unavailable \u2014 no sourced candidates.');
+    emptyState(candidatesEl, 12, 'data unavailable \u2014 no sourced candidates.');
     emptyState(rejectedEl, 4, 'data unavailable \u2014 no sourced rejections.');
     noteEl.textContent = 'Sources are unavailable: the desk artifacts could not be read. '
       + 'No candidate is shown unless its source can be verified.';
@@ -54,7 +54,7 @@
   function renderCandidates(rows) {
     candidatesEl.replaceChildren();
     if (!rows.length) {
-      emptyState(candidatesEl, 11, 'No candidates in this snapshot.');
+      emptyState(candidatesEl, 12, 'No candidates in this snapshot.');
       return;
     }
     for (const c of rows) {
@@ -68,6 +68,7 @@
       cell(tr, fmt(c.premium));
       cell(tr, fmt(c.delta, 4));
       cell(tr, pct(c.ev_pct));
+      cell(tr, '$' + fmt(c.ev_usd), 'mono'); // sourced ev_usd_per_contract
       cell(tr, odds(c.target_first) + ' / ' + odds(c.stop_first));
       cell(tr, text(c.source), 'source'); // verbatim artifact + timestamp
       candidatesEl.append(tr);
