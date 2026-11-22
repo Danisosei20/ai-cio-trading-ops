@@ -53,6 +53,13 @@ class MarketUITests(unittest.TestCase):
         for token in ("market-chart", "poc", "tp1", "data unavailable", "source"):
             self.assertIn(token, js)
 
+    def test_level_colors_match_risk_semantics(self):
+        # Stop-loss is red (--danger / C.down); both take-profits are green (--ok / C.up).
+        js = JS.read_text(encoding="utf-8")
+        self.assertIn("stop: C.down", js)
+        self.assertIn("tp1: C.up", js)
+        self.assertIn("tp2: C.up", js)
+
 
 class MarketRouteTests(unittest.TestCase):
     @classmethod

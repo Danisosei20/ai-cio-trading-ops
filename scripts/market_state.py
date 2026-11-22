@@ -11,9 +11,38 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 PUT_ACTIONS = ("sell", "underweight", "put")
+CALL_ACTIONS = ("buy", "overweight", "call")
+BEARISH_DECISIONS = frozenset(("sell", "underweight"))
+BULLISH_DECISIONS = frozenset(("buy", "overweight"))
+
+
+def _auto_direction(doc: dict) -> str | None:
+    """Resolve put/call from a paper-auto artifact; None means no direction evidence.
+
+    The real producer (``tradingagents_paper_auto.py``) writes a ``decision``
+    field (e.g. ``"Sell"``) alongside suffixed actions such as
+    ``"sell_placed"`` / ``"dry_run_sell"``. Bare ``"sell"`` is only one legacy
+    shape. Decision wins when recognised; otherwise the action is tokenised on
+    non-alphanumeric separators so suffixed/prefixed forms still match. A
+    ``skip`` action carries no directional evidence.
+    """
+    decision = str(doc.get("decision") or "").strip().lower()
+    if decision in BEARISH_DECISIONS:
+        return "put"
+    if decision in BULLISH_DECISIONS:
+        return "call"
+    tokens = {t for t in re.split(r"[^a-z0-9]+", str(doc.get("action") or "").lower()) if t}
+    if "skip" in tokens:
+        return None
+    if tokens.intersection(PUT_ACTIONS):
+        return "put"
+    if tokens.intersection(CALL_ACTIONS):
+        return "call"
+    return None
 
 
 def _unavailable(reason: str) -> dict:
@@ -40,6 +69,15 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _first_finite(doc: dict, *keys: str) -> tuple[float | None, str | None]:
+    """First finite value under the preferred keys, plus the key used."""
+    for key in keys:
+        number = _finite(doc.get(key))
+        if number is not None:
+            return number, key
+    return None, None
 
 
 def _rel(root: Path, path: Path) -> str:
@@ -111,15 +149,15 @@ def market_payload(root: Path, symbol: str, *, now_iso: str) -> dict:
 
     auto_path = _latest(root, f"outputs/paper/tradingagents/{symbol}/*/auto.json")
     auto_doc = _read_json(auto_path) if auto_path is not None else None
-    if auto_doc is None:
-        direction = "call"
-        direction_source = "computed-unknown"
-        auto_source = ""
-    else:
-        action = str(auto_doc.get("action") or "").strip().lower()
-        direction = "put" if action in PUT_ACTIONS else "call"
+    direction = "call"
+    direction_source = "computed-unknown"
+    auto_source = ""
+    if auto_doc is not None:
         auto_source = _artifact_source(root, auto_path, auto_doc)
-        direction_source = auto_source
+        resolved = _auto_direction(auto_doc)
+        if resolved is not None:
+            direction = resolved
+            direction_source = auto_source
 
     zone_source = _artifact_source(root, zone_path, zone_doc)
     levels: dict[str, dict] = {
@@ -141,16 +179,18 @@ def market_payload(root: Path, symbol: str, *, now_iso: str) -> dict:
     computed_source = "computed-2R-3R"
     stop_source = tp1_source = tp2_source = computed_source
     if auto_doc is not None:
-        auto_stop = _finite(auto_doc.get("stop_price"))
+        # The real producer writes "stop"/"target"; older artifacts used the
+        # "_price" spellings. Accept both, preferring the producer's keys.
+        auto_stop, stop_key = _first_finite(auto_doc, "stop", "stop_price")
         if auto_stop is not None:
             stop = auto_stop
-            stop_source = f"{auto_source}#stop_price"
+            stop_source = f"{auto_source}#{stop_key}"
             risk = abs(close - stop)
             step = risk if risk > 0 else step
-        auto_target = _finite(auto_doc.get("target_price"))
+        auto_target, target_key = _first_finite(auto_doc, "target", "target_price")
         if auto_target is not None:
             tp1 = auto_target
-            tp1_source = f"{auto_source}#target_price"
+            tp1_source = f"{auto_source}#{target_key}"
             tp2 = tp1 + step if direction == "call" else tp1 - step
 
     levels["stop"] = {"value": stop, "source": stop_source}

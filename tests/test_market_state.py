@@ -31,6 +31,12 @@ class MarketStateTests(unittest.TestCase):
             "verdict": {"verdict": "long_ok", "reasons": []},
         }))
 
+    def _seed_auto(self, symbol, doc):
+        a = self.root / f"outputs/paper/tradingagents/{symbol}/2026-11-21"
+        a.mkdir(parents=True, exist_ok=True)
+        (a / "auto.json").write_text(json.dumps(doc))
+        return a
+
     def test_unavailable_on_missing_artifacts(self):
         p = market_payload(self.root, "NVDA", now_iso="2026-11-21T10:20:00-05:00")
         self.assertEqual(p["status"], "unavailable")
@@ -59,3 +65,48 @@ class MarketStateTests(unittest.TestCase):
         call = market_payload(self.root, "NVDA", now_iso="2026-11-21T10:20:00-05:00")
         self.assertEqual(call["direction"], "call")
         self.assertLess(call["levels"]["stop"]["value"], call["levels"]["tp1"]["value"])
+
+    def test_real_producer_auto_shapes_direction(self):
+        """The real producer writes suffixed actions plus a decision field."""
+        cases = (
+            ({"action": "sell_placed", "decision": "Sell"}, "put"),
+            ({"action": "dry_run_sell", "decision": "Sell"}, "put"),
+            ({"action": "buy_placed", "decision": "Buy"}, "call"),
+        )
+        for doc, expected in cases:
+            with self.subTest(doc=doc):
+                self._seed("NVDA")
+                self._seed_auto("NVDA", dict(doc, ticker="NVDA"))
+                p = market_payload(self.root, "NVDA", now_iso="2026-11-21T10:20:00-05:00")
+                self.assertEqual(p["direction"], expected)
+                self.assertTrue(any(s.startswith("direction:outputs/paper/tradingagents")
+                                    for s in p["sources"]), p["sources"])
+
+    def test_producer_skip_has_no_directional_evidence(self):
+        """A skip decision must not be read as a producer-backed CALL."""
+        self._seed("NVDA")
+        self._seed_auto("NVDA", {"action": "skip", "decision": "Hold", "ticker": "NVDA"})
+        p = market_payload(self.root, "NVDA", now_iso="2026-11-21T10:20:00-05:00")
+        self.assertIn("direction:computed-unknown", p["sources"])
+        direction_sources = [s for s in p["sources"] if s.startswith("direction:")]
+        self.assertEqual(direction_sources, ["direction:computed-unknown"])
+
+    def test_producer_stop_and_target_fields_are_used(self):
+        """auto.json writes stop/target (not stop_price/target_price)."""
+        self._seed("NVDA")
+        self._seed_auto("NVDA", {"action": "buy_placed", "decision": "Buy",
+                                 "stop": "98", "target": "110", "ticker": "NVDA"})
+        p = market_payload(self.root, "NVDA", now_iso="2026-11-21T10:20:00-05:00")
+        self.assertEqual(p["levels"]["stop"]["value"], 98.0)
+        self.assertEqual(p["levels"]["tp1"]["value"], 110.0)
+        self.assertIn("auto.json#stop", p["levels"]["stop"]["source"])
+        self.assertIn("auto.json#target", p["levels"]["tp1"]["source"])
+        self.assertNotIn("computed-2R-3R", p["levels"]["stop"]["source"])
+        self.assertNotIn("computed-2R-3R", p["levels"]["tp1"]["source"])
+
+    def test_legacy_stop_price_target_price_still_accepted(self):
+        self._seed("NVDA")
+        self._seed_auto("NVDA", {"action": "buy", "stop_price": 97, "target_price": 108})
+        p = market_payload(self.root, "NVDA", now_iso="2026-11-21T10:20:00-05:00")
+        self.assertEqual(p["levels"]["stop"]["value"], 97.0)
+        self.assertEqual(p["levels"]["tp1"]["value"], 108.0)

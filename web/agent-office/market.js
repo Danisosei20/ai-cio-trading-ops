@@ -17,7 +17,8 @@
     faint: '#647781', line: '#243440', soft: '#1a2833', accent: '#6fd6c8',
     warm: '#e3b675', upFill: 'rgba(143,209,169,0.10)', downFill: 'rgba(232,141,150,0.10)'
   };
-  const LEVEL_COLOR = { poc: C.accent, tp1: C.up, tp2: C.down, stop: C.warm };
+  // SL is red (--danger / C.down); both take-profits are green (--ok / C.up).
+  const LEVEL_COLOR = { poc: C.accent, tp1: C.up, tp2: C.up, stop: C.down };
   const MONO = '10px ui-monospace, "SFMono-Regular", Menlo, monospace';
   let current = null;
 
