@@ -5,13 +5,15 @@ fail-closed: only a fully paper-only safety snapshot, a tradeable session, and
 ``ok`` reports from every required stage can produce ``proceed``. Overrides can
 downgrade a ``review`` to ``proceed`` but can never clear a ``halt``.
 
-Storage (``write_run`` / ``read_latest`` / ``prove`` / ``record_override``) and
-the runner (``run_slot``) are added to this module by later tasks.
+Storage (``write_run`` / ``read_latest`` / ``prove`` / ``record_override``) lives
+here; the runner (``run_slot``) is added by a later task.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from scripts.desk_stage_agents import STAGES, StageReport
@@ -143,3 +145,108 @@ def decide(
         safety=dict(safety),
         overrides=consumed,
     )
+
+
+_ORCHESTRATOR_DIR = Path("outputs") / "orchestrator"
+
+
+def _run_dir(root: Path, run_id: str) -> Path:
+    return Path(root) / _ORCHESTRATOR_DIR / run_id
+
+
+def _load_decision(run_dir: Path) -> dict | None:
+    """Read a recorded decision, or ``None`` when absent or malformed."""
+    try:
+        doc = json.loads((run_dir / "decision.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def write_run(root: Path, run_id: str, reports: list[StageReport], decision: RunDecision) -> Path:
+    """Persist one immutable run and advance the ``latest.json`` pointer.
+
+    The run's ``decision.json`` is created exclusively, so a second write to the
+    same ``run_id`` fails closed with ``FileExistsError``. The ``latest.json``
+    pointer is the only file that is replaced on each run.
+    """
+    run_dir = _run_dir(root, run_id)
+    decision_path = run_dir / "decision.json"
+    if decision_path.exists():
+        raise FileExistsError(str(decision_path))
+
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    for report in reports:
+        (reports_dir / f"{report.agent}.json").write_text(
+            json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+
+    with open(decision_path, "x", encoding="utf-8") as fh:
+        fh.write(json.dumps(decision.as_dict(), indent=2))
+
+    latest = {"run_id": run_id, "verdict": decision.verdict, "generated_at": decision.generated_at}
+    (Path(root) / _ORCHESTRATOR_DIR / "latest.json").write_text(
+        json.dumps(latest, indent=2), encoding="utf-8")
+    return decision_path
+
+
+def read_latest(root: Path) -> dict | None:
+    """Return the ``latest.json`` pointer, or ``None`` if no run is recorded."""
+    try:
+        doc = json.loads((Path(root) / _ORCHESTRATOR_DIR / "latest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def prove(root: Path, run_id: str) -> str:
+    """Return one proof-matrix line per registered stage, in ``STAGES`` order.
+
+    Each line is ``agent | status | evidence | decision contribution``. The
+    contribution names the stage tier (``required``/``advisory``) plus any
+    decision reason that names this agent.
+    """
+    decision = _load_decision(_run_dir(root, run_id))
+    if decision is None:
+        return ""
+    by_agent = {r.get("agent"): r for r in decision.get("reports", []) if isinstance(r, dict)}
+    reasons = [str(r) for r in decision.get("reasons", [])]
+
+    lines: list[str] = []
+    for spec in STAGES:
+        report = by_agent.get(spec.agent)
+        status = str(report.get("status", "missing")) if report else "missing"
+        evidence = ",".join(str(p) for p in report.get("evidence", [])) if report else ""
+        tier = "required" if spec.required else "advisory"
+        own = [r for r in reasons if r == spec.agent or r.startswith(f"{spec.agent}:")]
+        contribution = f"{tier}: " + "; ".join(own) if own else tier
+        lines.append(f"{spec.agent} | {status} | {evidence} | {contribution}")
+    return "\n".join(lines)
+
+
+def record_override(root: Path, *, run_id: str, agent: str, reason: str, now_iso: str) -> bool:
+    """Append an audited override for a warn agent in a ``review`` run.
+
+    Returns ``False`` (and writes nothing) unless the run's verdict is
+    ``review`` and the named agent's report exists with ``status == "warn"``.
+    A ``halt`` verdict can therefore never be cleared here.
+    """
+    # Refuse path-like agent names before they reach the report filename.
+    if not agent or agent != Path(agent).name or agent in {".", ".."}:
+        return False
+
+    run_dir = _run_dir(root, run_id)
+    decision = _load_decision(run_dir)
+    if decision is None or decision.get("verdict") != "review":
+        return False
+    try:
+        report = json.loads((run_dir / "reports" / f"{agent}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(report, dict) or report.get("status") != "warn":
+        return False
+
+    entry = {"run_id": run_id, "agent": agent, "reason": reason, "now_iso": now_iso}
+    with open(run_dir / "overrides.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+    return True

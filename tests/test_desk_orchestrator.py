@@ -1,7 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.desk_stage_agents import StageReport
-from scripts.desk_orchestrator import decide
+from scripts.desk_orchestrator import decide, prove, read_latest, record_override, write_run
 
 
 def rep(agent, status="ok"):
@@ -141,6 +143,39 @@ class DuplicateReportTests(unittest.TestCase):
                    safety=SAFE, session=SESSION, now_iso=NOW)
         self.assertEqual(d.verdict, "halt")
         self.assertIn("Certifier: duplicate required report", d.reasons)
+
+
+class StorageTests(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.root = Path(self.t.name)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_run_is_immutable_and_latest_points_to_it(self):
+        d = decide(list(OK.values()), safety=SAFE, session=SESSION,
+                   now_iso="2026-11-21T10:20:00-05:00")
+        p = write_run(self.root, "20261121-0945", list(OK.values()), d)
+        self.assertEqual(p.name, "decision.json")
+        self.assertEqual(read_latest(self.root)["run_id"], "20261121-0945")
+        with self.assertRaises(FileExistsError):
+            write_run(self.root, "20261121-0945", list(OK.values()), d)
+
+    def test_prove_lists_every_agent(self):
+        d = decide(list(OK.values()), safety=SAFE, session=SESSION,
+                   now_iso="2026-11-21T10:20:00-05:00")
+        write_run(self.root, "r1", list(OK.values()), d)
+        text = prove(self.root, "r1")
+        for name in ("Certifier", "Reconciler", "ExitGuard", "Screener", "ZoneAnalyst"):
+            self.assertIn(name, text)
+
+    def test_override_cannot_clear_safety_halt(self):
+        d = decide(list(OK.values()), safety={**SAFE, "TRADING_ENABLED": "true"},
+                   session=SESSION, now_iso="2026-11-21T10:20:00-05:00")
+        write_run(self.root, "r2", list(OK.values()), d)
+        self.assertFalse(record_override(self.root, run_id="r2", agent="Certifier",
+                                         reason="owner said go", now_iso="2026-11-21T10:30:00-05:00"))
 
 
 if __name__ == "__main__":
