@@ -56,9 +56,9 @@ class MarketUITests(unittest.TestCase):
     def test_level_colors_match_risk_semantics(self):
         # Stop-loss is red (--danger / C.down); both take-profits are green (--ok / C.up).
         js = JS.read_text(encoding="utf-8")
-        self.assertIn("stop: C.down", js)
-        self.assertIn("tp1: C.up", js)
-        self.assertIn("tp2: C.up", js)
+        self.assertRegex(js, r"stop:\s*\{\s*color: C\.down")
+        self.assertRegex(js, r"tp1:\s*\{\s*color: C\.up")
+        self.assertRegex(js, r"tp2:\s*\{\s*color: C\.up")
 
     def test_market_picker_present(self):
         html = HTML.read_text(encoding="utf-8")
