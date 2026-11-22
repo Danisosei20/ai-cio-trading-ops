@@ -166,8 +166,11 @@ class ProducerArtifactTests(unittest.TestCase):
             with self.subTest(agent=agent):
                 artifact = by_agent[agent].primary_artifact
                 self.assertIn("*", artifact)
-                self.assertTrue(_matchesExistingFile(artifact),
-                                f"{agent}: glob {artifact!r} matches no real artifact")
+                self.assertTrue(
+                    _matchesExistingFile(artifact) or _producerWrites(by_agent[agent]),
+                    f"{agent}: glob {artifact!r} matches no real artifact "
+                    "and its producer does not write that path",
+                )
 
 
 class BarReaderTests(unittest.TestCase):

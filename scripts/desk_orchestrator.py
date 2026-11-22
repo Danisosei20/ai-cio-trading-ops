@@ -34,15 +34,6 @@ _DEFAULT_SYMBOL = "NVDA"
 _SLOTS = ("0945", "1020")
 _UNAVAILABLE_SESSION = {"tradeable": False, "market_clock": "unknown", "window_open": False}
 
-# Older producers/handoffs used per-run artifacts for these two stages. The
-# real producer glob in ``primary_artifact`` always wins; these are only a
-# fallback when that glob has no artifact for this run. Status computation is
-# untouched -- exit code, artifact presence and freshness still decide.
-_LEGACY_PER_RUN_ARTIFACTS = {
-    "ZoneAnalyst": "outputs/orchestrator/<run_id>/zone.json",
-    "ResearchFleet": "outputs/orchestrator/<run_id>/research.json",
-}
-
 
 @dataclass
 class RunDecision:
@@ -335,19 +326,6 @@ def _bar_symbol(root: Path, run_id: str) -> str:
     return _DEFAULT_SYMBOL
 
 
-def _artifact_candidates(root: Path, spec: StageSpec, *, run_id: str,
-                         symbol: str) -> list[str]:
-    """Artifact paths for a stage: primary producer path first, legacy fallback last."""
-    primary = _resolve(spec.primary_artifact, run_id=run_id, symbol=symbol)
-    candidates = [primary]
-    legacy = _LEGACY_PER_RUN_ARTIFACTS.get(spec.agent)
-    if legacy:
-        fallback = _resolve(legacy, run_id=run_id, symbol=symbol)
-        if fallback != primary:
-            candidates.append(fallback)
-    return candidates
-
-
 def _artifact_path(root: Path, path: str) -> Path:
     """Resolve one artifact path, matching ``_read_artifact``'s glob policy."""
     target = Path(root) / path
@@ -425,9 +403,7 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
         # the same venv (and its dependencies) is used on Windows hosts.
         if argv and argv[0].endswith(".py"):
             argv.insert(0, sys.executable)
-        candidates = _artifact_candidates(root, spec, run_id=run_id, symbol=symbol)
-        artifact = next((p for p in candidates if _artifact_path(root, p).is_file()),
-                        candidates[0])
+        artifact = _resolve(spec.primary_artifact, run_id=run_id, symbol=symbol)
         try:
             proc = exec_cmd(argv, cwd=root, capture_output=True, text=True)
         except OSError as exc:  # a broken launcher fails this stage, not the run
