@@ -21,11 +21,11 @@ import unittest
 from pathlib import Path
 
 from scripts import tradingagents_paper_auto as auto
+from scripts.desk_stage_agents import STAGES
 
 ROOT = Path(__file__).resolve().parents[1]
 WATCH = ROOT / "scripts" / "options_watch_trade.py"
 WATCHLIST = ROOT / "scripts" / "options_watchlist.py"
-BAT = ROOT / "scripts" / "auto_trade_weekday.bat"
 
 
 class NimToolcallParseErrorTest(unittest.TestCase):
@@ -147,14 +147,15 @@ class ScheduledBudgetTest(unittest.TestCase):
     """The scheduled research run states its per-ticker budget explicitly."""
 
     def test_auto_trade_weekday_passes_ticker_timeout(self):
-        src = BAT.read_text(encoding="utf-8", errors="replace")
-        research_line = next(
-            (ln for ln in src.splitlines()
-             if "tradingagents_paper_auto.py" in ln and "--screen" in ln), "")
-        self.assertTrue(research_line, "scheduled research invocation not found")
-        self.assertIn("--ticker-timeout 1200", research_line,
-                      "the scheduled run must spend the measured budget, "
-                      "not inherit a default that changed under it")
+        # The .bat now delegates to the orchestrator; the scheduled research
+        # invocation lives in the ResearchFleet stage spec.
+        research = next(s for s in STAGES if s.agent == "ResearchFleet")
+        self.assertIn("--ticker-timeout", research.argv,
+                      "scheduled research invocation not found")
+        idx = research.argv.index("--ticker-timeout")
+        self.assertEqual(research.argv[idx + 1], "1200",
+                         "the scheduled run must spend the measured budget, "
+                         "not inherit a default that changed under it")
 
 
 def auto_path_text() -> str:
