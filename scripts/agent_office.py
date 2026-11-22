@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import desk_safety_status  # noqa: E402
 from scripts.market_state import market_payload, universe_symbols  # noqa: E402
+from scripts.options_candidates import option_candidates  # noqa: E402
 from scripts.office_state import snapshot  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
@@ -112,6 +113,14 @@ class Handler(BaseHTTPRequestHandler):
             mime = "application/json"
         elif route == "/api/symbols":
             body = json.dumps(universe_symbols(ROOT, now_iso=datetime.now(ET).isoformat())).encode()
+            mime = "application/json"
+        elif route == "/api/options":
+            # The read-only "/options" page calls this data route; no write route.
+            try:
+                payload = option_candidates(ROOT)
+            except Exception:  # noqa: BLE001 — a broken reader fails closed
+                payload = {"status": "unavailable", "reason": "option candidates unavailable"}
+            body = json.dumps(payload).encode()
             mime = "application/json"
         elif route == "/api/market":
             query = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
