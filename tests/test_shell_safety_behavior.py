@@ -49,6 +49,8 @@ CASES = [
     ("unknown entries", {"entries": "UNKNOWN"}, UNKNOWN),
     ("null entries", {"entries": None}, UNKNOWN),
     ("array entries not coerced", {"entries": ["ACTIVE"]}, UNKNOWN),
+    ("lowercase active", {"entries": "active"}, ACTIVE),
+    ("array status not coerced", {"status": ["ok"], "entries": "ACTIVE"}, UNKNOWN),
     ("halt status", {"status": "halt", "entries": "ACTIVE"}, UNKNOWN),
     ("ok status active", {"status": "ok", "entries": "ACTIVE"}, ACTIVE),
     ("missing status active", {"entries": "ACTIVE"}, ACTIVE),

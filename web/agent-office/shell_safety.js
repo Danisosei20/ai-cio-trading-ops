@@ -8,7 +8,7 @@ function classifySafety(payload) {
     return { text: SAFETY_UNKNOWN, cls: "safety-badge unknown", note: UNKNOWN_NOTE };
   }
   const status = payload.status;
-  const statusOk = status === undefined || String(status).toLowerCase() === "ok";
+  const statusOk = status === undefined || (typeof status === "string" && status.toLowerCase() === "ok");
   // No array/number coercion: only a real string may be trusted.
   const entries = typeof payload.entries === "string" ? payload.entries.toUpperCase() : "";
   if (!statusOk || !VALID_ENTRIES.includes(entries)) {
