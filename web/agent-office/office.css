@@ -244,3 +244,14 @@ body:fullscreen { overflow: auto; }
   footer { padding: 12px 14px; }
   footer span:nth-child(2) { display: none; }
 }
+
+/* Market dashboard: on narrow screens stack the chart above the sourced levels. */
+@media (max-width: 740px) {
+  body.market main.market-main { padding: 18px 14px 24px; }
+  body.market .market-heading { flex-direction: column; align-items: stretch; gap: 14px; }
+  body.market .market-controls { padding-bottom: 0; }
+  body.market .market-grid { display: flex; flex-direction: column; }
+  body.market .market-chart-panel { order: 0; }
+  body.market .market-levels-panel { order: 1; }
+  body.market #market-chart { height: 44svh; min-height: 280px; max-height: 420px; }
+}
