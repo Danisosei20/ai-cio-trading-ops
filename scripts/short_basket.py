@@ -178,23 +178,35 @@ def short_basket(root: Path, *, capital: float = 500.0, count: int = 5) -> dict:
     selected = ranked[:count]
     allocation = money / count
     basket: list[dict] = []
-    for change_pct, symbol, reference_price, source, _stamp in selected:
+    generated_at = ""
+    for change_pct, symbol, reference_price, source, stamp in selected:
         shares = allocation / reference_price
+        notional = shares * reference_price
+        # A finite but subnormal reference price can overflow shares to inf.
+        # Never emit a non-finite row: the proposal must be entirely numeric.
+        if not math.isfinite(shares) or not math.isfinite(notional):
+            continue
         basket.append({
             "symbol": symbol,
             "reference_price": reference_price,
             "change_pct": change_pct,
             "allocation": allocation,
             "shares": shares,
-            "notional": shares * reference_price,
+            "notional": notional,
             "source": source,
         })
+        if not generated_at:
+            generated_at = stamp
+
+    if not basket:
+        return _unavailable("no finite-sized symbols in latest orchestrator run")
 
     return {
         "status": "ok",
-        "generated_at": selected[0][4],
+        "generated_at": generated_at,
         "capital": money,
         "count": count,
         "basket": basket,
-        "sources": [row[3] for row in selected],
+        # Sources stay aligned with the rows actually proposed, never stale.
+        "sources": [row["source"] for row in basket],
     }

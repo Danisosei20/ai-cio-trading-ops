@@ -142,6 +142,19 @@ class ShortBasketTests(unittest.TestCase):
         self.assertEqual(row["notional"], 100.0)
         self.assertEqual(payload["sources"], [row["source"]])
 
+    def test_skips_row_when_sizing_overflows_to_non_finite(self):
+        # A finite but subnormal close is a valid price, yet 100 / 5e-324
+        # overflows to inf shares. Such a row must never reach the payload.
+        self._seed_bars("A", {DAY1: [100], DAY2: [80]})
+        self._seed_bars("TINY", {DAY1: [1e-323], DAY2: [5e-324]})
+        payload = short_basket(self.root)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual([row["symbol"] for row in payload["basket"]], ["A"])
+        self.assertEqual(payload["sources"], [payload["basket"][0]["source"]])
+        for row in payload["basket"]:
+            for key in ("shares", "notional"):
+                self.assertTrue(math.isfinite(row[key]), key)
+
     def test_read_only_basket_routes(self):
         source = Path("scripts/agent_office.py").read_text(encoding="utf-8")
         self.assertIn('elif route == "/api/basket":', source)
