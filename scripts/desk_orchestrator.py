@@ -335,7 +335,15 @@ def _artifact_path(root: Path, path: str) -> Path:
         except OSError:
             matches = []
         if matches:
-            target = matches[-1]
+            # Pick the freshest artifact, not the alphabetically last path: a
+            # stage that just wrote one ticker's artifact must not be judged
+            # stale against an older ticker that happens to sort later.
+            def _recency(p: Path):
+                try:
+                    return (p.stat().st_mtime, str(p))
+                except OSError:
+                    return (float("-inf"), str(p))
+            target = max(matches, key=_recency)
     return target
 
 
