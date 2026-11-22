@@ -23,8 +23,19 @@
     warm: '#e3b675', upFill: 'rgba(143,209,169,0.10)', downFill: 'rgba(232,141,150,0.10)'
   };
   // SL is red (--danger / C.down); both take-profits are green (--ok / C.up).
-  const LEVEL_COLOR = { poc: C.accent, tp1: C.up, tp2: C.up, stop: C.down };
+  // Distinct dash patterns let a level be identified without reading its label.
+  const LEVEL_STYLE = {
+    poc:        { color: C.accent, dash: [],      width: 1.8, alpha: 1 },
+    stop:       { color: C.down,  dash: [6, 3],   width: 1.4, alpha: 1 },
+    tp1:        { color: C.up,    dash: [6, 3],   width: 1.4, alpha: 1 },
+    tp2:        { color: C.up,    dash: [2, 3],   width: 1.2, alpha: 1 },
+    resistance: { color: C.warm,  dash: [],      width: 1.1, alpha: 0.9 },
+    support:    { color: C.up,    dash: [],      width: 1.1, alpha: 0.9 },
+    vah:        { color: C.muted, dash: [2, 4],   width: 1,   alpha: 0.8 },
+    val:        { color: C.muted, dash: [2, 4],   width: 1,   alpha: 0.8 },
+  };
   const MONO = '10px ui-monospace, "SFMono-Regular", Menlo, monospace';
+  const LABEL_FONT = '11px ui-monospace, "SFMono-Regular", Menlo, monospace';
   let current = null;
 
   const finite = v => (v === null || v === undefined || v === '' ? null
@@ -98,7 +109,7 @@
     const bars = Array.isArray(data.bars) ? data.bars : [];
     if (w < 40 || h < 80 || !bars.length) return;
 
-    const padL = 54, padR = 86, padT = 46, padB = 42;
+    const padL = 54, padR = 152, padT = 46, padB = 42;
     const volH = Math.max(24, Math.min(74, h * 0.16));
     const gap = 34;
     const priceTop = padT;
@@ -148,7 +159,7 @@
       const gy = Math.round(yOf(p)) + 0.5;
       ctx.strokeStyle = C.soft;
       ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(lineRight, gy); ctx.stroke();
-      ctx.fillStyle = C.faint;
+      ctx.fillStyle = C.muted;
       ctx.fillText(p.toFixed(2), padL - 8, gy + 3);
     }
     ctx.strokeStyle = C.line;
@@ -176,6 +187,24 @@
       ctx.fillText(z.name.toUpperCase(), padL + 6, top - 5);
     }
 
+    // Session boundaries: a multi-session snapshot must not read as one day.
+    let priorDate = null;
+    bars.forEach((b, i) => {
+      const d = text(b && b.ts).slice(0, 10);
+      if (priorDate !== null && d !== priorDate) {
+        const sx = Math.round(xOf(i)) + 0.5;
+        ctx.save();
+        ctx.strokeStyle = C.line;
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath(); ctx.moveTo(sx, priceTop); ctx.lineTo(sx, volBottom); ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = C.muted;
+        ctx.textAlign = 'center';
+        ctx.fillText(d.slice(5), sx, priceTop - 7);
+      }
+      priorDate = d;
+    });
+
     // Candlesticks (existing muted up/down tokens) plus a volume histogram.
     const bw = Math.max(2, Math.min(11, step * 0.6));
     const maxVol = bars.reduce((m, b) => Math.max(m, finite(b && b.volume) || 0), 1);
@@ -198,34 +227,64 @@
     });
 
     // Sourced level lines: poc, tp1, tp2, stop and the zone profile marks.
-    // Label rows are spaced apart so clustered levels stay legible when narrow.
+    // Levels that share a price are merged (POC/VAH, VAL/SUPPORT); each label
+    // sits on ONE line in a wider gutter with a leader back to its price line.
     const drawn = marks.map(m => ({ ...m, yy: yOf(m.value) }))
       .filter(m => m.yy >= priceTop - 2 && m.yy <= priceBottom + 2)
       .sort((a, b) => a.yy - b.yy);
-    let lastLabelY = -Infinity;
+    const grouped = new Map();
     for (const m of drawn) {
-      const color = LEVEL_COLOR[m.name] || C.muted;
-      ctx.save();
-      ctx.setLineDash(m.name === 'poc' ? [] : [5, 4]);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = m.name === 'poc' ? 1.5 : 1;
-      ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.moveTo(padL, m.yy); ctx.lineTo(lineRight + 4, m.yy); ctx.stroke();
-      ctx.restore();
-      const labelY = Math.max(m.yy, lastLabelY + 24);
-      if (labelY - m.yy > 2) {
-        ctx.strokeStyle = color;
-        ctx.globalAlpha = 0.6;
-        ctx.beginPath(); ctx.moveTo(lineRight + 4, m.yy); ctx.lineTo(lineRight + 7, labelY); ctx.stroke();
-        ctx.globalAlpha = 1;
+      const key = m.value.toFixed(2);
+      const found = grouped.get(key);
+      if (found) {
+        if (!found.names.includes(m.name)) found.names.push(m.name);
+      } else {
+        grouped.set(key, { value: m.value, yy: m.yy, names: [m.name] });
       }
-      ctx.textAlign = 'left';
-      ctx.fillStyle = color;
-      ctx.fillText(m.name.toUpperCase(), lineRight + 8, labelY - 2);
-      ctx.fillStyle = C.muted;
-      ctx.fillText(fmt(m.value), lineRight + 8, labelY + 10);
-      lastLabelY = labelY;
     }
+    const entries = [...grouped.values()].sort((a, b) => a.yy - b.yy);
+    const rowH = Math.max(12, Math.min(18, (priceH - 16) / Math.max(1, entries.length)));
+    const placed = [];
+    let cursor = -Infinity;
+    for (const e of entries) {
+      const labelY = Math.max(e.yy, cursor + rowH);
+      placed.push({ ...e, labelY });
+      cursor = labelY;
+    }
+    const overflow = placed.length ? placed[placed.length - 1].labelY - (priceBottom - 10) : 0;
+    if (overflow > 0) placed.forEach(p => { p.labelY -= overflow; });
+    const deficit = placed.length ? placed[0].labelY - (priceTop + 10) : 0;
+    if (deficit < 0) placed.forEach(p => { p.labelY -= deficit; });
+
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'left';
+    for (const p of placed) {
+      let primary = p.names[0], bestWidth = -1;
+      for (const n of p.names) {
+        const width = LEVEL_STYLE[n] ? LEVEL_STYLE[n].width : 0;
+        if (width > bestWidth) { bestWidth = width; primary = n; }
+      }
+      const style = LEVEL_STYLE[primary] || { color: C.muted, dash: [2, 4], width: 1, alpha: 0.8 };
+      ctx.save();
+      ctx.setLineDash(style.dash);
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.width;
+      ctx.globalAlpha = style.alpha;
+      ctx.beginPath(); ctx.moveTo(padL, p.yy); ctx.lineTo(lineRight + 4, p.yy); ctx.stroke();
+      ctx.restore();
+      if (p.labelY - p.yy > 3) {
+        ctx.save();
+        ctx.strokeStyle = style.color;
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.moveTo(lineRight + 4, p.yy); ctx.lineTo(lineRight + 10, p.labelY); ctx.stroke();
+        ctx.restore();
+      }
+      ctx.fillStyle = style.color;
+      ctx.fillRect(lineRight + 10, p.labelY - 8, 6, 6);
+      ctx.fillStyle = C.ink;
+      ctx.fillText(p.names.join('/').toUpperCase() + ' ' + fmt(p.value), lineRight + 21, p.labelY - 3);
+    }
+    ctx.font = MONO;
 
     // Volume caption, a few time ticks, direction badge and snapshot stamp.
     ctx.fillStyle = C.faint;
