@@ -2,21 +2,26 @@
 """Read-only local office viewer. Run: python3 scripts/agent_office.py"""
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import desk_safety_status  # noqa: E402
+from scripts.market_state import market_payload  # noqa: E402
 from scripts.office_state import snapshot  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 SESSION_START = "10:15"
 SESSION_END = "15:45"
+# Symbols are used in local artifact glob patterns, so reject path/glob syntax.
+_SYMBOL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 _MARKET_CLOCK_CACHE = {"value": None, "fetched_at": 0.0}
 
@@ -105,6 +110,18 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/api/session":
             body = json.dumps(trading_window()).encode()
             mime = "application/json"
+        elif route == "/api/market":
+            query = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            symbol = query.get("symbol", ["NVDA"])[0].strip().upper()
+            if not _SYMBOL_RE.match(symbol):
+                payload = {"status": "unavailable", "reason": "invalid symbol"}
+            else:
+                try:
+                    payload = market_payload(ROOT, symbol, now_iso=datetime.now(ET).isoformat())
+                except Exception:  # noqa: BLE001 — a broken reader fails closed
+                    payload = {"status": "unavailable", "reason": "market snapshot unavailable"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/api/trading":
             try:
                 from scripts.trading_state import state as trading_state  # noqa: E402
@@ -120,7 +137,10 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/pipeline":
             body = (ROOT / "web/agent-office" / "pipeline.html").read_bytes()
             mime = "text/html"
-        elif route in ("/", "/office.js", "/office.css", "/scene.js"):
+        elif route == "/market":
+            body = (ROOT / "web/agent-office" / "market.html").read_bytes()
+            mime = "text/html"
+        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
             mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]

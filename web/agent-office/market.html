@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a0f14">
+<title>Market — Nexus</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/office.css">
+<style>
+  /* Page layout reuses the premium office.css tokens. No new accent colour. */
+  main.market-main {
+    display: block;
+    min-height: calc(100svh - 107px);
+    padding: 24px 26px 30px;
+  }
+  .market-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-right: 4px;
+  }
+  .back-link {
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .back-link:hover { color: var(--ink); border-color: #3a5663; background: var(--surface-2); }
+  .market-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 18px;
+    margin-bottom: 20px;
+  }
+  .market-heading .eyebrow { margin-bottom: 8px; }
+  #market-status {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 9px 0 0;
+    min-height: 17px;
+  }
+  .market-controls { display: flex; align-items: center; gap: 9px; padding-bottom: 2px; }
+  .market-label {
+    font: 600 10px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  #market-symbol {
+    font: 12px ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    width: 110px;
+  }
+  #market-symbol:focus { outline: none; border-color: var(--accent); }
+  .market-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 16px;
+    align-items: start;
+  }
+  .market-panel {
+    min-width: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 15px 16px;
+  }
+  .market-panel > h2 { margin-bottom: 13px; }
+  .market-chart-panel { order: 0; }
+  .market-levels-panel { order: 1; }
+  #market-chart {
+    display: block;
+    width: 100%;
+    height: clamp(320px, 56svh, 640px);
+    background: var(--stage);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    cursor: default;
+    touch-action: pan-y;
+  }
+  #market-levels {
+    list-style: none;
+    margin: 0 0 6px;
+    padding: 0;
+  }
+  /* office.css styles generic li with a teal bullet — levels use a value row. */
+  #market-levels li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 11.5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+  }
+  #market-levels li:before { content: none; }
+  #market-levels li:last-child { border-bottom: 0; }
+  .level-name { color: var(--muted); letter-spacing: .04em; text-transform: uppercase; font-size: 10px; }
+  .level-value { color: var(--ink); font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .level-source { display: block; color: var(--faint); font-size: 9px; overflow-wrap: anywhere; margin-top: 2px; }
+  #market-note {
+    font-size: 10px;
+    color: var(--faint);
+    line-height: 1.6;
+    margin: 10px 0 0;
+    overflow-wrap: anywhere;
+  }
+</style>
+</head>
+<body class="market">
+<header>
+  <a class="brand" href="/" aria-label="Nexus home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 7v13l-13 7L3 23V10Z M3 10l13 7 13-7 M16 17v13 M9 7l14 7"/></svg>
+    <span class="brand-word">Nexus<small>Trading intelligence office</small></span>
+  </a>
+  <div class="controls">
+    <span class="market-title">Market</span>
+    <a id="market-back" class="back-link" href="/">← Office</a>
+  </div>
+</header>
+
+<main class="market-main">
+  <div class="market-heading">
+    <div class="title-block">
+      <span class="eyebrow">Read-only · every level sourced from a desk artifact</span>
+      <h1>Market structure</h1>
+      <p id="market-status" role="status">Connecting to desk artifacts…</p>
+    </div>
+    <div class="market-controls">
+      <label class="market-label" for="market-symbol">Symbol</label>
+      <input id="market-symbol" type="text" value="NVDA" maxlength="8" autocomplete="off" spellcheck="false" aria-label="Ticker symbol">
+      <button id="market-refresh" type="button" class="primary" title="Reload the read-only snapshot">Load</button>
+    </div>
+  </div>
+
+  <div class="market-grid">
+    <section class="market-panel market-chart-panel" aria-label="Price chart">
+      <h2>Price &amp; levels</h2>
+      <canvas id="market-chart" width="960" height="540" role="img" aria-label="Candlestick chart with sourced support, resistance and stop/target levels"></canvas>
+    </section>
+
+    <section class="market-panel market-levels-panel" aria-label="Sourced levels">
+      <h2>Levels</h2>
+      <ul id="market-levels">
+        <li><span class="level-name">Status</span><span class="level-value">Waiting for data</span></li>
+      </ul>
+      <p id="market-note">Sources will appear here once a symbol loads. Missing or unreadable artifacts show “data unavailable” — never an empty chart.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span><i></i> Read-only viewer — never places orders</span>
+  <span>Candles, volume profile and levels are sourced from local desk artifacts.</span>
+</footer>
+
+<script src="/market.js"></script>
+</body>
+</html>
