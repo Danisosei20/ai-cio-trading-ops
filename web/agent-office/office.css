@@ -281,8 +281,8 @@ body.shell .shell-safety {
   gap: 10px;
   min-width: 0;
   padding: 7px 11px;
-  border: 1px solid #5a4a2a;
-  background: linear-gradient(160deg, #19160f, #12151a);
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: var(--radius);
 }
 body.shell .shell-safety-note {
