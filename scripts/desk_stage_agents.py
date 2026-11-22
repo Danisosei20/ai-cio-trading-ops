@@ -21,6 +21,125 @@ class StageSpec:
     allow_stale: bool
 
 
+# The twelve registered stages, in execution order. ``<run_id>`` and
+# ``<symbol>`` are left as literal placeholders for the runner to substitute.
+STAGES: tuple[StageSpec, ...] = (
+    StageSpec(
+        agent="Reconciler",
+        role="reconcile fills",
+        argv=("scripts/reconcile_fills.py", "--quiet"),
+        primary_artifact="outputs/paper/fill_reconciliation.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="ExitGuard",
+        role="guard open positions",
+        argv=("scripts/options_guard.py", "--execute"),
+        primary_artifact="outputs/paper/options_guard.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="OddsAnalyst",
+        role="score position odds",
+        argv=("scripts/options_time_machine.py", "--book", "--allow-stale"),
+        primary_artifact="outputs/simulation/options_time_machine.json",
+        required=False,
+        allow_stale=True,
+    ),
+    StageSpec(
+        agent="ScenarioAnalyst",
+        role="stress the book across scenarios",
+        argv=("scripts/scenario_analysis.py",),
+        primary_artifact="outputs/simulation/scenario_analysis.json",
+        required=False,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="PerformanceAnalyst",
+        role="summarize realized performance by scenario",
+        argv=("scripts/performance_by_scenario.py",),
+        primary_artifact="outputs/simulation/performance_by_scenario.json",
+        required=False,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="Certifier",
+        role="certify execution paths",
+        argv=("scripts/paper_certification.py",),
+        primary_artifact="outputs/certification/paper_certification.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="Screener",
+        role="screen the trading universe",
+        argv=("scripts/universe_screen.py", "--top", "10", "--out",
+              "outputs/screener/latest.json"),
+        primary_artifact="outputs/screener/latest.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="ZoneAnalyst",
+        role="read market zones",
+        argv=("scripts/zone_analysis.py", "--tickers", "SPY,QQQ,NVDA,AMD,AAPL"),
+        primary_artifact="outputs/orchestrator/<run_id>/zone.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="ResearchFleet",
+        role="research the screened names (dry run)",
+        argv=(
+            "scripts/tradingagents_paper_auto.py",
+            "--screen", "outputs/screener/latest.json",
+            "--screen-top", "7",
+            "--options",
+            "--premium-cap", "3000",
+            "--max-option-positions", "1",
+            "--dry-run",
+        ),
+        primary_artifact="outputs/orchestrator/<run_id>/research.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="BarReader",
+        role="read bars for a symbol",
+        argv=("scripts/desk_bar_reader.py", "--out",
+              "outputs/orchestrator/<run_id>/bars_<symbol>.json"),
+        primary_artifact="outputs/orchestrator/<run_id>/bars_<symbol>.json",
+        required=True,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="Reporter",
+        role="assemble the desk report",
+        argv=("scripts/run_summary.py",),
+        primary_artifact="outputs/paper/slack_thread.json",
+        required=False,
+        allow_stale=False,
+    ),
+    StageSpec(
+        agent="OrderAgent",
+        role="place paper orders",
+        argv=(
+            "scripts/tradingagents_paper_auto.py",
+            "--screen", "outputs/screener/latest.json",
+            "--screen-top", "7",
+            "--options",
+            "--premium-cap", "3000",
+            "--max-option-positions", "1",
+        ),
+        primary_artifact="outputs/paper/tradingagents/**/auto.json",
+        required=False,
+        allow_stale=False,
+    ),
+)
+
+
 @dataclass(frozen=True)
 class StageReport:
     agent: str

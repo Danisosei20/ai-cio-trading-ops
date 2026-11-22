@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.desk_stage_agents import StageSpec, StageReport, normalize
+from scripts.desk_stage_agents import STAGES, StageSpec, StageReport, normalize
 
 SPEC = StageSpec(agent="Certifier", role="certify execution paths",
                  argv=("scripts/paper_certification.py",),
@@ -43,6 +43,29 @@ class NormalizeTests(unittest.TestCase):
         for k in ("agent", "role", "status", "summary", "evidence", "metrics",
                   "started_at", "finished_at", "duration_seconds", "exit_code", "stderr_tail"):
             self.assertIn(k, d)
+
+
+class RegistryTests(unittest.TestCase):
+    def test_order_and_names(self):
+        self.assertEqual([s.agent for s in STAGES], [
+            "Reconciler", "ExitGuard", "OddsAnalyst", "ScenarioAnalyst",
+            "PerformanceAnalyst", "Certifier", "Screener", "ZoneAnalyst",
+            "ResearchFleet", "BarReader", "Reporter", "OrderAgent"])
+
+    def test_research_is_dry_run_and_order_is_not(self):
+        research = next(s for s in STAGES if s.agent == "ResearchFleet")
+        order = next(s for s in STAGES if s.agent == "OrderAgent")
+        self.assertIn("--dry-run", research.argv)
+        self.assertNotIn("--dry-run", order.argv)
+
+    def test_required_set_matches_spec(self):
+        required = {s.agent for s in STAGES if s.required}
+        self.assertEqual(required, {"Certifier", "Reconciler", "ExitGuard",
+                                    "Screener", "ZoneAnalyst", "ResearchFleet", "BarReader"})
+
+    def test_odds_stage_allows_stale(self):
+        odds = next(s for s in STAGES if s.agent == "OddsAnalyst")
+        self.assertTrue(odds.allow_stale)
 
 
 if __name__ == "__main__":
