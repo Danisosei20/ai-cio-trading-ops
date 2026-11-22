@@ -17,14 +17,15 @@ const VIEW_TITLE = {
 };
 
 const DEFAULT_VIEW = "office";
-const SAFETY_UNKNOWN = "SAFETY UNKNOWN";
-const UNKNOWN_NOTE = "status not verified";
 
 let frame;
 let titleEl;
 let navButtons = [];
 let badgeEl;
 let noteEl;
+// The HTML already loads the office view (src="/"), so start it as active
+// and avoid reloading the iframe when that view is selected at startup.
+let activeView = DEFAULT_VIEW;
 
 function isKnownView(view) {
   return Object.prototype.hasOwnProperty.call(VIEW_SRC, view);
@@ -34,7 +35,10 @@ function isKnownView(view) {
 // document itself is never reloaded and the URL is updated without navigation.
 function applyView(view) {
   const active = isKnownView(view) ? view : DEFAULT_VIEW;
-  frame.src = VIEW_SRC[active];
+  if (active !== activeView) {
+    activeView = active;
+    frame.src = VIEW_SRC[active];
+  }
   frame.title = VIEW_TITLE[active] + " desk view";
   titleEl.textContent = VIEW_TITLE[active];
   navButtons.forEach((button) => {
@@ -43,42 +47,28 @@ function applyView(view) {
   history.replaceState(null, "", "?view=" + active);
 }
 
-function showUnknown() {
-  badgeEl.textContent = SAFETY_UNKNOWN;
-  badgeEl.className = "safety-badge unknown";
-  noteEl.textContent = UNKNOWN_NOTE;
+function applySafety(result) {
+  badgeEl.textContent = result.text;
+  badgeEl.className = result.cls;
+  noteEl.textContent = result.note;
 }
 
+// Fail-closed contract lives in shell_safety.js. classifySafety() yields
+// SAFETY UNKNOWN / "status not verified" unless entries is PAUSED or ACTIVE
+// and any present status is ok; a null payload is always unknown.
 async function refreshSafety() {
   try {
     const response = await fetch("/api/safety", {
       signal: AbortSignal.timeout(4000),
     });
     if (!response.ok) {
-      showUnknown();
+      applySafety(classifySafety(null));
       return;
     }
     const payload = await response.json();
-    const entries = String(payload.entries || "").toUpperCase();
-
-    // Fail closed: trust the badge only when entries is a known state and any
-    // status field that is present is explicitly ok. The viewer's safety
-    // endpoint has no top-level status, so a missing status is acceptable.
-    const status = payload.status;
-    const statusOk = status === undefined || String(status).toLowerCase() === "ok";
-    if (!statusOk || (entries !== "PAUSED" && entries !== "ACTIVE")) {
-      showUnknown();
-      return;
-    }
-
-    const paused = entries === "PAUSED";
-    badgeEl.textContent = paused ? "ENTRIES PAUSED" : "ENTRIES ACTIVE";
-    badgeEl.className = "safety-badge " + (paused ? "paused" : "active");
-    const mode = payload.mode || "unknown";
-    const account = payload.account || "unknown";
-    noteEl.textContent = "mode " + mode + " · account " + account;
+    applySafety(classifySafety(payload));
   } catch (error) {
-    showUnknown();
+    applySafety(classifySafety(null));
   }
 }
 
