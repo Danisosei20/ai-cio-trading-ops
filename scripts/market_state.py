@@ -18,6 +18,9 @@ PUT_ACTIONS = ("sell", "underweight", "put")
 CALL_ACTIONS = ("buy", "overweight", "call")
 BEARISH_DECISIONS = frozenset(("sell", "underweight"))
 BULLISH_DECISIONS = frozenset(("buy", "overweight"))
+SYMBOL_RE = re.compile(r"^[A-Z0-9._-]{1,8}$")
+BARS_GLOB = "outputs/orchestrator/*/bars_*.json"
+ZONES_GLOB = "outputs/zones/*/*.json"
 
 
 def _auto_direction(doc: dict) -> str | None:
@@ -210,4 +213,38 @@ def market_payload(root: Path, symbol: str, *, now_iso: str) -> dict:
         "levels": levels,
         "direction": direction,
         "sources": sources,
+    }
+
+
+def universe_symbols(root: Path, *, now_iso: str) -> dict:
+    """List symbols backed by both a bars artifact and a zone artifact on disk.
+
+    The artifacts themselves are the only source of truth; no manifest is read,
+    so a claimed-but-unbacked symbol is never advertised to the viewer.
+    """
+    root = Path(root)
+
+    def symbols_in(pattern: str, prefix: str = "") -> set[str]:
+        found: set[str] = set()
+        try:
+            paths = list(root.glob(pattern))
+        except OSError:
+            return found
+        for path in paths:
+            symbol = path.stem[len(prefix):] if prefix else path.stem
+            if SYMBOL_RE.match(symbol):
+                found.add(symbol)
+        return found
+
+    bar_symbols = symbols_in(BARS_GLOB, "bars_")
+    zone_symbols = symbols_in(ZONES_GLOB)
+    symbols = sorted(bar_symbols & zone_symbols)
+    if not symbols:
+        return _unavailable("no symbols with both bars and zone artifacts")
+    return {
+        "status": "ok",
+        "symbols": symbols,
+        "count": len(symbols),
+        "generated_at": now_iso,
+        "sources": [BARS_GLOB, ZONES_GLOB],
     }
