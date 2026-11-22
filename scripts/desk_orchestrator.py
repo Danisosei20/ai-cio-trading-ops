@@ -78,6 +78,18 @@ def decide(
         halt_reasons.append("session.tradeable is not True")
 
     # (3) Required stages: missing/fail (or unknown status) halt; warn reviews.
+    # Malformed input with two reports for one required agent is a halt even if
+    # the later one looks healthy -- e.g. a `fail` followed by an `ok` must not
+    # be collapsed into a `proceed` by the last-wins lookup below.
+    required = set(_REQUIRED_AGENTS)
+    counts: dict[str, int] = {}
+    for report in reports:
+        if report.agent in required:
+            counts[report.agent] = counts.get(report.agent, 0) + 1
+    for agent in _REQUIRED_AGENTS:
+        if counts.get(agent, 0) > 1:
+            halt_reasons.append(f"{agent}: duplicate required report")
+
     by_agent = {report.agent: report for report in reports}
     for agent in _REQUIRED_AGENTS:
         report = by_agent.get(agent)
