@@ -7,6 +7,7 @@ const VIEW_SRC = {
   market: "/market",
   pipeline: "/pipeline",
   overview: "/trading",
+  options: "/options",
 };
 
 const VIEW_TITLE = {
@@ -14,6 +15,7 @@ const VIEW_TITLE = {
   market: "Market",
   pipeline: "Pipeline",
   overview: "Overview",
+  options: "Options",
 };
 
 const DEFAULT_VIEW = "office";

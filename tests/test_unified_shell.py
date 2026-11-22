@@ -12,6 +12,11 @@ class ShellMarkupTests(unittest.TestCase):
             self.assertIn(f'data-view="{view}"', html, view)
         self.assertIn("<iframe", html)
 
+    def test_options_nav_button_present(self):
+        html = Path("web/agent-office/shell.html").read_text(encoding="utf-8")
+        self.assertIn('data-view="options"', html)
+        self.assertIn(">Options</button>", html)
+
 
 class ShellRouteTests(unittest.TestCase):
     def test_read_only_server(self):
@@ -41,4 +46,11 @@ class ShellBehaviorTests(unittest.TestCase):
         js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")
         self.assertIn("office", js)
         self.assertIn("data-view", js)
+
+    def test_options_view_maps_to_read_only_page(self):
+        js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")
+        # VIEW_SRC sends the tab to the read-only /options page; VIEW_TITLE
+        # gives it a human label. No other behavior should change.
+        self.assertRegex(js, r'options:\s*"/options"')
+        self.assertRegex(js, r'options:\s*"Options"')
 
