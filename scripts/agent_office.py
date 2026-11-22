@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import desk_safety_status  # noqa: E402
 from scripts.market_state import market_payload, universe_symbols  # noqa: E402
+from scripts.options_candidates import option_candidates  # noqa: E402
 from scripts.office_state import snapshot  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
@@ -113,6 +114,14 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/api/symbols":
             body = json.dumps(universe_symbols(ROOT, now_iso=datetime.now(ET).isoformat())).encode()
             mime = "application/json"
+        elif route == "/api/options":
+            # The read-only "/options" page calls this data route; no write route.
+            try:
+                payload = option_candidates(ROOT)
+            except Exception:  # noqa: BLE001 — a broken reader fails closed
+                payload = {"status": "unavailable", "reason": "option candidates unavailable"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/api/market":
             query = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
             symbol = query.get("symbol", ["NVDA"])[0].strip().upper()
@@ -143,10 +152,13 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/market":
             body = (ROOT / "web/agent-office" / "market.html").read_bytes()
             mime = "text/html"
+        elif route == "/options":
+            body = (ROOT / "web/agent-office" / "options.html").read_bytes()
+            mime = "text/html"
         elif route == "/shell":
             body = (ROOT / "web/agent-office" / "shell.html").read_bytes()
             mime = "text/html"
-        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/shell", "/shell.js", "/shell_safety.js"):
+        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/shell", "/shell.js", "/shell_safety.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
             mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]
