@@ -6,20 +6,31 @@ fail-closed: only a fully paper-only safety snapshot, a tradeable session, and
 downgrade a ``review`` to ``proceed`` but can never clear a ``halt``.
 
 Storage (``write_run`` / ``read_latest`` / ``prove`` / ``record_override``) lives
-here; the runner (``run_slot``) is added by a later task.
+here, as does the runner (``run_slot``) that executes a slot and records one run.
 """
 from __future__ import annotations
 
+import argparse
 import json
-from dataclasses import asdict, dataclass
+import subprocess
+import sys
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from scripts.desk_stage_agents import STAGES, StageReport
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.desk_safety_status import read_env  # noqa: E402
+from scripts.desk_stage_agents import STAGES, StageSpec, StageReport, normalize  # noqa: E402
 
 _ET = ZoneInfo("America/New_York")
 _REQUIRED_AGENTS = tuple(spec.agent for spec in STAGES if spec.required)
+_DEFAULT_SYMBOL = "NVDA"
+_SLOTS = ("0945", "1020")
+_UNAVAILABLE_SESSION = {"tradeable": False, "market_clock": "unknown", "window_open": False}
 
 
 @dataclass
@@ -250,3 +261,140 @@ def record_override(root: Path, *, run_id: str, agent: str, reason: str, now_iso
     with open(run_dir / "overrides.jsonl", "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
     return True
+
+
+def _resolve(value: str, *, run_id: str, symbol: str) -> str:
+    """Expand the ``<run_id>`` and ``<symbol>`` stage placeholders."""
+    return value.replace("<run_id>", run_id).replace("<symbol>", symbol)
+
+
+def _bar_symbol(root: Path, run_id: str) -> str:
+    """Prefer a bar artifact already present for this run, else the desk default."""
+    try:
+        existing = sorted(_run_dir(root, run_id).glob("bars_*.json"))
+    except OSError:
+        existing = []
+    if existing:
+        return existing[0].stem[len("bars_"):]
+    return _DEFAULT_SYMBOL
+
+
+def _read_artifact(root: Path, path: str) -> dict | None:
+    """Load one stage artifact; ``path`` may be a recursive glob."""
+    target = Path(root) / path
+    if any(ch in path for ch in "*?"):
+        try:
+            matches = sorted(Path(root).glob(path))
+        except OSError:
+            matches = []
+        if matches:
+            target = matches[-1]
+    try:
+        doc = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+class _ExecFailure:
+    """Minimal process stand-in when the launcher itself fails."""
+
+    def __init__(self, exc: OSError):
+        self.returncode = 127
+        self.stderr = f"{type(exc).__name__}: {exc}"
+
+
+def _skipped_report(spec: StageSpec, *, verdict: str, now_iso: str) -> StageReport:
+    """Record a stage that the decision gate chose not to execute."""
+    return StageReport(
+        agent=spec.agent,
+        role=spec.role,
+        status="skipped",
+        summary=f"{spec.role}: skipped (decision was {verdict})",
+        evidence=[],
+        metrics={},
+        started_at=now_iso,
+        finished_at=now_iso,
+        duration_seconds=0.0,
+        exit_code=None,
+        stderr_tail="",
+    )
+
+
+def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run) -> RunDecision:
+    """Execute one desk slot and record exactly one immutable run.
+
+    ``0945`` is research-only: OrderAgent is never invoked. ``1020`` runs
+    OrderAgent only when the pre-order decision is ``proceed``. The decision is
+    the source of truth and is persisted only through ``write_run``; per-agent
+    files are its ``reports/<agent>.json`` projections.
+    """
+    if slot not in _SLOTS:
+        raise ValueError(f"unknown slot {slot!r}; expected one of {_SLOTS}")
+    root = Path(root)
+    now_iso = datetime.now(_ET).isoformat()
+    symbol = _bar_symbol(root, run_id)
+
+    def run_stage(spec: StageSpec) -> StageReport:
+        argv = [_resolve(arg, run_id=run_id, symbol=symbol) for arg in spec.argv]
+        # The stage argv names .py files; launch them with this interpreter so
+        # the same venv (and its dependencies) is used on Windows hosts.
+        if argv and argv[0].endswith(".py"):
+            argv.insert(0, sys.executable)
+        artifact = _resolve(spec.primary_artifact, run_id=run_id, symbol=symbol)
+        try:
+            proc = exec_cmd(argv, cwd=root, capture_output=True, text=True)
+        except OSError as exc:  # a broken launcher fails this stage, not the run
+            proc = _ExecFailure(exc)
+        return normalize(
+            replace(spec, primary_artifact=artifact),
+            proc=proc,
+            artifacts={artifact: _read_artifact(root, artifact)},
+            now_iso=now_iso,
+        )
+
+    reports: list[StageReport] = []
+    for spec in STAGES:
+        if spec.agent != "OrderAgent":  # the post-decision stage is handled below
+            reports.append(run_stage(spec))
+
+    safety = read_env(root / ".env")
+    try:
+        # Imported here to avoid a circular import with the office viewer.
+        from scripts.agent_office import trading_window
+        session = trading_window()
+        if not isinstance(session, dict):
+            session = dict(_UNAVAILABLE_SESSION)
+    except Exception:  # noqa: BLE001 - an unreadable session must fail closed
+        session = dict(_UNAVAILABLE_SESSION)
+
+    decision = decide(reports, safety=safety, session=session, now_iso=now_iso)
+    # decide() stamps an ET-derived id; the run uses one canonical id everywhere.
+    decision = replace(decision, run_id=run_id)
+
+    if slot == "1020":
+        order_spec = next(spec for spec in STAGES if spec.agent == "OrderAgent")
+        if decision.verdict == "proceed":
+            reports.append(run_stage(order_spec))
+        else:
+            reports.append(_skipped_report(order_spec, verdict=decision.verdict,
+                                           now_iso=now_iso))
+
+    write_run(root, run_id, reports, decision)
+    return decision
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--slot", choices=_SLOTS, required=True,
+                        help="which desk slot to execute (0945 is research-only)")
+    parser.add_argument("--root", type=Path, default=ROOT, help="repo root (defaults to this repo)")
+    args = parser.parse_args(argv)
+    run_id = datetime.now(_ET).strftime("%Y%m%d-%H%M%S")
+    decision = run_slot(args.root, run_id, slot=args.slot)
+    print(json.dumps({"run_id": decision.run_id, "verdict": decision.verdict,
+                      "reasons": decision.reasons}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts.desk_stage_agents import StageReport
-from scripts.desk_orchestrator import decide, prove, read_latest, record_override, write_run
+from scripts.desk_orchestrator import decide, prove, read_latest, record_override, run_slot, write_run
 
 
 def rep(agent, status="ok"):
@@ -176,6 +177,67 @@ class StorageTests(unittest.TestCase):
         write_run(self.root, "r2", list(OK.values()), d)
         self.assertFalse(record_override(self.root, run_id="r2", agent="Certifier",
                                          reason="owner said go", now_iso="2026-11-21T10:30:00-05:00"))
+
+
+class RunnerTests(unittest.TestCase):
+    def test_0945_slot_never_runs_order_agent(self):
+        called = []
+        class P:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        def fake(cmd, **kw):
+            called.append(cmd)
+            return P()
+        run_slot(Path(tempfile.mkdtemp()), "r0945", slot="0945", exec_cmd=fake)
+        self.assertFalse(any("tradingagents_paper_auto.py" in " ".join(c)
+                             and "--dry-run" not in c for c in called))
+
+    def test_1020_slot_runs_order_agent_after_proceed(self):
+        called = []
+        class P:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        def fake(cmd, **kw):
+            called.append(cmd)
+            return P()
+        root = Path(tempfile.mkdtemp())
+        (root / ".env").write_text(
+            "TRADING_ENABLED=false\nPAPER_TRADING_ENABLED=true\nTRADING_MODE=paper_auto\n",
+            encoding="utf-8")
+        # Seed every required artifact so normalization yields ok and decide proceeds.
+        for p in ("outputs/paper/fill_reconciliation.json",
+                  "outputs/paper/options_guard.json",
+                  "outputs/certification/paper_certification.json",
+                  "outputs/screener/latest.json",
+                  "outputs/orchestrator/r1020/zone.json",
+                  "outputs/orchestrator/r1020/research.json",
+                  "outputs/orchestrator/r1020/bars_NVDA.json"):
+            f = root / p
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text('{"status": "ok", "verdict": "PASS"}', encoding="utf-8")
+        # The real session depends on the wall clock and broker clock; pin it so
+        # the test proves the decision gate rather than today's date.
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            d = run_slot(root, "r1020", slot="1020", exec_cmd=fake)
+        self.assertEqual(d.verdict, "proceed")
+        self.assertTrue(any("tradingagents_paper_auto.py" in " ".join(c)
+                            and "--dry-run" not in c for c in called))
+
+    def test_failed_stage_still_writes_decision(self):
+        class P:
+            returncode = 1
+            stdout = ""
+            stderr = "boom"
+        root = Path(tempfile.mkdtemp())
+        d = run_slot(root, "r0945fail", slot="0945", exec_cmd=lambda *a, **k: P())
+        self.assertEqual(d.verdict, "halt")
+        run_dir = root / "outputs/orchestrator/r0945fail"
+        self.assertTrue((run_dir / "decision.json").exists())
+        self.assertEqual(d.run_id, "r0945fail")
+        # write_run is the only writer: no duplicate reports at <run_id>/<agent>.json.
+        self.assertFalse((run_dir / "Reconciler.json").exists())
 
 
 if __name__ == "__main__":

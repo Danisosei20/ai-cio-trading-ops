@@ -17,6 +17,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from robinhood_tools.options_flow import weekend_gap_block
+from scripts.desk_stage_agents import STAGES
 from scripts.tradingagents_paper_auto import regime_gate_passes
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,13 +119,13 @@ class MorningRunFlagsTest(unittest.TestCase):
     """The scheduled run must carry the flags the decision requires."""
 
     def test_morning_run_runs_options_with_the_watch_caps(self):
-        text = (ROOT / "scripts" / "auto_trade_weekday.bat").read_text(
-            encoding="utf-8", errors="replace")
-        line = next(ln for ln in text.splitlines()
-                    if "tradingagents_paper_auto.py" in ln and "--screen" in ln)
-        for flag in ("--options", "--premium-cap 3000",
-                     "--max-option-positions 5", "--ticker-timeout 1200"):
-            self.assertIn(flag, line)
+        # The scheduled 09:45 research run is defined by the orchestrator's
+        # ResearchFleet stage, not by an inline command in the .bat.
+        research = next(s for s in STAGES if s.agent == "ResearchFleet")
+        flags = list(research.argv)
+        for flag in ("--options", "--premium-cap", "3000",
+                     "--max-option-positions", "5", "--ticker-timeout", "1200"):
+            self.assertIn(flag, flags)
 
 
 if __name__ == "__main__":
