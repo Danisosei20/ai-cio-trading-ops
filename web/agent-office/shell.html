@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a0f14">
+<title>Nexus — desk shell</title>
+<link rel="stylesheet" href="/office.css">
+</head>
+<body class="shell">
+<header>
+  <div class="shell-brand-group">
+    <span class="brand" aria-label="Nexus">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 7v13l-13 7L3 23V10Z M3 10l13 7 13-7 M16 17v13 M9 7l14 7"/></svg>
+      <span class="brand-word">Nexus<small>Paper trading desk</small></span>
+    </span>
+    <span class="shell-sep" aria-hidden="true">/</span>
+    <span id="shell-title" class="shell-title">Office</span>
+  </div>
+  <div id="shell-safety" class="shell-safety" role="status" aria-live="polite">
+    <span id="shell-safety-badge" class="safety-badge unknown">SAFETY UNKNOWN</span>
+    <span id="shell-safety-note" class="shell-safety-note">status not verified</span>
+  </div>
+</header>
+
+<nav id="shell-nav" class="shell-nav" aria-label="Desk views">
+  <button type="button" data-view="office" aria-pressed="true">Office</button>
+  <button type="button" data-view="market" aria-pressed="false">Market</button>
+  <button type="button" data-view="pipeline" aria-pressed="false">Pipeline</button>
+  <button type="button" data-view="overview" aria-pressed="false">Overview</button>
+</nav>
+
+<iframe id="shell-view" class="shell-view" title="Desk view" src="/"></iframe>
+<script src="/shell.js"></script>
+</body>
+</html>

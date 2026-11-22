@@ -255,3 +255,75 @@ body:fullscreen { overflow: auto; }
   body.market .market-levels-panel { order: 1; }
   body.market #market-chart { height: 44svh; min-height: 280px; max-height: 420px; }
 }
+
+/* Unified desk shell: persistent nav + safety ribbon around an iframe view.
+   Reuses the office tokens above; the reduced-motion rules apply as-is. */
+body.shell { height: 100svh; display: flex; flex-direction: column; overflow: hidden; }
+body.shell header {
+  flex: 0 0 auto;
+  height: 64px;
+  min-height: 64px;
+  padding: 0 20px;
+  gap: 18px;
+}
+body.shell .shell-brand-group { display: flex; align-items: center; gap: 12px; min-width: 0; }
+body.shell .shell-sep { color: var(--line); font-size: 18px; }
+body.shell .shell-title {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.shell .shell-safety {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 11px;
+  border: 1px solid #5a4a2a;
+  background: linear-gradient(160deg, #19160f, #12151a);
+  border-radius: var(--radius);
+}
+body.shell .shell-safety-note {
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.shell .shell-nav {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+body.shell .shell-nav button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+body.shell .shell-nav button[aria-pressed="true"]:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+body.shell .shell-view {
+  flex: 1 1 auto;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+@media (max-width: 740px) {
+  body.shell header { height: auto; min-height: 60px; padding: 10px 14px; flex-wrap: wrap; }
+  body.shell .shell-nav { flex-wrap: wrap; padding: 10px 14px; gap: 6px; }
+  body.shell .shell-nav button { flex: 1 1 auto; }
+  body.shell .shell-safety-note { display: none; }
+}
