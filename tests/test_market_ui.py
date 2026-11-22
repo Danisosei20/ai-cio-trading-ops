@@ -1,9 +1,17 @@
-"""Static guards for the read-only market dashboard page markup."""
+"""Static and route guards for the read-only market dashboard."""
+import json
+import threading
 import unittest
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+
+from scripts.agent_office import Handler
 
 HTML = Path("web/agent-office/market.html")
 CSS = Path("web/agent-office/office.css")
+PY = Path("scripts/agent_office.py")
+JS = Path("web/agent-office/market.js")
 
 
 class MarketUITests(unittest.TestCase):
@@ -32,3 +40,58 @@ class MarketUITests(unittest.TestCase):
         html = HTML.read_text(encoding="utf-8")
         self.assertIn("--accent: #6fd6c8", css)
         self.assertNotIn("#3b82f6", html)  # trading.html's blue is not a market token
+
+    def test_market_routes_are_read_only(self):
+        src = PY.read_text(encoding="utf-8")
+        self.assertIn('"/api/market"', src)
+        self.assertIn('"/market"', src)
+        self.assertIn('"/market.js"', src)
+        self.assertNotIn("do_POST", src)
+
+    def test_renderer_draws_levels_and_source_labels(self):
+        js = JS.read_text(encoding="utf-8")
+        for token in ("market-chart", "poc", "tp1", "data unavailable", "source"):
+            self.assertIn(token, js)
+
+
+class MarketRouteTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=5)
+
+    def _get(self, path):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=10) as resp:
+            return resp.status, resp.headers.get("Content-Type", ""), resp.read()
+
+    def test_market_page_and_script_are_served(self):
+        code, ctype, body = self._get("/market")
+        self.assertEqual(code, 200)
+        self.assertIn("text/html", ctype)
+        self.assertIn(b'id="market-chart"', body)
+        code, ctype, body = self._get("/market.js")
+        self.assertEqual(code, 200)
+        self.assertIn("text/javascript", ctype)
+        self.assertIn(b"market-chart", body)
+
+    def test_market_api_rejects_invalid_symbol(self):
+        code, ctype, body = self._get("/api/market?symbol=A%3BB")
+        self.assertEqual(code, 200)
+        self.assertIn("application/json", ctype)
+        payload = json.loads(body)
+        self.assertEqual(payload, {"status": "unavailable", "reason": "invalid symbol"})
+
+    def test_market_api_fails_closed_without_artifacts(self):
+        code, _, body = self._get("/api/market?symbol=NOMARKETDATA999")
+        self.assertEqual(code, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertIn("reason", payload)
