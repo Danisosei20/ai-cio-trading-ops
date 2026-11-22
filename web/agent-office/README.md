@@ -1,4 +1,4 @@
-# Nexus — the trading intelligence office
+# Nextus — the trading intelligence office
 
 Run from the repository root:
 

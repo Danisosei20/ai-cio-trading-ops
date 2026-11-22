@@ -1,4 +1,4 @@
-/* Nexus: an illustrative AI office. Rendering never executes tasks or fabricates telemetry. */
+/* Nextus: an illustrative AI office. Rendering never executes tasks or fabricates telemetry. */
 window.OfficeScene = class {
  constructor(canvas, select) {
   this.canvas=canvas;this.c=canvas.getContext('2d');this.select=select;
@@ -60,7 +60,7 @@ window.OfficeScene = class {
   this.polygon(map,'#0d2637');this.line([...map,map[0]],'#48728b',2);
   const nodes=Array.from({length:9},(_,i)=>this.iso(-.03,1.5+(i%3)*.9,70+Math.floor(i/3)*26));
   nodes.forEach((p,i)=>{if(i<6)this.line([p,nodes[i+3]],'#356278',1);if(i%3<2)this.line([p,nodes[i+1]],'#356278',1);c.fillStyle=i%3?'#6ab1c0':'#b1a9ec';c.beginPath();c.arc(...p,3,0,Math.PI*2);c.fill()});
-  const [lx,ly]=this.iso(0,6.2,112);this.label('N E X U S',lx,ly,'#8baac4',23);this.label('Agent intelligence',lx,ly+23,'#6d93a8',13);
+  const [lx,ly]=this.iso(0,6.2,112);this.label('N E X T U S',lx,ly,'#8baac4',23);this.label('Agent intelligence',lx,ly+23,'#6d93a8',13);
   // Recessed floor conduits connect stations without depicting fake task progress.
   [4.7,8.7].forEach(x=>this.line([this.iso(x,.4,2),this.iso(x,9.5,2)],'#3c647a',2));
   [4.5,9.1].forEach(y=>this.line([this.iso(.7,y,2),this.iso(12.5,y,2)],'#3c647a',2));

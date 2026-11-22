@@ -1,4 +1,4 @@
-"""Read-only, fail-closed safety status for the Nexus office viewer.
+"""Read-only, fail-closed safety status for the Nextus office viewer.
 
 Assembles one small, sanitized payload describing the desk's posture:
 entries paused, paper-only mode, account flatness, last certification,

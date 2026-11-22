@@ -1,4 +1,4 @@
-/* Nexus market view: read-only canvas renderer for local desk artifacts.
+/* Nextus market view: read-only canvas renderer for local desk artifacts.
    One draw per snapshot — no animation loop, no order entry. */
 (() => {
   const $ = id => document.getElementById(id);
