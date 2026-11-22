@@ -232,7 +232,7 @@ def universe_symbols(root: Path, *, now_iso: str) -> dict:
             return found
         for path in paths:
             symbol = path.stem[len(prefix):] if prefix else path.stem
-            if SYMBOL_RE.match(symbol):
+            if SYMBOL_RE.fullmatch(symbol):
                 found.add(symbol)
         return found
 

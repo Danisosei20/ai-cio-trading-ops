@@ -44,6 +44,27 @@
   const fmt = v => { const n = finite(v); return n === null ? '—' : n.toFixed(2); };
   const text = v => (v === null || v === undefined ? '' : String(v));
 
+  // Derive the legend's bar interval from the bars' own timestamps. Only
+  // consecutive bars in the same session (ts.slice(0,10)) contribute, and the
+  // median delta tolerates an occasional gap. No valid delta -> "desk bars".
+  function barIntervalLabel(bars) {
+    const deltas = [];
+    for (let i = 1; i < bars.length; i++) {
+      const prevTs = bars[i - 1] && bars[i - 1].ts;
+      const curTs = bars[i] && bars[i].ts;
+      if (typeof prevTs !== 'string' || typeof curTs !== 'string') continue;
+      if (prevTs.slice(0, 10) !== curTs.slice(0, 10)) continue;
+      const minutes = (Date.parse(curTs) - Date.parse(prevTs)) / 60000;
+      if (Number.isFinite(minutes) && minutes > 0) deltas.push(minutes);
+    }
+    if (!deltas.length) return 'desk bars';
+    deltas.sort((a, b) => a - b);
+    const mid = Math.floor(deltas.length / 2);
+    const median = deltas.length % 2 ? deltas[mid] : (deltas[mid - 1] + deltas[mid]) / 2;
+    const n = Math.round(median);
+    return n >= 60 ? Math.round(n / 60) + 'h' : n + 'm';
+  }
+
   function clearChart() {
     const r = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, r.width, r.height);
@@ -396,7 +417,7 @@
     const change = c !== null && prev ? (c - prev) / prev * 100 : null;
     ctx.font = MONO;
     ctx.textAlign = 'left';
-    let symLabel = text(data.symbol) + ' · 5m';
+    let symLabel = text(data.symbol) + ' · ' + barIntervalLabel(bars);
     while (symLabel.length > 3 && ctx.measureText(symLabel).width > plotW * 0.4) {
       symLabel = symLabel.slice(0, -2) + '…';
     }

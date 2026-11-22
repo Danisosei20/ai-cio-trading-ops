@@ -61,6 +61,10 @@ class TradingViewSurfaceTests(unittest.TestCase):
         self.assertIn("'O ' + fmt(o)", self.js)
         self.assertIn("change.toFixed(2)", self.js)
 
+    def test_legend_interval_is_derived_not_hardcoded(self):
+        self.assertNotIn("' · 5m'", self.js)
+        self.assertIn("barIntervalLabel", self.js)
+
     def test_read_only_renderer_has_no_write_call(self):
         self.assertNotIn("method: 'POST'", self.js)
         self.assertNotIn("do_POST", self.js)

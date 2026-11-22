@@ -9,7 +9,8 @@
   if (!statusEl || !candidatesEl || !rejectedEl || !noteEl) return;
 
   const text = v => (v === null || v === undefined ? '' : String(v));
-  const finite = v => (v === null || v === undefined || v === '' ? null
+  const finite = v => (v === null || v === undefined || v === ''
+    || (typeof v === 'string' && !v.trim()) ? null
     : Number.isFinite(Number(v)) ? Number(v) : null);
   const fmt = (v, digits = 2) => {
     const n = finite(v);

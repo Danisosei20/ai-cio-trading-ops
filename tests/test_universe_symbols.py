@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.market_state import universe_symbols
+from scripts.market_state import SYMBOL_RE, universe_symbols
 
 OFFICE_PY = Path("scripts/agent_office.py")
 NOW_ISO = "2026-11-22T10:20:00-05:00"
@@ -53,6 +53,13 @@ class UniverseSymbolsTests(unittest.TestCase):
         src = OFFICE_PY.read_text(encoding="utf-8")
         self.assertIn('"/api/symbols"', src)
         self.assertNotIn("do_POST", src)
+
+    def test_symbol_regex_rejects_trailing_newline(self):
+        # win32 cannot create a filename containing a newline, so assert the
+        # module constant directly: `$` would otherwise match before "\n".
+        self.assertIsNone(SYMBOL_RE.fullmatch("ABCD\n"))
+        src = Path("scripts/market_state.py").read_text(encoding="utf-8")
+        self.assertIn("SYMBOL_RE.fullmatch(symbol)", src)
 
 
 if __name__ == "__main__":

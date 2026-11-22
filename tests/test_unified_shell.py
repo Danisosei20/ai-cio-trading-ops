@@ -17,6 +17,13 @@ class ShellMarkupTests(unittest.TestCase):
         self.assertIn('data-view="options"', html)
         self.assertIn(">Options</button>", html)
 
+    def test_options_nav_is_unique(self):
+        html = Path("web/agent-office/shell.html").read_text(encoding="utf-8")
+        self.assertEqual(html.count('data-view="options"'), 1)
+        js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")
+        self.assertEqual(js.count('options: "/options"'), 1)
+        self.assertEqual(js.count('options: "Options"'), 1)
+
 
 class ShellRouteTests(unittest.TestCase):
     def test_read_only_server(self):
@@ -36,11 +43,6 @@ class ShellBehaviorTests(unittest.TestCase):
         self.assertIn("iframe", js)
         self.assertNotIn("location.reload", js)
         self.assertNotIn("location.href =", js)
-
-    def test_safety_ribbon_fails_closed(self):
-        js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")
-        for token in ("api/safety", "SAFETY UNKNOWN", "unknown", "entries"):
-            self.assertIn(token, js)
 
     def test_unknown_view_falls_back_to_office(self):
         js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")

@@ -105,6 +105,12 @@ class OptionsUITests(unittest.TestCase):
         self.assertIn("data.sources", js)  # every source is displayed verbatim
         self.assertIn("data.rejected", js)  # rejections get their own section
 
+    def test_finite_guard_rejects_whitespace_only_strings(self):
+        # Number("  ") is 0, so whitespace must be guarded explicitly or a
+        # blank numeric cell renders as 0.00 / 0.0% instead of the em dash.
+        js = JS.read_text(encoding="utf-8")
+        self.assertIn("typeof v === 'string' && !v.trim()", js)
+
 
 class OptionsRouteTests(unittest.TestCase):
     """HTTP-level checks: the /options page must really be served, not just
