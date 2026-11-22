@@ -122,10 +122,14 @@ class MorningRunFlagsTest(unittest.TestCase):
         # The scheduled 09:45 research run is defined by the orchestrator's
         # ResearchFleet stage, not by an inline command in the .bat.
         research = next(s for s in STAGES if s.agent == "ResearchFleet")
-        flags = list(research.argv)
-        for flag in ("--options", "--premium-cap", "3000",
-                     "--max-option-positions", "5", "--ticker-timeout", "1200"):
-            self.assertIn(flag, flags)
+        argv = list(research.argv)
+        self.assertIn("--options", argv)
+        for flag, value in (("--premium-cap", "3000"),
+                            ("--max-option-positions", "5"),
+                            ("--ticker-timeout", "1200")):
+            # Adjacency matters: bare token presence would pass a swapped value.
+            self.assertEqual(argv[argv.index(flag) + 1], value,
+                             f"{flag} must carry {value}")
 
 
 if __name__ == "__main__":

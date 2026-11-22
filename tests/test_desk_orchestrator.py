@@ -239,6 +239,17 @@ class RunnerTests(unittest.TestCase):
         # write_run is the only writer: no duplicate reports at <run_id>/<agent>.json.
         self.assertFalse((run_dir / "Reconciler.json").exists())
 
+    def test_batch_calls_orchestrator_and_has_no_inline_order_command(self):
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "scripts" / "auto_trade_weekday.bat").read_text(
+            encoding="utf-8", errors="replace")
+        self.assertIn("desk_orchestrator.py --slot 0945", text)
+        for line in text.splitlines():
+            command = line.strip()
+            if command and not command.upper().startswith("REM"):
+                self.assertNotIn("tradingagents_paper_auto.py", command,
+                                 "the 09:45 batch must not place orders inline")
+
 
 if __name__ == "__main__":
     unittest.main()
