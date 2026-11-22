@@ -1,8 +1,10 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from scripts import desk_orchestrator as orch
 from scripts.desk_stage_agents import StageReport
 from scripts.desk_orchestrator import decide, prove, read_latest, record_override, run_slot, write_run
 
@@ -249,6 +251,151 @@ class RunnerTests(unittest.TestCase):
             if command and not command.upper().startswith("REM"):
                 self.assertNotIn("tradingagents_paper_auto.py", command,
                                  "the 09:45 batch must not place orders inline")
+
+
+FIX_NOW = "2026-11-21T10:20:00-05:00"  # ET date 2026-11-21
+SAFE_ENV = ("TRADING_ENABLED=false\nPAPER_TRADING_ENABLED=true\n"
+            "TRADING_MODE=paper_auto\n")
+SEED_PATHS = ("outputs/paper/fill_reconciliation.json",
+              "outputs/paper/options_guard.json",
+              "outputs/certification/paper_certification.json",
+              "outputs/screener/latest.json",
+              "outputs/orchestrator/{run_id}/zone.json",
+              "outputs/orchestrator/{run_id}/research.json",
+              "outputs/orchestrator/{run_id}/bars_NVDA.json")
+
+
+class Proc:
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+
+def seed_required(root, run_id, *, stale_screener=False):
+    """Fresh required artifacts; optionally age the screener past 24h."""
+    for template in SEED_PATHS:
+        path = root / template.format(run_id=run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = "2026-11-20T08:00:00-05:00" if stale_screener and "screener" in str(path) \
+            else "2026-11-21T10:19:00-05:00"
+        path.write_text(json.dumps({"status": "ok", "verdict": "PASS", "generated_at": stamp}),
+                        encoding="utf-8")
+
+
+def safe_root(root):
+    (root / ".env").write_text(SAFE_ENV, encoding="utf-8")
+
+
+class OverrideEndToEndTests(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.root = Path(self.t.name)
+        safe_root(self.root)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_recorded_override_makes_next_run_slot_proceed(self):
+        seed_required(self.root, "r_review", stale_screener=True)
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            first = run_slot(self.root, "r_review", slot="0945",
+                             exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertEqual(first.verdict, "review", "stale screener must force review")
+
+        self.assertTrue(record_override(self.root, run_id="r_review", agent="Screener",
+                                        reason="owner approved stale screener",
+                                        now_iso="2026-11-21T09:50:00-05:00"))
+
+        seed_required(self.root, "r_next", stale_screener=True)
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            second = run_slot(self.root, "r_next", slot="1020",
+                              exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertEqual(second.verdict, "proceed",
+                         "today's recorded override must flip the next run to proceed")
+        self.assertEqual(second.overrides, [
+            {"agent": "Screener", "date": "2026-11-21", "reason": "owner approved stale screener"}])
+
+    def test_loader_maps_only_todays_entries(self):
+        run_dir = self.root / "outputs/orchestrator/r_audit"
+        run_dir.mkdir(parents=True)
+        entries = [
+            {"run_id": "r_audit", "agent": "ZoneAnalyst", "reason": "ok",
+             "now_iso": "2026-11-21T09:50:00-05:00"},
+            {"run_id": "r_audit", "agent": "BarReader", "reason": "yesterday",
+             "now_iso": "2026-11-20T09:50:00-05:00"},
+            {"run_id": "r_audit", "agent": "Screener", "reason": "   ",
+             "now_iso": "2026-11-21T09:51:00-05:00"},
+            {"run_id": "r_audit", "agent": "Certifier", "now_iso": "2026-11-21T09:52:00-05:00"},
+        ]
+        (run_dir / "overrides.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in entries) + "\n{bad json\n", encoding="utf-8")
+        loaded = orch.load_overrides(self.root, now_iso=FIX_NOW)
+        self.assertEqual(loaded, [{"agent": "ZoneAnalyst", "date": "2026-11-21", "reason": "ok"}])
+
+    def test_override_cannot_flip_halt_in_next_run(self):
+        # Recording on a review run does not authorize clearing a live-flag halt.
+        seed_required(self.root, "r_review", stale_screener=True)
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            run_slot(self.root, "r_review", slot="0945",
+                     exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertTrue(record_override(self.root, run_id="r_review", agent="Screener",
+                                        reason="owner approved", now_iso="2026-11-21T09:50:00-05:00"))
+        (self.root / ".env").write_text(SAFE_ENV + "TRADING_ENABLED=true\n", encoding="utf-8")
+        seed_required(self.root, "r_live", stale_screener=True)
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            halted = run_slot(self.root, "r_live", slot="1020",
+                              exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertEqual(halted.verdict, "halt")
+        self.assertEqual(halted.overrides, [])
+
+
+class FreshnessEndToEndTests(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.root = Path(self.t.name)
+        safe_root(self.root)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_aged_required_artifact_yields_review_not_proceed(self):
+        seed_required(self.root, "r_stale", stale_screener=True)
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            d = run_slot(self.root, "r_stale", slot="0945",
+                         exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertEqual(d.verdict, "review")
+        screener = next(r for r in d.reports if r.agent == "Screener")
+        self.assertEqual(screener.status, "warn")
+        # No order stage may fire on a review verdict, even at the 1020 slot.
+        seed_required(self.root, "r_stale1020", stale_screener=True)
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            d2 = run_slot(self.root, "r_stale1020", slot="1020",
+                          exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertEqual(d2.verdict, "review")
+        order = next(r for r in d2.reports if r.agent == "OrderAgent")
+        self.assertEqual(order.status, "skipped")
+
+
+class OrderAgentProofTests(unittest.TestCase):
+    def test_order_agent_is_in_decision_json_and_proof_matrix(self):
+        root = Path(tempfile.mkdtemp())
+        safe_root(root)
+        seed_required(root, "r_proof")
+        order_artifact = root / "outputs/paper/tradingagents/mock/auto.json"
+        order_artifact.parent.mkdir(parents=True, exist_ok=True)
+        order_artifact.write_text(
+            json.dumps({"status": "ok", "generated_at": "2026-11-21T10:19:00-05:00"}),
+            encoding="utf-8")
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            d = run_slot(root, "r_proof", slot="1020",
+                         exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+        self.assertEqual(d.verdict, "proceed")
+        doc = json.loads((root / "outputs/orchestrator/r_proof/decision.json").read_text(
+            encoding="utf-8"))
+        self.assertIn("OrderAgent", [r["agent"] for r in doc["reports"]])
+        matrix = prove(root, "r_proof")
+        self.assertIn("OrderAgent | ok |", matrix)
+        self.assertNotIn("OrderAgent | missing", matrix)
 
 
 if __name__ == "__main__":

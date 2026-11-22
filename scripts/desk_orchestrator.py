@@ -5,8 +5,10 @@ fail-closed: only a fully paper-only safety snapshot, a tradeable session, and
 ``ok`` reports from every required stage can produce ``proceed``. Overrides can
 downgrade a ``review`` to ``proceed`` but can never clear a ``halt``.
 
-Storage (``write_run`` / ``read_latest`` / ``prove`` / ``record_override``) lives
-here, as does the runner (``run_slot``) that executes a slot and records one run.
+Storage (``write_run`` / ``read_latest`` / ``prove`` / ``record_override`` /
+``load_overrides``) lives here, as does the runner (``run_slot``) that executes a
+slot and records one run. Audited overrides from prior runs are consumed at
+decision time so an accepted ``review`` can become ``proceed``.
 """
 from __future__ import annotations
 
@@ -257,10 +259,55 @@ def record_override(root: Path, *, run_id: str, agent: str, reason: str, now_iso
     if not isinstance(report, dict) or report.get("status") != "warn":
         return False
 
+    reason = str(reason or "").strip()
+    if not reason:
+        return False
+
     entry = {"run_id": run_id, "agent": agent, "reason": reason, "now_iso": now_iso}
     with open(run_dir / "overrides.jsonl", "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
     return True
+
+
+def load_overrides(root: Path, *, now_iso: str) -> list[dict]:
+    """Collect today's recorded overrides for the next decision.
+
+    An override is recorded against the run it reviews; the next run has a
+    different id, so every run directory is scanned. Only entries stamped with
+    the same ET date as ``now_iso`` survive (overrides expire at end of ET day)
+    and each is mapped to the ``{"agent", "date", "reason"}`` shape ``decide``
+    validates. Malformed lines and blank fields are skipped, never trusted.
+    """
+    today = _et_now(now_iso).date().isoformat()
+    try:
+        paths = sorted(Path(root).glob(f"{_ORCHESTRATOR_DIR.as_posix()}/*/overrides.jsonl"))
+    except OSError:
+        paths = []
+
+    loaded: list[dict] = []
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            continue
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            agent = str(entry.get("agent") or "").strip()
+            reason = str(entry.get("reason") or "").strip()
+            if not agent or not reason:
+                continue
+            try:
+                date = _et_now(str(entry.get("now_iso") or "")).date().isoformat()
+            except ValueError:
+                continue
+            if date == today:
+                loaded.append({"agent": agent, "date": date, "reason": reason})
+    return loaded
 
 
 def _resolve(value: str, *, run_id: str, symbol: str) -> str:
@@ -279,8 +326,8 @@ def _bar_symbol(root: Path, run_id: str) -> str:
     return _DEFAULT_SYMBOL
 
 
-def _read_artifact(root: Path, path: str) -> dict | None:
-    """Load one stage artifact; ``path`` may be a recursive glob."""
+def _artifact_path(root: Path, path: str) -> Path:
+    """Resolve one artifact path, matching ``_read_artifact``'s glob policy."""
     target = Path(root) / path
     if any(ch in path for ch in "*?"):
         try:
@@ -289,11 +336,24 @@ def _read_artifact(root: Path, path: str) -> dict | None:
             matches = []
         if matches:
             target = matches[-1]
+    return target
+
+
+def _read_artifact(root: Path, path: str) -> dict | None:
+    """Load one stage artifact; ``path`` may be a recursive glob."""
     try:
-        doc = json.loads(target.read_text(encoding="utf-8"))
+        doc = json.loads(_artifact_path(root, path).read_text(encoding="utf-8"))
     except (OSError, ValueError, UnicodeError):
         return None
     return doc if isinstance(doc, dict) else None
+
+
+def _artifact_mtime(root: Path, path: str) -> float | None:
+    """Best-effort artifact mtime, used when the artifact has no embedded stamp."""
+    try:
+        return _artifact_path(root, path).stat().st_mtime
+    except OSError:
+        return None
 
 
 class _ExecFailure:
@@ -321,18 +381,20 @@ def _skipped_report(spec: StageSpec, *, verdict: str, now_iso: str) -> StageRepo
     )
 
 
-def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run) -> RunDecision:
+def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
+             now_iso: str | None = None) -> RunDecision:
     """Execute one desk slot and record exactly one immutable run.
 
     ``0945`` is research-only: OrderAgent is never invoked. ``1020`` runs
     OrderAgent only when the pre-order decision is ``proceed``. The decision is
     the source of truth and is persisted only through ``write_run``; per-agent
-    files are its ``reports/<agent>.json`` projections.
+    files are its ``reports/<agent>.json`` projections. ``now_iso`` is
+    injectable for deterministic tests and defaults to the ET wall clock.
     """
     if slot not in _SLOTS:
         raise ValueError(f"unknown slot {slot!r}; expected one of {_SLOTS}")
     root = Path(root)
-    now_iso = datetime.now(_ET).isoformat()
+    now_iso = now_iso or datetime.now(_ET).isoformat()
     symbol = _bar_symbol(root, run_id)
 
     def run_stage(spec: StageSpec) -> StageReport:
@@ -346,11 +408,13 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run) -> 
             proc = exec_cmd(argv, cwd=root, capture_output=True, text=True)
         except OSError as exc:  # a broken launcher fails this stage, not the run
             proc = _ExecFailure(exc)
+        mtime = _artifact_mtime(root, artifact)
         return normalize(
             replace(spec, primary_artifact=artifact),
             proc=proc,
             artifacts={artifact: _read_artifact(root, artifact)},
             now_iso=now_iso,
+            mtimes={artifact: mtime} if mtime is not None else None,
         )
 
     reports: list[StageReport] = []
@@ -368,17 +432,23 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run) -> 
     except Exception:  # noqa: BLE001 - an unreadable session must fail closed
         session = dict(_UNAVAILABLE_SESSION)
 
-    decision = decide(reports, safety=safety, session=session, now_iso=now_iso)
+    decision = decide(reports, safety=safety, session=session, now_iso=now_iso,
+                      overrides=load_overrides(root, now_iso=now_iso))
     # decide() stamps an ET-derived id; the run uses one canonical id everywhere.
     decision = replace(decision, run_id=run_id)
 
-    if slot == "1020":
-        order_spec = next(spec for spec in STAGES if spec.agent == "OrderAgent")
-        if decision.verdict == "proceed":
-            reports.append(run_stage(order_spec))
-        else:
-            reports.append(_skipped_report(order_spec, verdict=decision.verdict,
-                                           now_iso=now_iso))
+    # The order stage runs only after the verdict is known, so append its report
+    # afterwards and rebuild the decision's report list before the single write.
+    # OrderAgent is advisory and cannot change the verdict; including it keeps
+    # --prove honest instead of reporting a stage that did run as "missing".
+    order_spec = next(spec for spec in STAGES if spec.agent == "OrderAgent")
+    if slot == "1020" and decision.verdict == "proceed":
+        order_report = run_stage(order_spec)
+    else:
+        skip_reason = decision.verdict if slot == "1020" else "0945 research-only"
+        order_report = _skipped_report(order_spec, verdict=skip_reason, now_iso=now_iso)
+    reports.append(order_report)
+    decision = replace(decision, reports=list(reports))
 
     write_run(root, run_id, reports, decision)
     return decision

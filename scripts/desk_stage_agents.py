@@ -2,13 +2,17 @@
 
 A stage runs a script, reads its JSON artifact, and reports one small,
 fail-closed record. ``normalize`` never trusts an artifact over a nonzero
-exit, and ``write_report`` persists the record under the run's directory.
+exit, and an artifact older than 24h is a ``warn`` (unless ``allow_stale``).
+``write_report`` persists the record under the run's directory.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+
+MAX_ARTIFACT_AGE_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -159,13 +163,54 @@ class StageReport:
         return asdict(self)
 
 
+def _parse_stamp(value: object) -> datetime | None:
+    """Parse an ISO timestamp; naive values are read as UTC."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def is_stale(doc: dict | None, *, now_iso: str, mtime: float | None = None,
+             max_age_seconds: int = MAX_ARTIFACT_AGE_SECONDS) -> bool:
+    """True when an artifact's evidence is older than the freshness window.
+
+    The producer's embedded ``generated_at`` wins when present; otherwise the
+    file's mtime is used. A missing/unreadable stamp is never treated as stale
+    here (that is a separate missing/fail condition), so this check cannot
+    invent a new halt. ``allow_stale`` is applied by the caller.
+    """
+    now = _parse_stamp(now_iso)
+    if now is None or not isinstance(doc, dict):
+        return False
+    stamp = _parse_stamp(doc.get("generated_at"))
+    if stamp is None and mtime is not None:
+        try:
+            stamp = datetime.fromtimestamp(float(mtime), tz=timezone.utc)
+        except (TypeError, ValueError, OSError, OverflowError):
+            stamp = None
+    if stamp is None:
+        return False
+    return (now - stamp).total_seconds() > max_age_seconds
+
+
 def normalize(spec: StageSpec, *, proc, artifacts: dict[str, dict | None],
-              now_iso: str) -> StageReport:
-    """Fold one stage's process result and artifact into a StageReport."""
+              now_iso: str, mtimes: dict[str, float] | None = None) -> StageReport:
+    """Fold one stage's process result and artifact into a StageReport.
+
+    A healthy process on an aged artifact is ``warn`` (review), never ``ok``;
+    a nonzero exit or absent/empty artifact still fails closed as ``fail``.
+    ``allow_stale`` exempts only stages explicitly configured for it.
+    """
     doc = artifacts.get(spec.primary_artifact)
     has_artifact = isinstance(doc, dict)
     exit_code = getattr(proc, "returncode", None)
     ok = exit_code == 0 and has_artifact and bool(doc)
+    stale = ok and not spec.allow_stale and is_stale(
+        doc, now_iso=now_iso, mtime=(mtimes or {}).get(spec.primary_artifact))
 
     metrics: dict = {}
     if has_artifact:
@@ -193,6 +238,9 @@ def normalize(spec: StageSpec, *, proc, artifacts: dict[str, dict | None],
     if exit_code not in (0, None):
         detail = f"{detail} (exit {exit_code})"
     summary = f"{spec.role}: {detail}" if spec.role else detail
+    if stale:
+        metrics["stale"] = True
+        summary = f"{summary} (stale artifact)"
 
     # Optional proc timing is forwarded when the runner supplies it;
     # otherwise the single known timestamp is used for both ends.
@@ -206,7 +254,7 @@ def normalize(spec: StageSpec, *, proc, artifacts: dict[str, dict | None],
     return StageReport(
         agent=spec.agent,
         role=spec.role,
-        status="ok" if ok else "fail",
+        status="warn" if stale else ("ok" if ok else "fail"),
         summary=summary,
         evidence=[spec.primary_artifact] if has_artifact else [],
         metrics=metrics,
