@@ -64,6 +64,20 @@
     width: 110px;
   }
   #market-symbol:focus { outline: none; border-color: var(--accent); }
+  /* Picker reuses the text input's tokens; no new accent colour. */
+  #market-symbols {
+    font: 12px ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    max-width: 150px;
+  }
+  #market-symbols:focus { outline: none; border-color: var(--accent); }
+  #market-symbols:disabled { opacity: .6; cursor: not-allowed; }
   .market-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
@@ -140,6 +154,9 @@
     </div>
     <div class="market-controls">
       <label class="market-label" for="market-symbol">Symbol</label>
+      <select id="market-symbols" aria-label="Loaded symbols">
+        <option value="">Loaded symbols…</option>
+      </select>
       <input id="market-symbol" type="text" value="NVDA" maxlength="8" autocomplete="off" spellcheck="false" aria-label="Ticker symbol">
       <button id="market-refresh" type="button" class="primary" title="Reload the read-only snapshot">Load</button>
     </div>

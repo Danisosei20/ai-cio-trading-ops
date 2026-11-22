@@ -60,6 +60,21 @@ class MarketUITests(unittest.TestCase):
         self.assertIn("tp1: C.up", js)
         self.assertIn("tp2: C.up", js)
 
+    def test_market_picker_present(self):
+        html = HTML.read_text(encoding="utf-8")
+        self.assertIn('id="market-symbols"', html)
+        self.assertIn('<select id="market-symbols"', html)  # element is a <select>, not an input
+
+    def test_market_picker_behavior(self):
+        js = JS.read_text(encoding="utf-8")
+        for token in ("/api/symbols", "market-symbols", "symbol=", "history.replaceState",
+                      "market-refresh", "market-symbol"):
+            self.assertIn(token, js)
+
+    def test_market_deep_link(self):
+        js = JS.read_text(encoding="utf-8")
+        self.assertIn("URLSearchParams", js)
+
 
 class MarketRouteTests(unittest.TestCase):
     @classmethod
