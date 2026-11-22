@@ -213,8 +213,8 @@ class RunnerTests(unittest.TestCase):
                   "outputs/paper/options_guard.json",
                   "outputs/certification/paper_certification.json",
                   "outputs/screener/latest.json",
-                  "outputs/orchestrator/r1020/zone.json",
-                  "outputs/orchestrator/r1020/research.json",
+                  "outputs/zones/2026-11-21/SPY.json",
+                  "outputs/paper/tradingagents/2026-11-21/auto.json",
                   "outputs/orchestrator/r1020/bars_NVDA.json"):
             f = root / p
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -260,8 +260,8 @@ SEED_PATHS = ("outputs/paper/fill_reconciliation.json",
               "outputs/paper/options_guard.json",
               "outputs/certification/paper_certification.json",
               "outputs/screener/latest.json",
-              "outputs/orchestrator/{run_id}/zone.json",
-              "outputs/orchestrator/{run_id}/research.json",
+              "outputs/zones/2026-11-21/SPY.json",
+              "outputs/paper/tradingagents/2026-11-21/auto.json",
               "outputs/orchestrator/{run_id}/bars_NVDA.json")
 
 
@@ -284,6 +284,34 @@ def seed_required(root, run_id, *, stale_screener=False):
 
 def safe_root(root):
     (root / ".env").write_text(SAFE_ENV, encoding="utf-8")
+
+
+class FailClosedArtifactTests(unittest.TestCase):
+    """Stray legacy files must never stand in for a real producer artifact."""
+
+    def test_stray_legacy_artifacts_cannot_satisfy_required_stages(self):
+        root = Path(tempfile.mkdtemp())
+        safe_root(root)
+        seed_required(root, "r_stray")
+        # The real producer paths are absent; only old per-run copies exist.
+        (root / "outputs/zones/2026-11-21/SPY.json").unlink()
+        (root / "outputs/paper/tradingagents/2026-11-21/auto.json").unlink()
+        for legacy in ("outputs/orchestrator/r_stray/zone.json",
+                       "outputs/orchestrator/r_stray/research.json"):
+            path = root / legacy
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"status": "ok", "verdict": "PASS"}', encoding="utf-8")
+
+        with mock.patch("scripts.agent_office.trading_window", return_value=SESSION):
+            d = run_slot(root, "r_stray", slot="0945",
+                         exec_cmd=lambda *a, **k: Proc(), now_iso=FIX_NOW)
+
+        self.assertEqual(d.verdict, "halt")
+        for agent in ("ZoneAnalyst", "ResearchFleet"):
+            with self.subTest(agent=agent):
+                report = next(r for r in d.reports if r.agent == agent)
+                self.assertEqual(report.status, "fail")
+                self.assertEqual(report.evidence, [])
 
 
 class OverrideEndToEndTests(unittest.TestCase):
