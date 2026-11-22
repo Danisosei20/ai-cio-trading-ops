@@ -114,9 +114,11 @@ class OptionCandidatesTests(unittest.TestCase):
             self.assertTrue(math.isfinite(cand[key]), key)
 
     def test_read_only_options_routes(self):
-        source = (Path("scripts/agent_office.py")).read_text(encoding="utf-8")
-        self.assertIn('"/api/options"', source)
-        self.assertIn('"/options"', source)
+        source = Path("scripts/agent_office.py").read_text(encoding="utf-8")
+        self.assertIn('elif route == "/api/options":', source)
+        # A comment in agent_office.py once satisfied the old '"/options"' string
+        # assertion. Require the real dispatch line so the route cannot be faked.
+        self.assertIn('elif route == "/options":', source)
         self.assertNotIn("do_POST", source)
 
 

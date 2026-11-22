@@ -152,10 +152,13 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/market":
             body = (ROOT / "web/agent-office" / "market.html").read_bytes()
             mime = "text/html"
+        elif route == "/options":
+            body = (ROOT / "web/agent-office" / "options.html").read_bytes()
+            mime = "text/html"
         elif route == "/shell":
             body = (ROOT / "web/agent-office" / "shell.html").read_bytes()
             mime = "text/html"
-        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/shell", "/shell.js", "/shell_safety.js"):
+        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/shell", "/shell.js", "/shell_safety.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
             mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]
