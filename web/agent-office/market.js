@@ -10,6 +10,11 @@
   const noteEl = $('market-note');
   const symbolEl = $('market-symbol');
   const refreshEl = $('market-refresh');
+  const symbolsEl = $('market-symbols');
+
+  // Deep link: ?symbol=<SYM> seeds the text input instead of the HTML default value.
+  const linkedSymbol = new URLSearchParams(window.location.search).get('symbol');
+  if (linkedSymbol) symbolEl.value = linkedSymbol;
 
   // Colours mirror office.css tokens exactly; no new accent is introduced.
   const C = {
@@ -249,6 +254,38 @@
     if (current) draw(current); else clearChart();
   }
 
+  async function loadSymbols() {
+    if (!symbolsEl) return;
+    try {
+      const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(4000) : undefined;
+      const res = await fetch('/api/symbols', { signal });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (!data || data.status !== 'ok' || !Array.isArray(data.symbols)) throw new Error('bad payload');
+      for (const raw of data.symbols) {
+        const sym = text(raw).trim();
+        if (!sym) continue;
+        if (!/^[A-Z0-9._-]{1,8}$/.test(sym)) continue;
+        const opt = document.createElement('option');
+        opt.value = sym;
+        opt.textContent = sym;
+        symbolsEl.append(opt);
+      }
+      // Deep link: reflect the linked symbol in the picker only when it is a loaded option.
+      // Otherwise leave the placeholder selected (e.g. an ad-hoc/custom symbol).
+      if (linkedSymbol && Array.from(symbolsEl.options).some(o => o.value === linkedSymbol)) {
+        symbolsEl.value = linkedSymbol;
+      }
+    } catch (_) {
+      // Fail closed: keep only the placeholder and disable the picker; never fabricate symbols.
+      for (const opt of Array.from(symbolsEl.options)) {
+        if (opt.value !== '') opt.remove();
+      }
+      symbolsEl.disabled = true;
+    }
+  }
+
   async function load() {
     const raw = (symbolEl.value || '').trim().toUpperCase() || 'NVDA';
     symbolEl.value = raw;
@@ -278,8 +315,18 @@
   symbolEl.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); load(); }
   });
+  if (symbolsEl) {
+    symbolsEl.addEventListener('change', () => {
+      const sym = symbolsEl.value;
+      if (!sym) return;
+      symbolEl.value = sym;
+      load();
+      history.replaceState(null, '', '?symbol=' + encodeURIComponent(sym));
+    });
+  }
   window.addEventListener('resize', resize);
   if (typeof ResizeObserver === 'function') new ResizeObserver(resize).observe(canvas);
   resize();
   load();
+  loadSymbols();
 })();
