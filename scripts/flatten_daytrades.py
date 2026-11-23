@@ -46,6 +46,28 @@ def _today_records(today: str) -> list[dict]:
     return records
 
 
+def owned_quantity(rec: dict) -> Decimal | None:
+    """Explicit quantity recorded for this day trade; None when ambiguous."""
+    for key in ("quantity", "qty", "position_qty"):
+        raw = rec.get(key)
+        if raw is None:
+            continue
+        try:
+            value = Decimal(str(raw))
+        except Exception:  # noqa: BLE001 - malformed quantity is ambiguous
+            return None
+        return value if value > 0 else None
+    return None
+
+
+def sellable_quantity(rec: dict, held: Decimal) -> Decimal:
+    """Never sell more than the trade's own recorded quantity at the broker."""
+    owned = owned_quantity(rec)
+    if owned is None:
+        return Decimal("0")
+    return min(owned, held) if held > 0 else Decimal("0")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Flatten day-trade positions before the close.")
     p.add_argument("--check", action="store_true", help="report only; sell nothing")
@@ -76,6 +98,18 @@ def main(argv=None) -> int:
         if held <= 0:
             print(f"flatten_daytrades: {symbol} already flat")
             continue
+        owned = owned_quantity(rec)
+        if owned is None:
+            print(f"flatten_daytrades: {symbol} no owned quantity recorded — "
+                  f"refusing to sell the whole broker position")
+            continue
+        qty = sellable_quantity(rec, held)
+        if qty <= 0:
+            print(f"flatten_daytrades: {symbol} no owned quantity available at broker")
+            continue
+        if qty < held:
+            print(f"flatten_daytrades: {symbol} broker holds {held}, this trade owns {qty}; "
+                  f"leaving {held - qty} for its owning strategy")
         if args.check:
             print(f"flatten_daytrades: {symbol} still held {held} -> would flatten")
             continue
@@ -86,10 +120,10 @@ def main(argv=None) -> int:
             result = place_signal_order(
                 settings=settings, snapshot=None,
                 order=SignalOrder(symbol=symbol, side="sell",
-                                  quantity=held,
+                                  quantity=qty,
                                   limit_price=price.quantize(Decimal("0.01"))),
                 env_path=".env")
-            print(f"flatten_daytrades: {symbol} sell {held} @ {price} -> "
+            print(f"flatten_daytrades: {symbol} sell {qty} @ {price} -> "
                   f"{result['status']} (order {result['order_id']})")
             # The Slack alert is best-effort; its outcome is now recorded by
             # place_signal_order. A flatten the operator cannot see is a

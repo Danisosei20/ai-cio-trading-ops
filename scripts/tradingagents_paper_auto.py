@@ -190,7 +190,11 @@ def parse_args(argv=None):
                    help="scout file (default outputs/daytrade/<today ET>.json)")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # Desk policy: NVIDIA NIM only; never fall back to an OpenAI model.
+    if str(args.provider).strip().lower() == "openai":
+        p.error("OpenAI is not an approved desk provider (NVIDIA NIM only)")
+    return args
 
 
 def fetch_sp500() -> Sp500Snapshot:

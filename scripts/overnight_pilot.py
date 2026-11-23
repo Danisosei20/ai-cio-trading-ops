@@ -48,7 +48,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -72,6 +72,44 @@ ET = __import__("zoneinfo").ZoneInfo("America/New_York")
 
 ENTER_WINDOW = ("15:40", "15:55")
 EXIT_WINDOW = ("09:35", "10:00")
+
+
+def _window_bounds(window: tuple[str, str]) -> tuple[time, time]:
+    def parse(value: str) -> time:
+        hour, minute = (int(p) for p in value.split(":"))
+        return time(hour, minute)
+    return parse(window[0]), parse(window[1])
+
+
+def in_window(now: time, window: tuple[str, str]) -> bool:
+    """Inclusive check for an ET wall-clock window."""
+    start, end = _window_bounds(window)
+    return start <= now <= end
+
+
+def entries_state(result: dict, date: str, previous: dict | None = None) -> dict:
+    """Persist exit-consumable entries, merging with earlier in-window runs.
+
+    The exit path reads ``entry["symbol"]``; the planner emits ``ticker``.
+    Normalize here so a persisted entry can actually be sold, and never clobber
+    a prior record with an empty result.
+    """
+    normalized = []
+    for raw in result.get("entries", []):
+        item = dict(raw)
+        if "symbol" not in item and "ticker" in item:
+            item["symbol"] = item.pop("ticker")
+        if "symbol" in item:
+            normalized.append(item)
+    entries = list((previous or {}).get("entries", []))
+    seen = {json.dumps(e, sort_keys=True, default=str) for e in entries}
+    for item in normalized:
+        key = json.dumps(item, sort_keys=True, default=str)
+        if key not in seen:
+            entries.append(item)
+            seen.add(key)
+    return {"date": date, "entries": entries}
+
 STATE_FILE = Path("outputs/paper/overnight.json")
 
 # ---- Risk limits ----
@@ -444,6 +482,14 @@ def main(argv=None) -> int:
 
     if args.enter:
         result = {"mode": "enter", "entries": [], "blocks": []}
+        now_et = datetime.now(ET).time()
+        if not in_window(now_et, ENTER_WINDOW):
+            reason = f"outside overnight entry window {ENTER_WINDOW[0]}-{ENTER_WINDOW[1]} ET"
+            _log(f"{reason}; no entries")
+            result["blocks"].append({"ticker": "*", "direction": "long", "reason": reason})
+            # Do not touch persisted entries: a late/manual run must not erase
+            # the record the next morning's exit needs.
+            return result
         # Build candidate pool from all tickers
         candidates = []
         for ticker in tickers:
@@ -627,6 +673,8 @@ def main(argv=None) -> int:
             "scanned": len(candidates),
             "selected": len([e for e in result["entries"] if not e.get("dry_run")]),
         }
+        # Persist entries so the 09:35 exit can find what this run recorded.
+        _save_state(entries_state(result, today, _load_state()))
         return result
 
     # ── EXIT ──────────────────────────────────────────────────────────

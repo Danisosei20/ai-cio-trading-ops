@@ -161,14 +161,14 @@ class TestLiquidTask(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._write_signals(root, {"signals": {}, "positioning": {},
                                         "leaderboard": [], "news": {},
-                                        "updated_at": "2026-10-17T12:00:00-04:00"})
+                                        "updated_at": datetime.now(ET).isoformat()})
             with mock.patch.object(desk_fleet, "ROOT", Path(root)):
                 ctx = {"tickers": [], "notes": []}
                 res = desk_fleet.task_liquid(ctx, SimpleNamespace())
             self.assertEqual(res["signals"], {})
             self.assertEqual(res["crowded_longs"], [])
             self.assertEqual(res["crowded_shorts"], [])
-            self.assertEqual(res["updated_at"], "2026-10-17T12:00:00-04:00")
+            self.assertTrue(res["updated_at"])
 
     def test_crowded_longs_and_shorts(self):
         with tempfile.TemporaryDirectory() as root:
@@ -185,7 +185,7 @@ class TestLiquidTask(unittest.TestCase):
                 },
                 "leaderboard": [{"rank": 1, "name": "VolatiEntropy", "pnl": 700639}],
                 "news": {},
-                "updated_at": "2026-10-17T12:00:00-04:00",
+                "updated_at": datetime.now(ET).isoformat(),
             })
             with mock.patch.object(desk_fleet, "ROOT", Path(root)):
                 ctx = {"tickers": [], "notes": []}

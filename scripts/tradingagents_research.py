@@ -37,6 +37,12 @@ except (AttributeError, OSError):
     pass
 
 
+def artifact_dir(ticker: str, date: str, analysts: list[str]) -> Path:
+    """Analyst-tagged artifact directory so Research and News cannot collide."""
+    tag = "-".join(sorted(str(a) for a in analysts))[:60] or "none"
+    return Path("outputs/paper/tradingagents") / ticker / date / tag
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--ticker", required=True, help="e.g. NVDA, AAPL, SPY")
@@ -53,7 +59,12 @@ def parse_args(argv=None):
                    help="per-request LLM timeout in seconds (default 90; the SDK "
                         "default is 600 and one stalled call can hang a ticker)")
     p.add_argument("--no-save", action="store_true", help="don't write reports to outputs/")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # Desk policy (README, ADR 0001): NVIDIA NIM only. Reject OpenAI from any
+    # source — flag, .env or default — so a stray key can never switch models.
+    if str(args.provider).strip().lower() == "openai":
+        p.error("OpenAI is not an approved desk provider (NVIDIA NIM only)")
+    return args
 
 
 def _load_llm_env() -> None:
@@ -128,7 +139,7 @@ def main(argv=None) -> int:
     print(f"Decision: {decision}")
 
     if not args.no_save:
-        out_dir = Path("outputs/paper/tradingagents") / ticker / args.date
+        out_dir = artifact_dir(ticker, args.date, selected)
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "decision.json").write_text(json.dumps({
             "ticker": ticker,
