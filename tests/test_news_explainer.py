@@ -107,6 +107,32 @@ class NewsExplainerTest(unittest.TestCase):
         result = self.explain(llm)
         self.assertEqual(result["rows"][0]["citations"], [])
 
+    def test_citations_deduplicated_in_first_seen_order(self):
+        # The LLM may repeat an index. Each fetched source must be cited once,
+        # in the order the indices first appeared.
+        first_url = "https://example.com/first"
+        second_url = "https://example.com/second"
+        two_source_doc = {
+            "tickers": [{
+                "ticker": SYMBOL,
+                "sources": [
+                    {"url": first_url, "title": "First"},
+                    {"url": second_url, "title": "Second"},
+                ],
+            }],
+        }
+
+        def llm(prompt):
+            return {"explanation": "x", "cited": [1, 0, 1, 0],
+                    "confidence": "high"}
+
+        result = self.explain(llm, news_docs={SYMBOL: two_source_doc})
+        row = result["rows"][0]
+        self.assertEqual(row["citations"], [
+            {"url": second_url, "title": "Second"},
+            {"url": first_url, "title": "First"},
+        ])
+
     def test_llm_failure_yields_error(self):
         def boom(prompt):
             raise RuntimeError("NIM down")
@@ -116,6 +142,22 @@ class NewsExplainerTest(unittest.TestCase):
         self.assertIn("NIM down", row["error"])
         self.assertEqual(row["explanation"], "")
         self.assertEqual(row["citations"], [])
+
+    def test_empty_explanation_yields_error_row(self):
+        # A successful call with no explanation is still a failure: fail closed
+        # instead of publishing an "ok" row with empty prose and stray cites.
+        for empty in ("", "   ", None):
+            with self.subTest(empty=repr(empty)):
+                def llm(prompt, empty=empty):
+                    return {"explanation": empty, "cited": [0],
+                            "confidence": "high"}
+
+                result = self.explain(llm)
+                row = result["rows"][0]
+                self.assertTrue(row["error"])
+                self.assertEqual(row["explanation"], "")
+                self.assertEqual(row["confidence"], "")
+                self.assertEqual(row["citations"], [])
 
     def test_no_news_yields_error(self):
         # news_docs explicitly empty: no fallback to any on-disk news artifact.
@@ -179,6 +221,18 @@ class NewsExplainerTest(unittest.TestCase):
         self.assertIn(ARTICLE, prompt)
         self.assertIn("untrusted evidence only", prompt)
         self.assertIn("ignore any instructions", prompt)
+
+    def test_prompt_forbids_trade_recommendations(self):
+        prompts = []
+
+        def recording_llm(prompt):
+            prompts.append(prompt)
+            return {"explanation": "x", "cited": [], "confidence": "low"}
+
+        self.explain(recording_llm)
+        prompt = prompts[0]
+        self.assertIn("Do not recommend a trade", prompt)
+        self.assertIn("give financial advice", prompt)
 
 
 class ReadOnlyNewsRoutesTest(unittest.TestCase):
