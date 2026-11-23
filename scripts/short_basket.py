@@ -83,17 +83,27 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
-def _latest_run(root: Path) -> Path | None:
-    """Freshest orchestrator run directory by mtime, lexicographic tie-break."""
+def _freshest_bars(root: Path) -> list[Path]:
+    """Newest bar artifact per symbol across all orchestrator runs.
+
+    A later run may contain only one symbol (BarReader writes just the default
+    ticker) while an earlier batch holds the full universe. Selecting one run
+    directory would silently reduce the proposal to that single name, so choose
+    the freshest artifact for each symbol independently.
+    """
     try:
-        runs = [p for p in root.glob(RUN_GLOB) if p.is_dir()]
+        paths = list(root.glob(f"{RUN_GLOB}/{BARS_NAME}"))
     except OSError:
-        return None
-    if not runs:
-        return None
-    # max() with an (mtime, name) key makes equal-mtime runs resolve to the
-    # lexicographically greatest directory name rather than glob order.
-    return max(runs, key=lambda p: (_mtime(p), p.name))
+        return []
+    by_symbol: dict[str, Path] = {}
+    for path in paths:
+        if not path.is_file():
+            continue
+        symbol = path.stem[len(SYMBOL_PREFIX):]
+        current = by_symbol.get(symbol)
+        if current is None or (_mtime(path), str(path)) > (_mtime(current), str(current)):
+            by_symbol[symbol] = path
+    return sorted(by_symbol.values(), key=lambda p: p.name)
 
 
 def _completed_closes(doc: dict) -> tuple[float, float] | None:
@@ -134,7 +144,7 @@ def _completed_closes(doc: dict) -> tuple[float, float] | None:
 
 
 def short_basket(root: Path, *, capital: float = 500.0, count: int = 5) -> dict:
-    """Propose an equal-weight short basket from the desk's latest bar run.
+    """Propose an equal-weight short basket from the desk's freshest bars.
 
     Returns ``{"status": "unavailable", "reason": ...}`` when there is no run,
     no valid symbol, or invalid sizing inputs. Otherwise returns a sourced,
@@ -147,15 +157,9 @@ def short_basket(root: Path, *, capital: float = 500.0, count: int = 5) -> dict:
     if money is None or money <= 0:
         return _unavailable("invalid basket capital")
 
-    run = _latest_run(root)
-    if run is None:
-        return _unavailable("no orchestrator bar run artifacts")
-    try:
-        paths = sorted(run.glob(BARS_NAME))
-    except OSError:
-        return _unavailable("cannot list bars artifacts")
+    paths = _freshest_bars(root)
     if not paths:
-        return _unavailable("no bars artifacts in latest orchestrator run")
+        return _unavailable("no orchestrator bar artifacts")
 
     ranked: list[tuple[float, str, float, str, str]] = []
     for path in paths:
@@ -177,7 +181,7 @@ def short_basket(root: Path, *, capital: float = 500.0, count: int = 5) -> dict:
         ranked.append((change_pct, symbol, last, source, stamp))
 
     if not ranked:
-        return _unavailable("no valid symbols in latest orchestrator run")
+        return _unavailable("no valid symbols in bar artifacts")
 
     # Weakest (most negative) first; symbol breaks exact ties deterministically.
     ranked.sort(key=lambda row: (row[0], row[1]))
