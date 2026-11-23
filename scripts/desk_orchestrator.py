@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, replace
@@ -407,10 +408,24 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
 
     def run_stage(spec: StageSpec) -> StageReport:
         argv = [_resolve(arg, run_id=run_id, symbol=symbol) for arg in spec.argv]
-        # The stage argv names .py files; launch them with this interpreter so
-        # the same venv (and its dependencies) is used on Windows hosts.
+        # The stage argv names .py files. Research stages need the LLM-capable
+        # TradingAgents venv; when it is unavailable the fallback still runs and
+        # any resulting error artifact now fails the stage (see artifact_error).
         if argv and argv[0].endswith(".py"):
-            argv.insert(0, sys.executable)
+            interpreter = sys.executable
+            if getattr(spec, "python", "") == "tradingagents":
+                configured = os.environ.get("TRADINGAGENTS_VENV_PYTHON", "")
+                if configured:
+                    candidate = Path(configured)
+                    if not candidate.is_absolute():
+                        candidate = root / candidate
+                else:
+                    ta_venv = root.parent / "TradingAgents" / ".venv"
+                    candidate = ta_venv / ("Scripts/python.exe" if os.name == "nt"
+                                           else "bin/python")
+                if candidate.exists():
+                    interpreter = str(candidate)
+            argv.insert(0, interpreter)
         artifact = _resolve(spec.primary_artifact, run_id=run_id, symbol=symbol)
         try:
             proc = exec_cmd(argv, cwd=root, capture_output=True, text=True)

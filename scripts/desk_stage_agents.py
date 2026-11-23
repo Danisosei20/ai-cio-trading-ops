@@ -23,6 +23,7 @@ class StageSpec:
     primary_artifact: str
     required: bool
     allow_stale: bool
+    python: str = ""
 
 
 # The twelve registered stages, in execution order. ``<run_id>`` and
@@ -109,6 +110,7 @@ STAGES: tuple[StageSpec, ...] = (
         primary_artifact="outputs/paper/tradingagents/**/auto.json",
         required=True,
         allow_stale=False,
+        python="tradingagents",
     ),
     StageSpec(
         agent="BarReader",
@@ -141,6 +143,7 @@ STAGES: tuple[StageSpec, ...] = (
         primary_artifact="outputs/paper/tradingagents/**/auto.json",
         required=False,
         allow_stale=False,
+        python="tradingagents",
     ),
 )
 
@@ -172,6 +175,26 @@ def _parse_stamp(value: object) -> datetime | None:
     except ValueError:
         return None
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def artifact_error(doc: dict | None) -> str:
+    """Return the producer's recorded error text, or "" when healthy.
+
+    The research producer writes failed decisions as ``reason="error: ..."``;
+    other producers use an ``error`` key. A present artifact that says it
+    failed is not healthy evidence, even with a zero process exit.
+    """
+    if not isinstance(doc, dict):
+        return ""
+    value = doc.get("error")
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:200]
+    if isinstance(value, dict) and value:
+        return str(value)[:200]
+    reason = doc.get("reason")
+    if isinstance(reason, str) and reason.strip().lower().startswith("error:"):
+        return reason.strip()[:200]
+    return ""
 
 
 def is_stale(doc: dict | None, *, now_iso: str, mtime: float | None = None,
@@ -208,7 +231,8 @@ def normalize(spec: StageSpec, *, proc, artifacts: dict[str, dict | None],
     doc = artifacts.get(spec.primary_artifact)
     has_artifact = isinstance(doc, dict)
     exit_code = getattr(proc, "returncode", None)
-    ok = exit_code == 0 and has_artifact and bool(doc)
+    error_text = artifact_error(doc) if has_artifact else ""
+    ok = exit_code == 0 and has_artifact and bool(doc) and not error_text
     stale = ok and not spec.allow_stale and is_stale(
         doc, now_iso=now_iso, mtime=(mtimes or {}).get(spec.primary_artifact))
 
@@ -235,6 +259,8 @@ def normalize(spec: StageSpec, *, proc, artifacts: dict[str, dict | None],
                 break
         else:
             detail = "artifact present" if ok else "artifact empty"
+    if error_text:
+        detail = f"artifact error: {error_text}"
     if exit_code not in (0, None):
         detail = f"{detail} (exit {exit_code})"
     summary = f"{spec.role}: {detail}" if spec.role else detail
