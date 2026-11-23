@@ -152,6 +152,23 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode()
             body = payload
             mime = "application/json"
+        elif route == "/api/news":
+            # Read-only: newest explanation artifact, or a fail-closed doc.
+            # Task 2 writes these artifacts; this route never writes anything.
+            try:
+                pattern = ROOT / "outputs/news/explanations/*.json"
+                matches = sorted(pattern.parent.glob(pattern.name),
+                                 key=lambda p: (p.stat().st_mtime, str(p)))
+                if matches:
+                    payload = json.loads(matches[-1].read_text(encoding="utf-8"))
+                else:
+                    payload = {"status": "unavailable",
+                               "reason": "no news explanation artifact"}
+            except Exception:  # noqa: BLE001 - a broken artifact fails closed
+                payload = {"status": "unavailable",
+                           "reason": "no news explanation artifact"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"
@@ -167,6 +184,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = page.read_bytes()
             mime = "text/html"
+        elif route == "/news":
+            # Read-only page for source-cited news explanations. No write route.
+            page = ROOT / "web/agent-office" / "news.html"
+            if not page.is_file():
+                self.send_error(404)
+                return
+            body = page.read_bytes()
+            mime = "text/html"
         elif route == "/market":
             body = (ROOT / "web/agent-office" / "market.html").read_bytes()
             mime = "text/html"
@@ -176,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/shell":
             body = (ROOT / "web/agent-office" / "shell.html").read_bytes()
             mime = "text/html"
-        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/basket.js", "/shell", "/shell.js", "/shell_safety.js"):
+        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/basket.js", "/news.js", "/shell", "/shell.js", "/shell_safety.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
             mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]

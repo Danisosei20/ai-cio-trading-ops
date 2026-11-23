@@ -37,6 +37,18 @@ class ShellMarkupTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r'basket:\s*"/basket"', js)), 1)
         self.assertEqual(len(re.findall(r'basket:\s*"Basket"', js)), 1)
 
+    def test_news_nav_button_present(self):
+        html = Path("web/agent-office/shell.html").read_text(encoding="utf-8")
+        self.assertIn('data-view="news"', html)
+        self.assertIn(">News</button>", html)
+
+    def test_news_nav_is_unique(self):
+        html = Path("web/agent-office/shell.html").read_text(encoding="utf-8")
+        self.assertEqual(html.count('data-view="news"'), 1)
+        js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")
+        self.assertEqual(len(re.findall(r'news:\s*"/news"', js)), 1)
+        self.assertEqual(len(re.findall(r'news:\s*"News"', js)), 1)
+
 
 class ShellRouteTests(unittest.TestCase):
     def test_read_only_server(self):
@@ -75,4 +87,11 @@ class ShellBehaviorTests(unittest.TestCase):
         # gives it a human label. No other behavior should change.
         self.assertRegex(js, r'basket:\s*"/basket"')
         self.assertRegex(js, r'basket:\s*"Basket"')
+
+    def test_news_view_maps_to_read_only_page(self):
+        js = Path("web/agent-office/shell.js").read_text(encoding="utf-8")
+        # VIEW_SRC sends the tab to the read-only /news page; VIEW_TITLE
+        # gives it a human label. No other behavior should change.
+        self.assertRegex(js, r'news:\s*"/news"')
+        self.assertRegex(js, r'news:\s*"News"')
 

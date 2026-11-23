@@ -9,6 +9,7 @@ const VIEW_SRC = {
   overview: "/trading",
   options: "/options",
   basket: "/basket",
+  news: "/news",
 };
 
 const VIEW_TITLE = {
@@ -18,6 +19,7 @@ const VIEW_TITLE = {
   overview: "Overview",
   options: "Options",
   basket: "Basket",
+  news: "News",
 };
 
 const DEFAULT_VIEW = "office";
