@@ -159,11 +159,25 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     book = fetch_book()
+    had_positions = bool(book)
     if args.symbol:
         wanted = {s.upper() for s in args.symbol}
         book = [p for p in book if p["symbol"].upper() in wanted]
     if not book:
-        print("no open option positions to analyse")
+        # An empty result is a real, dated state, not a failed run. Write an
+        # empty snapshot so the stage has fresh evidence instead of a stale
+        # artifact describing positions the desk no longer holds. Be honest
+        # about whether the book was flat or the symbol filter matched none.
+        reason = ("no open option positions" if not had_positions
+                  else "no open option positions matching --symbol")
+        payload = {"generated_at": datetime.now(ET).isoformat(),
+                   "model": "delta+gamma+theta+vega first-order; missing Greeks are 0",
+                   "stop_pct": STOP_PCT,
+                   "reason": reason,
+                   "book": [], "scenarios": []}
+        OUT.parent.mkdir(parents=True, exist_ok=True)
+        OUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"no open option positions to analyse; wrote {OUT}")
         return 0
 
     rows = analyse(book)

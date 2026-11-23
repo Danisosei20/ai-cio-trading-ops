@@ -206,6 +206,17 @@ def main(argv=None) -> int:
         symbols = [str(p.get("symbol", "")) for p in backend.list_positions()
                    if len(str(p.get("symbol", ""))) > 10]
     if not symbols:
+        if args.book:
+            # A flat book is a real, dated state, not a failed run. Write an
+            # empty snapshot so the stage has fresh evidence instead of a
+            # stale artifact quoting odds for positions no longer held.
+            payload = {"generated_at": datetime.now(ET).isoformat(),
+                       "model": "delta-only GBM; gamma/vega/theta ignored",
+                       "reason": "no open option positions", "results": []}
+            OUT.parent.mkdir(parents=True, exist_ok=True)
+            OUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            print(f"no open option positions; wrote {OUT}")
+            return 0
         print("no symbols given (--symbol or --book)")
         return 2
 
