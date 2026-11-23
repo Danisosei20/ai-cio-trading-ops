@@ -185,8 +185,7 @@ class Handler(BaseHTTPRequestHandler):
             body = page.read_bytes()
             mime = "text/html"
         elif route == "/news":
-            # Page asset is delivered by the news-view task; fail closed if it
-            # is not present yet. No write route is added here.
+            # Read-only page for source-cited news explanations. No write route.
             page = ROOT / "web/agent-office" / "news.html"
             if not page.is_file():
                 self.send_error(404)
@@ -202,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/shell":
             body = (ROOT / "web/agent-office" / "shell.html").read_bytes()
             mime = "text/html"
-        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/basket.js", "/shell", "/shell.js", "/shell_safety.js"):
+        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/basket.js", "/news.js", "/shell", "/shell.js", "/shell_safety.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
             mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]

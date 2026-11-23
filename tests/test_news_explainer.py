@@ -83,7 +83,9 @@ class NewsExplainerTest(unittest.TestCase):
             return {"explanation": "A slowdown", "cited": [0],
                     "confidence": "high"}
 
-        result = self.explain(llm)
+        # No injection: the on-disk dossier is the evidence, so its path is
+        # named verbatim in sources.
+        result = explain_moves(self.root, [SYMBOL], call_llm=llm)
         row = result["rows"][0]
         self.assertEqual(row["symbol"], SYMBOL)
         self.assertEqual(row["explanation"], "A slowdown")
@@ -122,6 +124,37 @@ class NewsExplainerTest(unittest.TestCase):
         self.assertEqual(row["explanation"], "")
         self.assertTrue(row["error"])
         self.assertEqual(row["citations"], [])
+
+    def test_injected_doc_uses_injected_source_not_disk_path(self):
+        # An injected dossier is the evidence, even when another dossier is on
+        # disk: the provenance string must name the actual evidence.
+        injected = {
+            "tickers": [{
+                "ticker": SYMBOL,
+                "sources": [{"url": "https://example.com/injected", "title": "Injected"}],
+            }],
+        }
+        result = self.explain(self.ok_llm, news_docs={SYMBOL: injected})
+        row = result["rows"][0]
+        self.assertIn(f"news_docs[{SYMBOL}]", row["sources"])
+        self.assertNotIn(str(self.news_path.relative_to(self.root)), row["sources"])
+
+    def test_doc_without_sources_yields_error_without_llm(self):
+        # A dossier with no usable sources is no news: never ask the LLM to
+        # invent an explanation from an empty evidence block.
+        calls = []
+
+        def llm(prompt):
+            calls.append(prompt)
+            return {"explanation": "invented", "cited": [0], "confidence": "high"}
+
+        empty_doc = {"tickers": [{"ticker": SYMBOL, "sources": []}]}
+        result = self.explain(llm, news_docs={SYMBOL: empty_doc})
+        row = result["rows"][0]
+        self.assertEqual(calls, [])
+        self.assertEqual(row["explanation"], "")
+        self.assertEqual(row["citations"], [])
+        self.assertIn("news", row["error"])
 
     def test_no_bars_yields_error(self):
         self.bars_path.unlink()

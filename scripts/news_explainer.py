@@ -264,12 +264,23 @@ def explain_moves(root: Path, symbols: list[str], *,
             sources.append(_rel(root, bar_path))
 
         disk_doc, disk_path = _news_on_disk(root, symbol)
-        doc = news_docs.get(symbol) if news_docs is not None else disk_doc
-        if doc and disk_path is not None:
-            sources.append(_rel(root, disk_path))
-        elif doc:
-            sources.append(f"news_docs[{symbol}]")
+        if news_docs is None:
+            injected = False
+            doc = disk_doc
+        else:
+            # An explicit mapping is authoritative: no silent disk fallback.
+            injected = symbol in news_docs
+            doc = news_docs.get(symbol)
+        if not isinstance(doc, dict):
+            doc = None
+        if doc:
+            if injected and doc is not disk_doc:
+                # The injected dossier is the evidence, not any stale file.
+                sources.append(f"news_docs[{symbol}]")
+            elif disk_path is not None:
+                sources.append(_rel(root, disk_path))
 
+        evidence = _doc_sources(doc, symbol) if doc else []
         row = {
             "symbol": symbol,
             "move_pct": move,
@@ -283,8 +294,11 @@ def explain_moves(root: Path, symbols: list[str], *,
             row["error"] = f"no bar artifact for {symbol}"
         elif not doc:
             row["error"] = f"no news artifact for {symbol}"
+        elif not evidence:
+            # An empty evidence block must never reach the LLM: it can only
+            # produce an invented explanation and fabricated citations.
+            row["error"] = f"no news sources for {symbol}"
         else:
-            evidence = _doc_sources(doc, symbol)
             try:
                 result = llm(_prompt(symbol, move, evidence))
                 if not isinstance(result, dict):

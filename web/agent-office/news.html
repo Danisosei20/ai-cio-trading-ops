@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a0f14">
+<title>News — Nextus</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/office.css">
+<style>
+  /* Page layout reuses the premium office.css tokens. No new accent colour. */
+  main.news-main {
+    display: block;
+    min-height: calc(100svh - 107px);
+    padding: 24px 26px 30px;
+  }
+  .news-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-right: 4px;
+  }
+  .back-link {
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .back-link:hover { color: var(--ink); border-color: #3a5663; background: var(--surface-2); }
+  .news-heading { margin-bottom: 16px; }
+  .news-heading .eyebrow { margin-bottom: 8px; }
+  #news-status {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 9px 0 0;
+    min-height: 17px;
+  }
+  .news-banner {
+    font: 600 11px/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: .04em;
+    color: var(--warm);
+    background: var(--accent-soft);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    margin: 0 0 18px;
+  }
+  .news-list { display: grid; gap: 14px; }
+  .news-card {
+    min-width: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 15px 16px;
+  }
+  .news-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .news-symbol {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    color: var(--ink);
+  }
+  .news-move {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+  .news-confidence {
+    font: 600 10px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-left: auto;
+  }
+  .news-explanation {
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--ink);
+    margin: 12px 0 10px;
+    overflow-wrap: anywhere;
+  }
+  .news-error {
+    font: 11px/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    color: var(--danger);
+    margin: 0 0 10px;
+    overflow-wrap: anywhere;
+  }
+  .news-label {
+    font: 600 10px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .news-citations, .news-sources { margin-top: 10px; }
+  .news-cite-list {
+    margin: 6px 0 0;
+    padding-left: 20px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .news-cite-list li { margin: 3px 0; overflow-wrap: anywhere; }
+  .news-cite-list a { color: var(--accent); text-decoration: none; }
+  .news-cite-list a:hover { text-decoration: underline; }
+  .news-none, .news-unsafe { color: var(--faint); font-style: italic; }
+  .news-source-list {
+    font: 10px/1.6 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    color: var(--faint);
+    margin-top: 5px;
+    overflow-wrap: anywhere;
+  }
+  .news-empty-text {
+    font-size: 11.5px;
+    color: var(--faint);
+    font-style: italic;
+    margin: 0;
+  }
+  #news-note {
+    font-size: 10px;
+    color: var(--faint);
+    line-height: 1.6;
+    margin: 14px 0 0;
+    overflow-wrap: anywhere;
+  }
+</style>
+</head>
+<body class="news">
+<header>
+  <a class="brand" href="/" aria-label="Nextus home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 7v13l-13 7L3 23V10Z M3 10l13 7 13-7 M16 17v13 M9 7l14 7"/></svg>
+    <span class="brand-word">Nextus<small>Trading intelligence office</small></span>
+  </a>
+  <div class="controls">
+    <span class="news-title">News</span>
+    <a id="news-back" class="back-link" href="/">← Office</a>
+  </div>
+</header>
+
+<main class="news-main">
+  <div class="news-heading">
+    <div class="title-block">
+      <span class="eyebrow">Read-only · every explanation sourced from a desk artifact</span>
+      <h1>AI news analysis</h1>
+      <p id="news-status" role="status">Connecting to desk artifacts…</p>
+    </div>
+  </div>
+
+  <p class="news-banner" role="note">AI news analysis · sources cited · no trade recommendations</p>
+
+  <div id="news-list" class="news-list" aria-label="Source-cited explanations">
+    <article class="news-card">
+      <p class="news-empty-text">Waiting for data</p>
+    </article>
+  </div>
+
+  <p id="news-note">Sources will appear here once an explanation loads. Missing or unreadable artifacts show “data unavailable” — never an invented explanation or trade recommendation.</p>
+</main>
+
+<footer>
+  <span><i></i> Read-only viewer — never places orders</span>
+  <span>Explanations are research only, built from local bar artifacts and fetched articles.</span>
+</footer>
+
+<script src="/news.js"></script>
+</body>
+</html>
