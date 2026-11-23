@@ -17,6 +17,7 @@ from scripts import desk_safety_status  # noqa: E402
 from scripts.market_state import market_payload, universe_symbols  # noqa: E402
 from scripts.options_candidates import option_candidates  # noqa: E402
 from scripts.office_state import snapshot  # noqa: E402
+from scripts.short_basket import short_basket  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 SESSION_START = "10:15"
@@ -122,6 +123,14 @@ class Handler(BaseHTTPRequestHandler):
                 payload = {"status": "unavailable", "reason": "option candidates unavailable"}
             body = json.dumps(payload).encode()
             mime = "application/json"
+        elif route == "/api/basket":
+            # Signal-only proposal; a broken reader fails closed. No write route.
+            try:
+                payload = short_basket(ROOT)
+            except Exception:  # noqa: BLE001 — a broken reader fails closed
+                payload = {"status": "unavailable", "reason": "basket signal unavailable"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/api/market":
             query = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
             symbol = query.get("symbol", ["NVDA"])[0].strip().upper()
@@ -149,6 +158,15 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/pipeline":
             body = (ROOT / "web/agent-office" / "pipeline.html").read_bytes()
             mime = "text/html"
+        elif route == "/basket":
+            # The page asset is delivered by the basket-view task; fail closed
+            # with a 404 rather than crashing the viewer if it is not present.
+            page = ROOT / "web/agent-office" / "basket.html"
+            if not page.is_file():
+                self.send_error(404)
+                return
+            body = page.read_bytes()
+            mime = "text/html"
         elif route == "/market":
             body = (ROOT / "web/agent-office" / "market.html").read_bytes()
             mime = "text/html"
@@ -158,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/shell":
             body = (ROOT / "web/agent-office" / "shell.html").read_bytes()
             mime = "text/html"
-        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/shell", "/shell.js", "/shell_safety.js"):
+        elif route in ("/", "/office.js", "/office.css", "/scene.js", "/market.js", "/options.js", "/basket.js", "/shell", "/shell.js", "/shell_safety.js"):
             name = "index.html" if route == "/" else route[1:]
             body = (ROOT / "web/agent-office" / name).read_bytes()
             mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]

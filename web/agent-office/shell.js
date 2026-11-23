@@ -8,6 +8,7 @@ const VIEW_SRC = {
   pipeline: "/pipeline",
   overview: "/trading",
   options: "/options",
+  basket: "/basket",
 };
 
 const VIEW_TITLE = {
@@ -16,6 +17,7 @@ const VIEW_TITLE = {
   pipeline: "Pipeline",
   overview: "Overview",
   options: "Options",
+  basket: "Basket",
 };
 
 const DEFAULT_VIEW = "office";
