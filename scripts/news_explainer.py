@@ -201,7 +201,10 @@ def _default_call_llm(root: Path):
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "max_tokens": 700,
+            # This NIM model is a reasoning model: it can spend thousands of
+            # tokens on reasoning_content before emitting the JSON answer.
+            # A small budget truncates it to content=None (no parseable result).
+            "max_tokens": 8192,
         }
         req = urllib.request.Request(
             NIM_URL,
