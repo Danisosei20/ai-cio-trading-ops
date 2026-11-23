@@ -56,6 +56,12 @@
     padding: 9px 12px;
     margin: 0 0 18px;
   }
+  .basket-validation {
+    font: 11px/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    color: var(--muted);
+    margin: -10px 0 18px;
+    max-width: 70ch;
+  }
   .basket-panel {
     min-width: 0;
     background: var(--surface);
@@ -141,6 +147,7 @@
   </div>
 
   <p class="basket-banner" role="note">Signal only — no orders placed</p>
+  <p class="basket-validation" role="note">Not validated as profitable: walk-forward testing won 11 of 23 windows with a +1.5% average edge, and the result reverses with small parameter changes. This is a research proposal, not a trading edge.</p>
 
   <section class="basket-panel" aria-label="Short-basket proposal">
     <h2>Proposal</h2>
