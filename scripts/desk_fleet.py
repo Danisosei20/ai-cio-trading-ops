@@ -117,9 +117,21 @@ def _run(ctx: dict, name: str, cmd: list[str], timeout: int = 1800):
     return proc
 
 
+def _llm_answer(station: str, evidence: list[dict]) -> dict:
+    """Attach one fail-closed LLM interpretation; never crash the fleet."""
+    try:
+        from scripts.fleet_llm import fleet_llm
+        doc = fleet_llm(ROOT, station, evidence)
+    except Exception as exc:  # noqa: BLE001 - research failure never crashes the fleet
+        return {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    return {"status": doc.get("status"), "artifact": doc.get("artifact", ""),
+            "reason": doc.get("reason", "")}
+
+
 def task_screen(ctx: dict, args) -> dict:
     """Agent 1 (deterministic): run the screener, publish today's shortlist."""
     out = ROOT / "outputs/screener/latest.json"
+    data = {}
     cmd = [_python(), "scripts/universe_screen.py",
            "--top", str(max(args.task_top, 1) * 5), "--out", str(out)]
     proc = _run(ctx, "screen", cmd)
@@ -132,7 +144,13 @@ def task_screen(ctx: dict, args) -> dict:
         except Exception as exc:  # noqa: BLE001 - report, never crash the fleet
             ctx["notes"].append(f"screen parse failed: {type(exc).__name__}")
     ctx["tickers"] = tickers
-    return {"returncode": proc.returncode, "count": len(tickers), "tickers": tickers}
+    result = {"returncode": proc.returncode, "count": len(tickers), "tickers": tickers}
+    result["llm"] = (
+        _llm_answer("screen", [
+            {"label": "screener", "date": str(data.get("date", "")),
+             "ranked": data.get("ranked", [])[:10]}])
+        if data else {"status": "unavailable", "reason": "no evidence"})
+    return result
 
 
 def _research(ctx: dict, args, name: str, extra: list[str], tag: str,
@@ -208,7 +226,8 @@ def task_liquid(ctx: dict, args) -> dict:
         ctx["notes"].append("liquid: no signals file — run liquid_signals refresh")
         return {"signals": {}, "crowded_longs": [], "crowded_shorts": [],
                 "leaderboard": [], "positioning": {}, "news": {},
-                "note": "no liquid signals file"}
+                "note": "no liquid signals file",
+                "llm": {"status": "unavailable", "reason": "no evidence"}}
     signals = data.get("signals", {})
     positioning = data.get("positioning", {})
     leaderboard = data.get("leaderboard", [])
@@ -218,7 +237,7 @@ def task_liquid(ctx: dict, args) -> dict:
         f"liquid: {len(crowded_longs)} crowded longs / {len(crowded_shorts)} crowded shorts "
         f"| {len(leaderboard)} leaders tracked"
     )
-    return {
+    result = {
         "signals": signals,
         "crowded_longs": crowded_longs,
         "crowded_shorts": crowded_shorts,
@@ -227,6 +246,11 @@ def task_liquid(ctx: dict, args) -> dict:
         "news": data.get("news", {}),
         "updated_at": data.get("updated_at"),
     }
+    result["llm"] = _llm_answer("liquid", [
+        {"label": "crowding", "longs": crowded_longs, "shorts": crowded_shorts},
+        {"label": "leaderboard", "leaders": leaderboard[:5]},
+        {"label": "signals", "signals": signals}])
+    return result
 
 
 def task_bijective(ctx: dict, args) -> dict:
@@ -378,7 +402,9 @@ def task_verify(ctx: dict, args) -> dict:
     ok = all(v for v in checks.values() if isinstance(v, bool))
     if not ok:
         ctx["notes"].append("verify: one or more checks failed")
-    return {"ok": ok, "checks": checks}
+    result = {"ok": ok, "checks": checks}
+    result["llm"] = _llm_answer("verify", [{"label": "checks", "checks": checks}])
+    return result
 
 
 def task_report(ctx: dict, args) -> dict:
@@ -408,7 +434,11 @@ def task_report(ctx: dict, args) -> dict:
             send(f"*Fleet report*\n{line}")
         except Exception as exc:  # noqa: BLE001
             print(f"slack failed: {exc}")
-    return {"summary": str(path), "line": line}
+    result = {"summary": str(path), "line": line}
+    result["llm"] = _llm_answer("report", [
+        {"label": "fleet", "date": summary["date"], "tasks": summary["tasks"],
+         "tickers": summary["tickers"], "notes": summary["notes"][:10]}])
+    return result
 
 
 TASKS = {
