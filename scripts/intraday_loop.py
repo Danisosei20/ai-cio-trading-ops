@@ -42,6 +42,7 @@ TRADED_FILE = ROOT / "outputs" / "daytrade" / "traded_setups.json"
 SCOUT_SCRIPT = ROOT / "scripts" / "daytrade_scout.py"
 AUTO_SCRIPT = ROOT / "scripts" / "tradingagents_paper_auto.py"
 FLATTEN_SCRIPT = ROOT / "scripts" / "flatten_daytrades.py"
+LATEST_DECISION = ROOT / "outputs" / "orchestrator" / "latest.json"
 TA_PY = Path(os.environ.get("TA_PY", "")) or (ROOT.parent / "TradingAgents" / ".venv" / "Scripts" / "python.exe")
 
 
@@ -88,6 +89,36 @@ def _market_open() -> bool:
             return bool(_j.loads(resp.read()).get("is_open", False))
     except Exception:
         return True  # fail open: assume open if we can't check
+
+
+def desk_verdict(root: Path = ROOT, *, now: datetime | None = None) -> tuple[bool, str]:
+    """Return (may_trade, reason) from today's recorded orchestrator verdict.
+
+    Fail closed: a missing, unreadable, malformed or stale decision, or any
+    verdict other than ``proceed``, blocks orders. A verdict from an earlier
+    ET date never authorises a later session. ``--force`` does not bypass this.
+    """
+    now = now or datetime.now(ET)
+    try:
+        doc = json.loads((root / "outputs/orchestrator/latest.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return False, "no readable orchestrator decision"
+    if not isinstance(doc, dict):
+        return False, "malformed orchestrator decision"
+    stamp = str(doc.get("generated_at") or "")
+    if not stamp:
+        return False, "decision has no timestamp"
+    try:
+        decided = datetime.fromisoformat(stamp).astimezone(ET).date()
+    except (ValueError, TypeError):
+        return False, "unreadable decision timestamp"
+    if decided != now.date():
+        return False, f"decision is from {decided}, not today"
+    verdict = str(doc.get("verdict") or "")
+    if verdict != "proceed":
+        return False, f"verdict is {verdict or 'missing'}"
+    return True, "proceed"
 
 
 def _parse_time(s: str) -> datetime:
@@ -255,7 +286,11 @@ def main(argv=None) -> int:
                             stop_price=s.get("or_low", 0),
                             client_order_id=f"{s['ticker']}:{today}:{s['setup']}")
                         sm.transition(trade.id, TradeState.SIGNAL_FOUND, "scout detected setup")
-                if not args.dry_run:
+                allowed, why = desk_verdict(ROOT)
+                if not args.dry_run and not allowed:
+                    _log(f"order gate blocked ({why}); no orders for {new_tickers}")
+                elif not args.dry_run:
+                    _log(f"order gate open ({why}); judging {new_tickers}")
                     run_judge(new_tickers)
                     # Record traded setups
                     today = datetime.now(ET).date().isoformat()
