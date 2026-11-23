@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 MODEL = os.environ.get("FLEET_LLM_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
 NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+KEY_ENV = "NVIDIA_API_KEY"
 STATIONS = ("screen", "research", "news", "liquid", "verify", "report")
 
 STATION_RULES = {
@@ -40,13 +41,13 @@ EVIDENCE_RULE = (
 
 
 def _api_key(root: Path) -> str:
-    key = os.environ.get("NVIDIA_API_KEY", "").strip()
+    key = os.environ.get(KEY_ENV, "").strip()
     if key:
         return key
     dotenv = root.parent / "TradingAgents" / ".env"
     try:
         for line in dotenv.read_text(encoding="utf-8").splitlines():
-            if line.startswith("NVIDIA_API_KEY="):
+            if line.startswith(KEY_ENV + "="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
         pass
