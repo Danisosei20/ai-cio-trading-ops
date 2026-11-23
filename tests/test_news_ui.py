@@ -67,7 +67,14 @@ class NewsUITests(unittest.TestCase):
 
     def test_news_renderer_has_no_animation_loop(self):
         js = JS.read_text(encoding="utf-8")
-        for token in ("setInterval", "requestAnimationFrame"):
+        self.assertNotIn("requestAnimationFrame", js)
+
+    def test_news_refresh_is_bounded_and_get_only(self):
+        js = JS.read_text(encoding="utf-8")
+        for token in ("setInterval", "30000", "document.hidden", "inFlight",
+                      "AbortSignal.timeout", "fetch('/api/news'"):
+            self.assertIn(token, js)
+        for token in ("do_POST", "method: 'POST'", "method: \"POST\""):
             self.assertNotIn(token, js)
 
     def test_fetch_is_bounded_and_fails_closed(self):
