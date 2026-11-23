@@ -100,13 +100,19 @@ def _completed_closes(doc: dict) -> tuple[float, float] | None:
     """(first session's first close, last session's last close), or None.
 
     Bars are grouped by their session date and only sessions strictly before
-    the artifact's generation date count as completed. Both ends must be
-    finite and positive; anything else makes the symbol unusable.
+    the artifact's generation date count as completed. A document without a
+    valid generation date is unusable. Both ends must be finite and positive;
+    anything else makes the symbol unusable.
     """
     bars = doc.get("bars")
     if not isinstance(bars, list) or not bars:
         return None
     cutoff = _date_prefix(doc.get("generated_at"))
+    if not cutoff:
+        # Fail closed: without a generation date there is no cutoff, so the
+        # session filter below would be skipped and partial/future bars could
+        # leak in. Such a document must be excluded, not treated as complete.
+        return None
     sessions: dict[str, list[tuple[str, float]]] = {}
     for bar in bars:
         if not isinstance(bar, dict):

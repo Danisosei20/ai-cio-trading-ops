@@ -69,6 +69,24 @@ class ShortBasketTests(unittest.TestCase):
         self.assertEqual(payload["status"], "unavailable")
         self.assertIn("reason", payload)
 
+    def test_excludes_bars_doc_missing_generated_at(self):
+        # Without a generation stamp the bars cannot prove their sessions
+        # predate the artifact, so the symbol must never enter the basket.
+        self._write(f"outputs/orchestrator/{RUN}/bars_A.json", {
+            "symbol": "A",
+            "bars": _bars({DAY1: [100], DAY2: [80]}),
+            "source": "yfinance",
+        })
+        payload = short_basket(self.root)
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertIn("reason", payload)
+
+    def test_excludes_bars_doc_with_malformed_generated_at(self):
+        self._seed_bars("A", {DAY1: [100], DAY2: [80]}, generated_at="not-a-date")
+        payload = short_basket(self.root)
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertIn("reason", payload)
+
     def test_rank_by_weakness(self):
         self._seed_bars("A", {DAY1: [100], DAY2: [80]})
         self._seed_bars("B", {DAY1: [100], DAY2: [95]})
