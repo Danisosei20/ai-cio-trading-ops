@@ -1,12 +1,17 @@
 /* Nextus news view: read-only renderer for AI news explanations.
-   One render per snapshot — no animation loop, no scanner, no order entry,
-   no gate change. All values arrive as untrusted text from a local artifact. */
+   Refreshes the latest sourced snapshot every 30s while the tab is visible.
+   No animation loop, no scanner, no order entry, no gate change. All values
+   arrive as untrusted text from a local artifact. */
 (() => {
   const $ = id => document.getElementById(id);
   const statusEl = $('news-status');
   const listEl = $('news-list');
   const noteEl = $('news-note');
   if (!statusEl || !listEl || !noteEl) return;
+
+  // A refresh never overlaps another; a failed refresh fails closed and the
+  // next tick retries, so a transient error cannot leave a stale snapshot up.
+  let inFlight = false;
 
   const text = v => (v === null || v === undefined ? '' : String(v));
   const finite = v => (v === null || v === undefined || v === ''
@@ -123,6 +128,8 @@
   }
 
   async function load() {
+    if (inFlight) return;
+    inFlight = true;
     statusEl.textContent = 'Loading AI news analysis\u2026';
     try {
       const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
@@ -136,13 +143,20 @@
       }
       const rows = data.rows;
       statusEl.textContent = rows.length + ' explanation' + (rows.length === 1 ? '' : 's')
-        + ' \u00b7 sources cited \u00b7 no trade recommendations';
+        + ' \u00b7 sources cited \u00b7 no trade recommendations \u00b7 auto-refresh';
       renderRows(rows);
       renderNote(data);
     } catch (_) {
       unavailable();
+    } finally {
+      inFlight = false;
     }
   }
 
   load();
+  // GET-only, bounded, visible-only. A failed tick fails closed and retries.
+  setInterval(() => {
+    if (document.hidden || inFlight) return;
+    load();
+  }, 30000);
 })();
