@@ -284,6 +284,7 @@ def _watch_entries(regime: str, *, weak: list[dict], ranked: list[dict],
         with fake_zone_analysis(), \
                 patched_attrs(owt, run=_dry_run_pilot,
                               held_underliers=lambda env_file: held,
+                              open_order_underliers=lambda env_file=None: set(),
                               _regime=lambda: regime), \
                 redirect_stdout(out):
             owt.main(argv)

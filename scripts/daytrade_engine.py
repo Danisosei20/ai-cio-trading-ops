@@ -707,6 +707,15 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
     return result
 
 
+def _flatten_eligible(trade) -> bool:
+    """Only intraday-owned trades may be sold by the 15:45 day-trade flatten.
+
+    Overnight positions have their own 09:35 exit and must never be liquidated
+    by the day-trade engine's end-of-day flatten.
+    """
+    return str(getattr(trade, "strategy", "") or "").lower() != "overnight"
+
+
 def manage_exits(dry_run: bool = False) -> dict:
     """Manage open positions: trailing stops, profit targets, time exits.
 
@@ -745,6 +754,8 @@ def manage_exits(dry_run: bool = False) -> dict:
         exit_reason = ""
 
         if flatten:
+            if not _flatten_eligible(trade):
+                continue
             should_exit = True
             exit_reason = "end of day flatten"
         elif direction == "long":

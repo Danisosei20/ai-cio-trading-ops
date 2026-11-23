@@ -31,6 +31,7 @@ import logging
 from typing import Callable, Optional
 
 import websockets
+import websockets.exceptions  # noqa: F401 - binds the exceptions submodule for websockets>=14
 
 logger = logging.getLogger(__name__)
 
@@ -156,36 +157,101 @@ class RealtimeStream:
     async def _run_loop(self) -> None:
         """Main message processing loop with reconnection."""
         self._running = True
-        while self._running:
+        needs_connect = True
+        try:
+            while self._running:
+                try:
+                    if needs_connect:
+                        await self._connect()
+                        logger.info("Connected to Alpaca data stream")
+                        self._reconnect_count = 0
+                        self._connected = True
+                    # A successful _reconnect() already owns a live socket.
+                    needs_connect = True
+                    async for message in self._websocket:
+                        if not self._running:
+                            break
+                        data = json.loads(message)
+                        await self._handle_message(data)
+                except websockets.exceptions.ConnectionClosed as exc:
+                    logger.warning(
+                        f"WebSocket connection closed: code={exc.code}, reason={exc.reason}")
+                    self._connected = False
+                    if not self._running or not await self._reconnect():
+                        break
+                    needs_connect = False
+                except Exception as exc:
+                    logger.error(f"WebSocket error: {exc}")
+                    self._connected = False
+                    if not self._running or not await self._reconnect():
+                        break
+                    needs_connect = False
+        finally:
+            self._connected = False
+            if self._websocket:
+                try:
+                    await self._websocket.close()
+                except Exception:  # noqa: BLE001 - teardown is best-effort
+                    pass
+
+    async def _reconnect(self) -> bool:
+        """Reconnect with bounded exponential backoff, then reconcile state.
+
+        Returns True on a successful reconnect. On exhaustion the stream stops
+        (``_running = False``) rather than looping forever on a dead endpoint.
+        """
+        if self._websocket:
+            try:
+                await self._websocket.close()
+            except Exception:  # noqa: BLE001 - old socket may already be dead
+                pass
+            self._websocket = None
+        attempt = 0
+        while self._running and attempt < self.max_reconnect_attempts:
+            attempt += 1
+            self._reconnect_count = attempt
+            delay = min(self.reconnect_base_delay * (2 ** (attempt - 1)), 30.0)
+            logger.warning(
+                "Reconnect attempt %d/%d in %.2fs",
+                attempt, self.max_reconnect_attempts, delay,
+            )
+            await asyncio.sleep(delay)
             try:
                 await self._connect()
-                logger.info("Connected to Alpaca data stream")
-                self._reconnect_count = 0
+            except Exception as exc:  # noqa: BLE001 - retry any transport failure
+                logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
+                continue
 
-                async for message in self._websocket:
-                    if not self._running:
-                        break
-                    data = json.loads(message)
-                    await self._handle_message(data)
-            except websockets.exceptions.ConnectionClosed as exc:
-                logger.warning(
-                    f"WebSocket connection closed: code={exc.code}, reason={exc.reason}"
-                )
-                self._connected = False
-                if self._running:
-                    await self._reconnect()
-            except Exception as exc:
-                logger.error(f"WebSocket error: {exc}")
-                self._connected = False
-                if self._running:
-                    await self._reconnect()
-            finally:
-                self._connected = False
-                if self._websocket:
-                    try:
-                        await self._websocket.close()
-                    except Exception:
-                        pass
+            self._reconnect_count = 0
+            self._connected = True
+            await self._resubscribe()
+            await self._notify_reconnect()
+            return True
+
+        logger.error("Reconnect exhausted %d attempts; stopping stream",
+                     self.max_reconnect_attempts)
+        self._running = False
+        return False
+
+    async def _resubscribe(self) -> None:
+        """Re-send channel subscriptions after a reconnect, if any exist."""
+        if not self._subscribed_symbols or not self._websocket:
+            return
+        try:
+            await self._send_subscription()
+        except Exception as exc:  # noqa: BLE001 - reconnect will retry
+            logger.warning("Resubscribe failed: %s", exc)
+
+    async def _notify_reconnect(self) -> None:
+        """Run the operator-supplied post-reconnect reconciliation callback."""
+        if self.on_reconnect is None:
+            return
+        try:
+            result = self.on_reconnect()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 - never kill the stream on reconcile failure
+            logger.error("Post-reconnect reconciliation callback failed: %s", exc)
 
     async def _handle_message(self, data: list[dict] | dict) -> None:
         """Handle incoming WebSocket message."""

@@ -34,8 +34,11 @@ def load_tradingagents(root: Path) -> list[dict]:
         for date_dir in sorted(ticker_dir.iterdir()):
             if not date_dir.is_dir():
                 continue
-            for name in ("auto.json", "decision.json"):
-                f = date_dir / name
+            files = [date_dir / "auto.json"]
+            # Analyst-tagged research decisions live one level deeper.
+            files += sorted(date_dir.glob("*/decision.json"))
+            files.append(date_dir / "decision.json")
+            for f in files:
                 if not f.exists():
                     continue
                 try:
@@ -44,7 +47,7 @@ def load_tradingagents(root: Path) -> list[dict]:
                     continue
                 d.setdefault("ticker", ticker_dir.name)
                 d.setdefault("date", date_dir.name)
-                d["_file"] = name
+                d["_file"] = f.name
                 rows.append(d)
     rows.sort(key=lambda r: (r.get("date", ""), r.get("ticker", "")), reverse=True)
     return rows[:50]

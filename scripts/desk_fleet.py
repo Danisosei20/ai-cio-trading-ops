@@ -40,6 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parents[1]
+# Fail-closed freshness windows for sourced station evidence.
+SCREEN_MAX_AGE_MINUTES = 60
+LIQUID_MAX_AGE_MINUTES = 30
 # TradingAgents venv interpreter. Keep the macOS source-machine path as the
 # default for backwards compatibility; set TRADINGAGENTS_VENV_PYTHON (e.g. to
 # TradingAgents/.venv/Scripts/python.exe on Windows) to override per machine.
@@ -117,6 +120,34 @@ def _run(ctx: dict, name: str, cmd: list[str], timeout: int = 1800):
     return proc
 
 
+def _evidence_age_ok(doc: dict, *, field: str, max_age_minutes: int,
+                     date_field: str | None = None) -> bool:
+    """True only when a dated artifact is current. Missing/unparseable fails closed.
+
+    Producers that stamp only a date (e.g. universe_screen.py's ``date``) are
+    checked against today ET; a full timestamp takes precedence.
+    """
+    stamp = doc.get(field)
+    if isinstance(stamp, str) and stamp.strip():
+        try:
+            parsed = datetime.fromisoformat(stamp.strip())
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ET)
+            age = (datetime.now(ET) - parsed).total_seconds()
+            return -60 <= age <= max_age_minutes * 60
+        except (TypeError, ValueError, OverflowError):
+            return False
+    if date_field:
+        day = doc.get(date_field)
+        if isinstance(day, str):
+            try:
+                from datetime import date as _date
+                return _date.fromisoformat(day.strip()) == datetime.now(ET).date()
+            except (TypeError, ValueError):
+                return False
+    return False
+
+
 def _llm_answer(station: str, evidence: list[dict]) -> dict:
     """Attach one fail-closed LLM interpretation; never crash the fleet."""
     try:
@@ -143,13 +174,27 @@ def task_screen(ctx: dict, args) -> dict:
                        for r in data.get("ranked", [])]
         except Exception as exc:  # noqa: BLE001 - report, never crash the fleet
             ctx["notes"].append(f"screen parse failed: {type(exc).__name__}")
+    error = ""
+    if proc.returncode != 0:
+        error = f"producer failed (exit {proc.returncode})"
+        tickers = []
+        data = {}
+    elif data and not _evidence_age_ok(data, field="generated_at",
+                                       max_age_minutes=SCREEN_MAX_AGE_MINUTES,
+                                       date_field="date"):
+        error = "stale screener evidence"
+        ctx["notes"].append(f"screen: {error} — refusing to reuse")
+        tickers = []
+        data = {}
     ctx["tickers"] = tickers
     result = {"returncode": proc.returncode, "count": len(tickers), "tickers": tickers}
+    if error:
+        result["error"] = error
     result["llm"] = (
         _llm_answer("screen", [
             {"label": "screener", "date": str(data.get("date", "")),
              "ranked": data.get("ranked", [])[:10]}])
-        if data else {"status": "unavailable", "reason": "no evidence"})
+        if data else {"status": "unavailable", "reason": error or "no evidence"})
     return result
 
 
@@ -228,6 +273,13 @@ def task_liquid(ctx: dict, args) -> dict:
                 "leaderboard": [], "positioning": {}, "news": {},
                 "note": "no liquid signals file",
                 "llm": {"status": "unavailable", "reason": "no evidence"}}
+    if not _evidence_age_ok(data, field="updated_at",
+                            max_age_minutes=LIQUID_MAX_AGE_MINUTES):
+        ctx["notes"].append("liquid: stale signals evidence — refusing to reuse")
+        return {"signals": {}, "crowded_longs": [], "crowded_shorts": [],
+                "leaderboard": [], "positioning": {}, "news": {},
+                "note": "stale liquid signals",
+                "llm": {"status": "unavailable", "reason": "stale evidence"}}
     signals = data.get("signals", {})
     positioning = data.get("positioning", {})
     leaderboard = data.get("leaderboard", [])

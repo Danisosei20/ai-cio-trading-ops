@@ -8,11 +8,34 @@ Any failure is reported plainly — green is confirmed, never assumed.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# The loopback viewer binds 8766 (scripts/agent_office.py); 8100 was stale.
+VIEWER_URL = "http://127.0.0.1:8766/api/health"
+WINDOWS_TASKS = ("AI-CIO-AutoTrade-0945", "AI-Desk-Watchdog-0950",
+                 "AI-Desk-IntradayLoop", "AI-Desk-OptionsWatch-1510")
+DARWIN_JOBS = ("ai-cio-options", "ai-cio-guard", "ai-cio-desk", "ai-cio-screen")
+
+
+def check_schedules() -> tuple[bool, str]:
+    """Check the host's real scheduler; never claim green from a missing tool."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["schtasks", "/query", "/fo", "CSV", "/nh"],
+                                 capture_output=True, text=True, timeout=30)
+            found = [name for name in WINDOWS_TASKS if name in out.stdout]
+            return len(found) == len(WINDOWS_TASKS), f"{len(found)}/{len(WINDOWS_TASKS)} loaded"
+        out = subprocess.run(["launchctl", "list"], capture_output=True,
+                             text=True, timeout=15)
+        found = [job for job in DARWIN_JOBS if job in out.stdout]
+        return len(found) == len(DARWIN_JOBS), f"{len(found)}/{len(DARWIN_JOBS)} loaded"
+    except Exception as exc:  # noqa: BLE001 - scheduler unavailable is a real failure
+        return False, f"{type(exc).__name__}"
 
 def _python() -> str:
     """Prefer the repo venv (ruff/mypy live there); launchd-safe fallback."""
@@ -62,17 +85,12 @@ def main() -> int:
     try:
         import urllib.request
 
-        with urllib.request.urlopen("http://127.0.0.1:8100/api/health", timeout=8) as r:
+        with urllib.request.urlopen(VIEWER_URL, timeout=8) as r:
             results.append(("ui", r.status == 200, f"http={r.status}"))
     except Exception as exc:
         results.append(("ui", False, f"{type(exc).__name__}"))
-    try:
-        out = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=15)
-        jobs = ["ai-cio-options" in out.stdout, "ai-cio-guard" in out.stdout,
-                "ai-cio-desk" in out.stdout, "ai-cio-screen" in out.stdout]
-        results.append(("schedules", all(jobs), f"{sum(jobs)}/4 loaded"))
-    except Exception as exc:
-        results.append(("schedules", False, f"{type(exc).__name__}"))
+    ok, detail = check_schedules()
+    results.append(("schedules", ok, detail))
 
     failed = [name for name, ok, _ in results if not ok]
     lines = [f"{'PASS' if ok else 'FAIL'} {name} — {detail}" for name, ok, detail in results]
