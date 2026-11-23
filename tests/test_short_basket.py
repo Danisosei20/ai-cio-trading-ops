@@ -109,14 +109,29 @@ class ShortBasketTests(unittest.TestCase):
         self._seed_bars("A", {DAY1: [100], DAY2: [80]}, run="universe-new")
         old = self.root / "outputs/orchestrator/universe-old"
         new = self.root / "outputs/orchestrator/universe-new"
-        # Set directory mtimes after writing so file writes cannot overwrite them.
-        os.utime(old, (1_700_000_000, 1_700_000_000))
-        os.utime(new, (1_800_000_000, 1_800_000_000))
+        # Selection is per-artifact now: set FILE mtimes after writing.
+        os.utime(old / "bars_A.json", (1_700_000_000, 1_700_000_000))
+        os.utime(new / "bars_A.json", (1_800_000_000, 1_800_000_000))
         payload = short_basket(self.root)
         self.assertEqual(payload["status"], "ok")
         row = payload["basket"][0]
         self.assertEqual(row["change_pct"], -20.0)
         self.assertIn("universe-new", row["source"])
+
+    def test_uses_full_universe_when_latest_run_has_one_symbol(self):
+        """A later single-symbol run must not shrink a multi-name universe."""
+        for sym in ("A", "B", "C", "D", "E", "F"):
+            self._seed_bars(sym, {DAY1: [100], DAY2: [80]}, run="universe")
+        self._seed_bars("ZZZ", {DAY1: [100], DAY2: [99]}, run="orchestrator")
+        batch = self.root / "outputs/orchestrator/universe"
+        later = self.root / "outputs/orchestrator/orchestrator"
+        os.utime(batch, (1_700_000_000, 1_700_000_000))
+        os.utime(later, (1_800_000_000, 1_800_000_000))
+        payload = short_basket(self.root)
+        self.assertEqual(payload["status"], "ok")
+        symbols = {row["symbol"] for row in payload["basket"]}
+        self.assertEqual(len(symbols), 5)
+        self.assertNotIn("ZZZ", symbols)
 
     def test_every_row_has_source(self):
         self._seed_bars("A", {DAY1: [100], DAY2: [80]})
