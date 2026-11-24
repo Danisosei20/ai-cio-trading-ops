@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
 from robinhood_tools.desk_policy import POLICY  # noqa: E402
-from robinhood_tools.market_prices import market_regime  # noqa: E402
+from robinhood_tools.regime_compat import regime_for_options  # noqa: E402
 from robinhood_tools.paper_flow import (SignalOrder, lookup_earnings_date,  # noqa: E402
                                         place_signal_order)
 from robinhood_tools.runtime import build_settings  # noqa: E402
@@ -73,11 +73,6 @@ def regime_gate_passes(*, regime: str, circuit_broken: bool, sig: str,
     if sig in SELL_SIGNALS and (not options_mode or regime == "RISK_OFF"):
         return True
     return False
-
-
-def regime_for_options(spy_closes: list[float], *, options_mode: bool) -> str:
-    """Use the stricter SPY trend confirmation only for options entries."""
-    return market_regime(spy_closes, require_long_term=options_mode)
 
 
 ET = ZoneInfo("America/New_York")
