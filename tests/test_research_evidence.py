@@ -67,7 +67,8 @@ class ResearchEvidenceTests(unittest.TestCase):
                 return Proc()
             with mock.patch.dict(os.environ, env, clear=True):
                 run_slot(root, "interp-probe", slot="0945", exec_cmd=fake,
-                         now_iso="2026-11-23T09:45:00-05:00")
+                         now_iso="2026-11-23T09:45:00-05:00",
+                         _ta_python=str(ta))
             research = [a for a in seen if any("paper_auto" in str(x) for x in a)]
             self.assertTrue(research)
             self.assertEqual(research[0][0], str(ta))
