@@ -276,15 +276,18 @@ class KeyStore:
             if record["kid"] == kid:
                 record["status"] = "COMPROMISED" if compromised else "REVOKED"
                 record["verify_until"] = None
-                record["material"] = ""
+                # Material retained for archival audit verification only.
+                # Revoked/compromised keys are never used for signing or for
+                # current authorization verification.
         self._save(doc)
 
     def retire(self, kid: str) -> None:
         doc = self._load()
         for record in doc["keys"]:
             if record["kid"] == kid and record["status"] == "VERIFY_ONLY":
+                # Retain verification material for historical audit evidence;
+                # RETIRED keys can no longer sign (signing_key uses ACTIVE only).
                 record["status"] = "RETIRED"
-                record["material"] = ""
         self._save(doc)
 
     def get(self, kid: str) -> dict | None:
@@ -305,6 +308,9 @@ class KeyStore:
         if kid == EPHEMERAL_KID:
             ephemeral = ephemeral_key()
             return ephemeral[1] if ephemeral else None
+        if kid == EPHEMERAL_KID:
+            ephemeral = ephemeral_key()
+            return ephemeral[1] if ephemeral else None
         try:
             record = self.get(kid)
         except SecurityError:
@@ -317,6 +323,27 @@ class KeyStore:
                     return None
             except (TypeError, ValueError):
                 return None
+        try:
+            return self._unprotect(record)
+        except SecurityError:
+            return None
+
+    def archival_key(self, kid: str) -> bytes | None:
+        """Verification material for historical audit evidence only.
+
+        Retired/revoked/compromised keys are returned here so old audit rows
+        remain verifiable; this MUST NOT be used for authorization signing or
+        current authorization verification.
+        """
+        if kid == EPHEMERAL_KID:
+            ephemeral = ephemeral_key()
+            return ephemeral[1] if ephemeral else None
+        try:
+            record = self.get(kid)
+        except SecurityError:
+            return None
+        if record is None or not record.get("material"):
+            return None
         try:
             return self._unprotect(record)
         except SecurityError:

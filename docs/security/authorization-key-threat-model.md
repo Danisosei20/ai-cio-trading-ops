@@ -46,7 +46,7 @@ The safest practical approach compatible with the current architecture:
 
 ## Windows compatibility verification
 
-Validated on this host (Windows, Python 3.11):
+Code-level compatibility reviewed on this host (runtime ACLs NOT TESTED) (Windows, Python 3.11):
 
 - `KeyStore` selects `%LOCALAPPDATA%\ai-cio-trading-ops\authorization_keys.json`
   and uses `os.open(O_EXCL, 0o600)` + `os.replace` for atomic writes.

@@ -28,6 +28,7 @@ from pathlib import Path
 from .database import CioDatabase
 from .errors import PolicyViolation
 from .models import EquityOrderRequest
+from .close_order_guard import validate_close_order
 from .runtime import build_paper_service
 from .safety import require_earnings_clear
 from .universe import Sp500Snapshot
@@ -124,6 +125,27 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     auth_ok, auth_reason = require_order_authorization(order, repo_root)
     if not auth_ok:
         raise PolicyViolation(f"execution authorization: {auth_reason}")
+    from .execution_authorization import enforcement_enabled
+    if order.position_effect in ("reduce", "close") and enforcement_enabled():
+        # A close label must be backed by broker-reconciled owned exposure.
+        verified = getattr(order, "verified_positions", None)
+        if verified is None:
+            try:
+                raw = service.backend.list_positions()
+                verified = {}
+                for pos in raw:
+                    sym = str(pos.get("symbol", "")).strip().upper()
+                    qty = float(pos.get("qty", 0))
+                    if sym and qty:
+                        verified[sym] = {
+                            "qty": abs(qty),
+                            "direction": "long" if qty > 0 else "short",
+                            "instrument": sym}
+            except Exception:  # noqa: BLE001 - no verified positions → fail closed
+                verified = None
+        ok_close, why_close = validate_close_order(order, verified)
+        if not ok_close:
+            raise PolicyViolation(f"close-order verification: {why_close}")
     db.require_no_symbol_cooldown(order.symbol, today=today.isoformat())
     if order.side == "buy":
         # Per-symbol loss memory: a loser gets a rest before it gets
