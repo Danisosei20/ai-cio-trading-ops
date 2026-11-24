@@ -10,13 +10,13 @@ from unittest import mock
 from robinhood_tools import authorization_propagation as prop
 from robinhood_tools import execution_authorization as ea
 
-KEY = "review-fix-key"
+KEY = "review-fix-key-long-32-byte-key"
 NOW = datetime(2026, 11, 23, 14, 45, tzinfo=timezone.utc)
 
 
 class ReviewFixTests(unittest.TestCase):
     def setUp(self):
-        self.env = dict(os.environ, EXECUTION_AUTH_HMAC_KEY=KEY,
+        self.env = dict(os.environ, CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY,
                         EXECUTION_AUTHORIZATION_ENABLED="true",
                         ALPACA_ACCOUNT_ID="real-paper-account")
         self.patcher = mock.patch.dict(os.environ, self.env, clear=True)

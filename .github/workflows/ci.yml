@@ -49,5 +49,11 @@ jobs:
       - run: python -m unittest discover -s tests -p 'test_execution_handoff.py'
       - run: python -m unittest discover -s tests -p 'test_short_eligibility.py'
       - run: python -m unittest discover -s tests -p 'test_entry_risk.py'
+      # ADR 0002 Phase 7.2 authorization security tests (ephemeral CI keys only).
+      - run: python -m unittest discover -s tests -p 'test_authorization_keys.py'
+      - run: python -m unittest discover -s tests -p 'test_authorization_revocation.py'
+      - run: python -m unittest discover -s tests -p 'test_authorization_audit.py'
+      - run: python -m unittest discover -s tests -p 'test_auth_key_cli.py'
+      - run: python -m unittest discover -s tests -p 'test_security_dashboard.py'
       - run: pip-audit -r requirements-dev.lock
       - run: python -m json.tool config/approval_routes.example.json >/dev/null

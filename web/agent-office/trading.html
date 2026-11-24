@@ -632,6 +632,12 @@
         + " | enforcement: " + (s.enforcement_enabled ? "ON" : "OFF (approval done; rehearsal pending)")
         + " | kill switch: " + (s.kill_switch ? "ENGAGED" : "clear")
         + " | authorization: " + (a.id ? (a.state + " exp " + (a.expires_at || "—")) : "none")
+        + " | key service: " + (s.authorization_service_health || "—")
+        + " | active kid: " + ((s.signing_key || {}).active_kid || "—")
+        + " | verify-only keys: " + (s.verification_key_count ?? "—")
+        + " | last rotation: " + (s.last_rotation || "—")
+        + " | revoked: " + (s.revoked_authorization_count ?? "—")
+        + " | failed validations: " + (s.failed_validations ?? "—")
         + " | " + (s.advisor_state || "");
     } catch (e) {
       node.textContent = "execution safety telemetry unavailable — " + e.message;

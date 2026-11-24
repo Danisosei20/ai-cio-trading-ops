@@ -22,7 +22,7 @@ class AuthorizationTests(unittest.TestCase):
         self.t = tempfile.TemporaryDirectory()
         self.root = Path(self.t.name)
         (self.root / "outputs/paper").mkdir(parents=True)
-        self.env = dict(os.environ, EXECUTION_AUTH_HMAC_KEY=KEY)
+        self.env = dict(os.environ, CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY)
         self.patcher = mock.patch.dict(os.environ, self.env, clear=True)
         self.patcher.start()
         self.artifacts = self.root / "artifact.json"

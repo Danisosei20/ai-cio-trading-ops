@@ -10,12 +10,12 @@ from scripts import execution_handoff, intraday_loop
 from scripts import tradingagents_paper_auto as auto
 from robinhood_tools import paper_flow
 
-KEY = "chain-key"
+KEY = "chain-key-long-32-byte-key"
 
 
 class AuthorizationChainTests(unittest.TestCase):
     def setUp(self):
-        self.env = dict(os.environ, EXECUTION_AUTH_HMAC_KEY=KEY,
+        self.env = dict(os.environ, CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY,
                         EXECUTION_AUTHORIZATION_ENABLED="true")
         self.patcher = mock.patch.dict(os.environ, self.env, clear=True)
         self.patcher.start()

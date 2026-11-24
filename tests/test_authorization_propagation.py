@@ -25,7 +25,7 @@ class PropagationTests(unittest.TestCase):
                         "generated_at": "2026-11-23T09:45:00-05:00"}), encoding="utf-8")
         self.artifact = self.root / "evidence.json"
         self.artifact.write_text('{"ok": true}', encoding="utf-8")
-        self.env = dict(os.environ, EXECUTION_AUTH_HMAC_KEY=KEY,
+        self.env = dict(os.environ, CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY,
                         EXECUTION_AUTHORIZATION_ENABLED="true")
         self.patcher = mock.patch.dict(os.environ, self.env, clear=True)
         self.patcher.start()

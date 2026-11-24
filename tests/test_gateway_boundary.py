@@ -8,12 +8,12 @@ from unittest import mock
 
 from robinhood_tools import paper_flow
 
-KEY = "boundary-key"
+KEY = "boundary-key-long-32-byte-key"
 
 
 class GatewayBoundaryTests(unittest.TestCase):
     def setUp(self):
-        self.env = dict(os.environ, EXECUTION_AUTH_HMAC_KEY=KEY,
+        self.env = dict(os.environ, CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY,
                         EXECUTION_AUTHORIZATION_ENABLED="true")
 
     def test_short_entry_requires_authorization(self):

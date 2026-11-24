@@ -26,7 +26,7 @@ class HandoffTests(unittest.TestCase):
         (self.root / "outputs/orchestrator" / "run-0945").mkdir(parents=True)
         (self.root / "outputs/orchestrator/run-0945/decision.json").write_text(
             json.dumps(decision()), encoding="utf-8")
-        self.env = dict(os.environ, EXECUTION_AUTH_HMAC_KEY=KEY,
+        self.env = dict(os.environ, CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY,
                         EXECUTION_AUTHORIZATION_ENABLED="true")
         self.patcher = mock.patch.dict(os.environ, self.env, clear=True)
         self.patcher.start()

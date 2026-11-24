@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import Any
 
 KEY_ENV = "EXECUTION_AUTH_HMAC_KEY"
-KEY_FILE = ".cio_execution_auth.key"
 FLAG_ENV = "EXECUTION_AUTHORIZATION_ENABLED"
 DB_NAME = "execution_authorizations.sqlite"
-POLICY = "execution-auth-v1"
+POLICY = "execution-auth-v2"
+SIGNATURE_ALGORITHM = "HMAC-SHA256"
+SIGNATURE_PURPOSE = "execution-authorization-v2"
 
 STATES = ("PENDING", "VALIDATED", "AUTHORIZED", "CONSUMED",
           "REJECTED", "EXPIRED", "REVOKED", "INVALIDATED")
@@ -39,7 +40,8 @@ REQUIRED_FIELDS = (
     "instrument", "position_effect", "side", "max_quantity", "max_notional",
     "max_risk", "broker", "account_id", "environment", "artifact_hashes",
     "gate_verdict", "gate_generated_at", "issued_at", "expires_at", "state",
-    "policy_version", "idempotency_key", "evidence_paths", "signature",
+    "policy_version", "idempotency_key", "evidence_paths", "key_id",
+    "algorithm", "purpose", "decision_digest", "signature",
 )
 
 
@@ -52,42 +54,56 @@ def enforcement_enabled() -> bool:
     return os.environ.get(FLAG_ENV, "") == "true"
 
 
-def _hmac_key() -> bytes | None:
-    value = os.environ.get(KEY_ENV, "").strip()
-    if value:
-        return value.encode("utf-8")
-    try:
-        path = Path.home() / KEY_FILE
-        if path.is_file():
-            raw = path.read_bytes()
-            return raw if raw else None
-    except (OSError, RuntimeError):
-        return None
-    return None
+def _keys_module():
+    from . import authorization_keys as keys
+    return keys
+
+
+def decision_digest(decision: dict) -> str:
+    """Digest of the authoritative decision identity fields only."""
+    normalized = {k: str(decision.get(k, "")) for k in
+                  ("run_id", "verdict", "generated_at")}
+    return hashlib.sha256(json.dumps(
+        normalized, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
 
 
 def canonical_bytes(obj: dict) -> bytes:
-    """Versioned canonical serialization: sorted keys, compact separators."""
+    """Versioned canonical serialization; signature excluded."""
     clean = {k: v for k, v in obj.items() if k != "signature"}
-    return json.dumps({"v": 1, **clean}, sort_keys=True, separators=(",", ":"),
+    return json.dumps({"v": 2, **clean}, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False).encode("utf-8")
 
 
 def _sign(record: dict) -> dict:
-    key = _hmac_key()
-    if key is None:
+    keys = _keys_module()
+    signing = keys.get_store().signing_key()
+    if signing is None:
         raise AuthorizationError("authorization signing key unavailable")
+    kid, key = signing
     signed = dict(record)
+    signed["key_id"] = kid
+    signed["algorithm"] = SIGNATURE_ALGORITHM
+    signed["purpose"] = SIGNATURE_PURPOSE
     signed["signature"] = hmac.new(key, canonical_bytes(signed), hashlib.sha256).hexdigest()
     return signed
 
 
 def verify_integrity(record: Any) -> bool:
-    key = _hmac_key()
-    if key is None or not isinstance(record, dict):
+    if not isinstance(record, dict):
+        return False
+    if record.get("algorithm") != SIGNATURE_ALGORITHM:
+        return False
+    if record.get("purpose") != SIGNATURE_PURPOSE:
+        return False
+    kid = record.get("key_id")
+    if not isinstance(kid, str) or not kid:
         return False
     signature = record.get("signature")
     if not isinstance(signature, str) or not signature:
+        return False
+    keys = _keys_module()
+    key = keys.get_store().verification_key(kid)
+    if key is None:
         return False
     expected = hmac.new(key, canonical_bytes(record), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
@@ -147,8 +163,8 @@ def create_authorization(*, decision: dict, root: Path, artifacts: list[Path],
     auth_id = "auth-" + hashlib.sha256(digest_input.encode("utf-8")).hexdigest()[:24]
     record = {
         "authorization_id": auth_id,
-        "decision_id": hashlib.sha256(
-            json.dumps(decision, sort_keys=True, default=str).encode()).hexdigest()[:24],
+        "decision_id": decision_digest(decision),
+        "decision_digest": decision_digest(decision),
         "gate_run_id": str(decision.get("run_id", "")),
         "strategy_id": strategy_id,
         "symbol": normalized,
@@ -188,6 +204,111 @@ def _db_path(root: Path) -> Path:
     return p
 
 
+def _ensure_revocation_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS revocations ("
+                 "auth_id TEXT PRIMARY KEY, reason TEXT NOT NULL,"
+                 " revoked_at TEXT NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS meta ("
+                 "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+
+
+def revoke_authorization(auth_id: str, root: Path, reason: str) -> bool:
+    """Durable single-authorization revocation."""
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10, isolation_level=None)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _ensure_revocation_tables(conn)
+        conn.execute("INSERT OR IGNORE INTO revocations(auth_id,reason,revoked_at)"
+                     " VALUES(?,?,?)",
+                     (auth_id, reason, datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+        try:
+            from . import authorization_audit as _audit
+            _audit.emit("authorization_revoked", authorization_id=auth_id,
+                        outcome="ok", reason=reason)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def is_revoked(auth_id: str, root: Path) -> bool:
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10)
+    try:
+        _ensure_revocation_tables(conn)
+        return conn.execute("SELECT 1 FROM revocations WHERE auth_id=?", (auth_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def is_parent_revoked(parent_id: str, root: Path) -> bool:
+    """True only when the parent itself is revoked (never because of a sibling)."""
+    return is_revoked(parent_id, root)
+
+
+def revoke_parent(root: Path, parent_id: str, reason: str) -> int:
+    """Revoke a parent and every unconsumed descendant."""
+    count = 1 if revoke_authorization(parent_id, root, reason) else 0
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10)
+    try:
+        rows = conn.execute("SELECT body,state FROM authorizations").fetchall()
+    finally:
+        conn.close()
+    for body, state in rows:
+        try:
+            doc = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if doc.get("parent_authorization_id") == parent_id and state != "CONSUMED":
+            revoke_authorization(str(doc.get("authorization_id", "")), root, reason)
+            count += 1
+    return count
+
+
+def revoke_by_key(root: Path, key_id: str, reason: str) -> int:
+    """Revoke all authorizations signed by a key (compromise response)."""
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10)
+    try:
+        rows = conn.execute("SELECT body FROM authorizations").fetchall()
+    finally:
+        conn.close()
+    count = 0
+    for (body,) in rows:
+        try:
+            doc = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if doc.get("key_id") == key_id:
+            revoke_authorization(str(doc.get("authorization_id", "")), root, reason)
+            count += 1
+    return count
+
+
+def revoke_all_entries(root: Path, reason: str) -> None:
+    """Emergency global entry revocation; exits remain available."""
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10, isolation_level=None)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _ensure_revocation_tables(conn)
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('entries_revoked',?)",
+                     (json.dumps({"reason": reason,
+                                  "at": datetime.now(timezone.utc).isoformat()}),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def entries_globally_revoked(root: Path) -> dict | None:
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10)
+    try:
+        _ensure_revocation_tables(conn)
+        row = conn.execute("SELECT value FROM meta WHERE key='entries_revoked'").fetchone()
+    finally:
+        conn.close()
+    return json.loads(row[0]) if row else None
+
+
 def store_authorization(record: dict, root: Path) -> dict:
     """Persist a signed authorization, advancing PENDING -> AUTHORIZED."""
     if not verify_integrity(record):
@@ -214,6 +335,16 @@ def store_authorization(record: dict, root: Path) -> dict:
         conn.commit()
     finally:
         conn.close()
+    try:
+        from . import authorization_audit as _audit
+        _audit.emit("authorization_created",
+                    authorization_id=record["authorization_id"],
+                    decision_id=record.get("decision_id"),
+                    strategy_id=record.get("strategy_id"),
+                    account_id=record.get("account_id"),
+                    outcome="ok", reason="issued")
+    except Exception:  # noqa: BLE001 - audit never breaks authorization
+        pass
     return record
 
 
@@ -248,6 +379,14 @@ def children_of(parent_id: str, root: Path) -> list[dict]:
     return out
 
 
+def _audit_reject(reason: str, **fields: Any) -> None:
+    try:
+        from . import authorization_audit as _audit
+        _audit.emit("authorization_rejected", outcome="reject", reason=reason, **fields)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def validate_authorization(record: Any, *, root: Path, decision: dict,
                            artifacts: list[Path], strategy_id: str, symbol: str,
                            side: str, quantity: float, notional: float, risk: float,
@@ -255,13 +394,27 @@ def validate_authorization(record: Any, *, root: Path, decision: dict,
                            now: datetime | None = None) -> tuple[bool, str]:
     """Revalidate every binding. Returns (ok, reason); never fails open."""
     if not verify_integrity(record):
+        _audit_reject("signature verification failure",
+                      authorization_id=str(record.get("authorization_id", "")) if isinstance(record, dict) else "")
         return False, "authorization integrity check failed"
     if not isinstance(decision, dict) or decision.get("verdict") != "proceed":
         return False, "gate verdict is not proceed"
+    if record.get("decision_digest") != decision_digest(decision):
+        return False, "decision digest mismatch"
+    if record.get("gate_verdict") != decision.get("verdict"):
+        return False, "gate verdict mismatch"
     if environment != "paper" or record.get("environment") != "paper":
         return False, "environment mismatch"
     if record.get("state") in TERMINAL:
         return False, f"authorization state {record['state']} is terminal"
+    auth_id = str(record.get("authorization_id", ""))
+    if is_revoked(auth_id, root):
+        return False, "authorization revoked"
+    if entries_globally_revoked(root):
+        return False, "global entry revocation active"
+    parent_id = record.get("parent_authorization_id")
+    if parent_id and is_parent_revoked(str(parent_id), root):
+        return False, "parent authorization revoked"
     if record.get("state") not in ("PENDING", "VALIDATED", "AUTHORIZED"):
         return False, f"invalid authorization state {record.get('state')}"
     # Prefer the artifact set recorded at issue time. Recomputing it from a
@@ -310,6 +463,7 @@ def reserve_authorization(auth_id: str, root: Path,
                           *, now: datetime | None = None) -> bool:
     """Atomically consume an AUTHORIZED authorization. Single winner only."""
     conn = sqlite3.connect(str(_db_path(root)), timeout=10, isolation_level=None)
+    consumed = False
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -319,6 +473,13 @@ def reserve_authorization(auth_id: str, root: Path,
             return False
         body = json.loads(row[1])
         if not verify_integrity(body):
+            conn.rollback()
+            return False
+        _ensure_revocation_tables(conn)
+        if conn.execute("SELECT 1 FROM revocations WHERE auth_id=?", (auth_id,)).fetchone():
+            conn.rollback()
+            return False
+        if conn.execute("SELECT 1 FROM meta WHERE key='entries_revoked'").fetchone():
             conn.rollback()
             return False
         check_at = now or datetime.now(timezone.utc)
@@ -336,12 +497,20 @@ def reserve_authorization(auth_id: str, root: Path,
             "UPDATE authorizations SET state='CONSUMED', body=? WHERE id=? AND state='AUTHORIZED'",
             (json.dumps(updated, sort_keys=True), auth_id))
         conn.commit()
-        return cursor.rowcount == 1
+        consumed = cursor.rowcount == 1
+        return consumed
     except Exception:  # noqa: BLE001 - any failure leaves the row reserved or untouched
         conn.rollback()
         return False
     finally:
         conn.close()
+        if consumed:
+            try:
+                from . import authorization_audit as _audit
+                _audit.emit("authorization_consumed", authorization_id=auth_id,
+                            outcome="ok", reason="reserve_authorization")
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def gateway(*, authorization_id: str, root: Path, decision: dict,

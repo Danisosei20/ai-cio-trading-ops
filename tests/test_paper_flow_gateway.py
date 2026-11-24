@@ -15,7 +15,7 @@ class PaperFlowGatewayTests(unittest.TestCase):
     def test_buy_without_authorization_rejected_when_enforced(self):
         with tempfile.TemporaryDirectory() as td:
             env = dict(os.environ, EXECUTION_AUTHORIZATION_ENABLED="true",
-                       EXECUTION_AUTH_HMAC_KEY=KEY)
+                       CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY)
             with mock.patch.dict(os.environ, env, clear=True):
                 ok, reason = paper_flow.require_order_authorization(
                     paper_flow.SignalOrder(symbol="AAPL", side="buy",
@@ -28,7 +28,7 @@ class PaperFlowGatewayTests(unittest.TestCase):
     def test_sell_exit_does_not_need_entry_authorization(self):
         with tempfile.TemporaryDirectory() as td:
             env = dict(os.environ, EXECUTION_AUTHORIZATION_ENABLED="true",
-                       EXECUTION_AUTH_HMAC_KEY=KEY)
+                       CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY)
             with mock.patch.dict(os.environ, env, clear=True):
                 ok, reason = paper_flow.require_order_authorization(
                     paper_flow.SignalOrder(symbol="AAPL", side="sell",
