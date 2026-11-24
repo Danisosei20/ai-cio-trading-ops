@@ -50,6 +50,14 @@ def _dated_today(value: object, date: str) -> bool:
         return False
     if date in text:
         return True
+    if text.startswith("/Date(") and text.endswith(")/"):
+        try:
+            epoch_ms = int(text[6:-2])
+            from datetime import timezone as _tz  # noqa: PLC0415
+            return datetime.fromtimestamp(epoch_ms / 1000, _tz.utc).astimezone(ET) \
+                .date().isoformat() == date
+        except (ValueError, OverflowError, OSError):
+            return False
     try:
         year, month, day = (int(part) for part in date.split("-"))
         return datetime.strptime(text.strip(), "%m/%d/%Y %I:%M:%S %p").date() == \
@@ -128,7 +136,9 @@ def build_lifecycle(root: Path, date: str, *, now: str | None = None) -> dict:
             schedule_state = "Failed"
         else:
             schedule_state = "Not verified"
-        completed = schedule_state == "Completed" and bool(art.get("dated_today"))
+        completed = (schedule_state == "Completed" and
+                     bool(art.get("dated_today")) and
+                     bool(art.get("mentions_today")))
         if completed:
             status = "VERIFIED"
         elif schedule_state == "Failed":

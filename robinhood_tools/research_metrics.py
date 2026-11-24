@@ -42,21 +42,26 @@ class LatencyRecorder:
         self._now = now
         self._starts: dict[tuple[str, str], tuple[float, str]] = {}
         self.timings: list[PhaseTiming] = []
+        self._lock = threading.Lock()
 
     def start(self, symbol: str, phase: str) -> None:
-        self._starts[(symbol, phase)] = (self._clock(), self._now())
+        with self._lock:
+            self._starts[(symbol, phase)] = (self._clock(), self._now())
 
     def finish(self, symbol: str, phase: str, *, status: str = "ok",
                reason: str = "") -> PhaseTiming:
-        started, stamp = self._starts.pop((symbol, phase), (None, self._now()))
-        if started is None:
-            return PhaseTiming(phase=phase, started_at=stamp, ended_at=stamp,
-                               duration_seconds=0.0, status="unstarted",
-                               reason="finish() called without start()")
-        item = PhaseTiming(phase=phase, started_at=stamp, ended_at=self._now(),
-                           duration_seconds=round(max(0.0, self._clock() - started), 6),
-                           status=status, reason=reason[:300])
-        self.timings.append(item)
+        with self._lock:
+            started, stamp = self._starts.pop((symbol, phase), (None, self._now()))
+            if started is None:
+                item = PhaseTiming(phase=phase, started_at=stamp, ended_at=stamp,
+                                   duration_seconds=0.0, status="unstarted",
+                                   reason="finish() called without start()")
+            else:
+                item = PhaseTiming(
+                    phase=phase, started_at=stamp, ended_at=self._now(),
+                    duration_seconds=round(max(0.0, self._clock() - started), 6),
+                    status=status, reason=reason[:300])
+            self.timings.append(item)
         return item
 
     def record(self, symbol: str, phase: str, *, duration_seconds: float,
@@ -64,11 +69,13 @@ class LatencyRecorder:
         item = PhaseTiming(phase=phase, started_at=self._now(), ended_at=self._now(),
                            duration_seconds=round(float(duration_seconds), 6),
                            status=status, reason=reason[:300])
-        self.timings.append(item)
+        with self._lock:
+            self.timings.append(item)
         return item
 
     def summary(self) -> dict:
-        values = sorted(t.duration_seconds for t in self.timings)
+        with self._lock:
+            values = sorted(t.duration_seconds for t in self.timings)
         if not values:
             return {"count": 0, "median_seconds": None, "p95_seconds": None,
                     "total_seconds": 0.0}
@@ -77,18 +84,21 @@ class LatencyRecorder:
         return {"count": len(values), "median_seconds": round(median, 6),
                 "p95_seconds": round(p95, 6),
                 "total_seconds": round(sum(values), 6),
-                "by_phase": self._by_phase()}
+                "by_phase": self._by_phase_locked()}
 
-    def _by_phase(self) -> dict:
+    def _by_phase_locked(self) -> dict:
         out: dict[str, dict] = {}
-        for t in self.timings:
+        with self._lock:
+            timings = list(self.timings)
+        for t in timings:
             slot = out.setdefault(t.phase, {"count": 0, "total_seconds": 0.0})
             slot["count"] += 1
             slot["total_seconds"] = round(slot["total_seconds"] + t.duration_seconds, 6)
         return out
 
     def as_list(self) -> list[dict]:
-        return [t.as_dict() for t in self.timings]
+        with self._lock:
+            return [t.as_dict() for t in self.timings]
 
 
 @dataclass

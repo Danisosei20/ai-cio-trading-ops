@@ -287,6 +287,13 @@
     <div id="research-performance-note" class="dim"></div>
   </section>
 
+  <section class="card full" id="signal-intelligence">
+    <h2>Intraday Signal Intelligence</h2>
+    <div id="signal-intelligence-status" class="dim">Loading signal metrics…</div>
+    <div id="signal-intelligence-body"></div>
+    <div id="signal-intelligence-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="execution-safety">
     <h2>Execution Safety</h2>
     <div id="execution-safety-body" class="dim">Loading authorization state…</div>
@@ -877,16 +884,83 @@
     }
   }
 
+  async function refreshSignalIntelligence() {
+    var statusEl = byId("signal-intelligence-status");
+    var bodyEl = byId("signal-intelligence-body");
+    var noteEl = byId("signal-intelligence-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    function unavailable(reason) {
+      statusEl.textContent = "data unavailable" + (reason ? " — " + reason : "");
+      bodyEl.innerHTML = emptyBox("No signal metric is shown without its source artifact.");
+      noteEl.textContent = "Missing evidence is not a rejected trade.";
+    }
+    try {
+      var res = await fetch("/api/signal-intelligence", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || d.status !== "ok") { unavailable(d && d.reason); return; }
+      statusEl.textContent = d.session_date + " · " + (d.research_latency || {}).mode
+        + " · orders " + d.orders_submitted;
+      var tech = d.technical_candidates || {};
+      var cap = d.data_feed_capability || {};
+      var lat = d.research_latency || {};
+      var scores = d.opportunity_scores || {};
+      var line = d.short_lineage || {};
+      var broker = d.broker_activity || {};
+      var metrics = [
+        ["Valid long setups", tech.valid_long], ["Valid short setups", tech.valid_short],
+        ["Rejected setups", tech.rejected], ["Archived signals", (d.point_in_time_archive || {}).files],
+        ["Data feed", cap.feed], ["Volume basis", cap.volume_basis],
+        ["Strategies requiring SIP", (cap.requires_sip || []).join(", ") || "none"],
+        ["Pipeline mode", lat.mode], ["Champion wall (s)", lat.champion_wall_seconds],
+        ["Challenger wall (s)", lat.challenger_wall_seconds],
+        ["Champion median / P95", lat.champion_median + " / " + lat.champion_p95],
+        ["Challenger median / P95", lat.challenger_median + " / " + lat.challenger_p95],
+        ["Pipeline speedup", lat.speedup], ["Completion champion / challenger",
+          lat.completion_champion + " / " + lat.completion_challenger],
+        ["Last benchmark", lat.benchmark_at],
+        ["Opportunity scores", (scores.results || []).length],
+        ["Score OOS sufficient", scores.out_of_sample_sufficient],
+        ["Short lineage counts", JSON.stringify(line.counts || {})],
+        ["Authorized orders", broker.authorized_orders],
+        ["Submitted paper orders", broker.submitted_paper_orders],
+        ["Filled paper orders", broker.filled_paper_orders]
+      ];
+      var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table></div><div class='side'>";
+      var reasons = tech.rejections || [];
+      if (!reasons.length) {
+        html += emptyBox("No setup rejection reasons in the latest report.");
+      } else {
+        html += "<table><thead><tr><th>Rejection reason</th></tr></thead><tbody>";
+        for (var j = 0; j < reasons.length; j++) {
+          html += "<tr><td>" + esc(reasons[j]) + "</td></tr>";
+        }
+        html += "</tbody></table>";
+      }
+      html += "</div></div>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = d.note || "";
+    } catch (e) {
+      unavailable(e && e.message);
+    }
+  }
+
   refresh();
   refreshExecutionSafety();
   refreshOpportunityAnalysis();
   refreshIntradayDecisionPipeline();
   refreshResearchPerformance();
+  refreshSignalIntelligence();
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);
   setInterval(refreshOpportunityAnalysis, REFRESH_MS);
   setInterval(refreshIntradayDecisionPipeline, REFRESH_MS);
   setInterval(refreshResearchPerformance, REFRESH_MS);
+  setInterval(refreshSignalIntelligence, REFRESH_MS);
 })();
 </script>
 </body>

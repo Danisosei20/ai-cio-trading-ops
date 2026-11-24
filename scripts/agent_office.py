@@ -331,6 +331,19 @@ class Handler(BaseHTTPRequestHandler):
                            "orders_submitted": 0, "entry_permission": "none"}
             body = json.dumps(payload).encode()
             mime = "application/json"
+        elif route == "/api/signal-intelligence":
+            # Read-only signal diagnostics; fail closed on broken artifacts.
+            try:
+                from scripts.signal_intelligence import (  # noqa: E402
+                    signal_intelligence_payload)
+
+                payload = signal_intelligence_payload(ROOT)
+            except Exception as exc:  # noqa: BLE001
+                payload = {"status": "unavailable",
+                           "reason": f"{type(exc).__name__}: {exc}",
+                           "orders_submitted": 0, "entry_permission": "none"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"
