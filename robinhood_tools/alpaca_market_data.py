@@ -22,6 +22,7 @@ class AlpacaMarketDataHttpClient:
             raise PolicyViolation("Alpaca market data must use https://data.alpaca.markets exactly.")
         self._key_id = key_id
         self._secret_key = secret_key
+        self.base_url = base_url.rstrip("/")
 
     @classmethod
     def from_values(cls, values: dict[str, str]) -> AlpacaMarketDataHttpClient:
@@ -48,7 +49,7 @@ class AlpacaMarketDataHttpClient:
             raise PolicyViolation("Sort must be asc or desc.")
         params: dict[str, str | int] = {
             "timeframe": timeframe, "start": start, "limit": limit,
-            "feed": _feed(feed), "adjustment": "all", "sort": sort,
+            "feed": _feed(feed, allow_delayed=False), "adjustment": "all", "sort": sort,
         }
         if end:
             params["end"] = end
@@ -77,7 +78,7 @@ class AlpacaMarketDataHttpClient:
     def _get(self, path: str, params: dict[str, str | int]) -> Any:
         if not path.startswith(("/v2/stocks/", "/v1beta1/news")):
             raise PolicyViolation("Unsupported Alpaca read-only market-data path.")
-        url = f"{ALPACA_DATA_BASE_URL}{path}?{urlencode(params)}"
+        url = f"{self.base_url}{path}?{urlencode(params)}"
         request = Request(
             url,
             method="GET",
@@ -106,8 +107,10 @@ def _symbol(value: str) -> str:
     return symbol
 
 
-def _feed(value: str) -> str:
+def _feed(value: str, *, allow_delayed: bool = True) -> str:
     normalized = value.strip().lower()
-    if normalized not in {"iex", "sip", "delayed_sip"}:
-        raise PolicyViolation("Stock feed must be iex, sip, or delayed_sip.")
+    allowed = {"iex", "sip", "delayed_sip"} if allow_delayed else {"iex", "sip"}
+    if normalized not in allowed:
+        raise PolicyViolation(
+            f"Unsupported stock feed {value!r}; allowed: {sorted(allowed)}")
     return normalized

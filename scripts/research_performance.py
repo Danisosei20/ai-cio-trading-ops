@@ -86,7 +86,11 @@ def research_performance_payload(root: Path, *, date: str = "2026-11-24") -> dic
     challenger_doc = _load(_latest(root, "outputs/shadow/research/*/batch.json"))
     routing_doc = _load(_latest(root, "outputs/reports/shadow/*bearish-routing.json"))
     lifecycle_doc = _load(_latest(root, "outputs/reports/daily/*eod-lifecycle.json"))
-    if all(x is None for x in (challenger_doc, routing_doc, lifecycle_doc)) and \
+    lineage_doc = _load(_latest(root, "outputs/reports/short/*short-signal-lineage.json"))
+    health_doc = _load(_latest(root, "outputs/reports/diagnostics/*market-data-health.json"))
+    nim_doc = _load(_latest(root, "outputs/reports/research/*nim-live-benchmark.json"))
+    if all(x is None for x in (challenger_doc, routing_doc, lifecycle_doc,
+                               lineage_doc, health_doc, nim_doc)) and \
             champion.get("status") != "ok":
         return _unavailable("no research or shadow diagnostic artifacts")
 
@@ -145,6 +149,28 @@ def research_performance_payload(root: Path, *, date: str = "2026-11-24") -> dic
                               challenger_latency.get("mode") == "laboratory" else
                               "requires multi-session evaluation"),
         "short_diagnostics": short_diagnostics,
+        "short_lineage": {
+            "status": "ok" if lineage_doc else "unavailable",
+            "counts": (lineage_doc or {}).get("counts") or {},
+            "note": (lineage_doc or {}).get("note") or "no lineage artifact",
+        },
+        "market_data": {
+            "status": "ok" if health_doc else "unavailable",
+            "categories": (health_doc or {}).get("categories") or {},
+            "permitted_latest_feeds": (health_doc or {}).get("permitted_latest_feeds") or [],
+            "note": (health_doc or {}).get("note") or "no market-data diagnostic artifact",
+        },
+        "nim_benchmark": {
+            "status": "ok" if nim_doc else "unavailable",
+            "mode": (nim_doc or {}).get("mode"),
+            "speedup": (nim_doc or {}).get("speedup"),
+            "sequential_wall_seconds": (nim_doc or {}).get("sequential_wall_seconds"),
+            "parallel_wall_seconds": (nim_doc or {}).get("parallel_wall_seconds"),
+            "parallel_responses": (nim_doc or {}).get("parallel_responses"),
+            "parallel_timeouts": (nim_doc or {}).get("parallel_timeouts"),
+            "generated_at": (nim_doc or {}).get("generated_at"),
+            "promotion": "none - benchmark no promotion",
+        },
         "operational": {
             "scanner_health": "see Intraday Decision Pipeline",
             "model_provider": "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -156,6 +182,7 @@ def research_performance_payload(root: Path, *, date: str = "2026-11-24") -> dic
             "last_eod_verification": (lifecycle_doc or {}).get("generated_at"),
             "eod_event_status": {e.get("event"): e.get("status") for e in eod_events},
         },
-        "note": ("Laboratory measurements are not live research performance. "
+        "note": ("NIM benchmark labelled live_nim only when real provider requests "
+                 "succeeded; it measures provider latency, not research conclusions. "
                  "Shadow decisions are not submitted orders or realized profit."),
     }
