@@ -46,6 +46,8 @@ def child_authorization(*, parent: dict, root: Path, symbol: str, side: str,
         raise ea.AuthorizationError("parent authorization has invalid timestamps") from exc
     if current > parent_expiry or current < parent_issued - timedelta(seconds=60):
         raise ea.AuthorizationError("parent authorization is expired or not yet valid")
+    if ea.is_revoked(str(parent.get("authorization_id", "")), root) or ea.entries_globally_revoked(root):
+        raise ea.AuthorizationError("parent authorization revoked")
     if side not in ("buy", "sell"):
         raise ea.AuthorizationError("unsupported order side")
     if position_effect not in ("open", "increase", "reduce", "close"):
@@ -69,6 +71,7 @@ def child_authorization(*, parent: dict, root: Path, symbol: str, side: str,
         "authorization_id": child_id,
         "parent_authorization_id": parent.get("authorization_id"),
         "decision_id": parent.get("decision_id"),
+        "decision_digest": parent.get("decision_digest") or parent.get("decision_id"),
         "gate_run_id": parent.get("gate_run_id"),
         "strategy_id": strategy_id,
         "symbol": normalized,

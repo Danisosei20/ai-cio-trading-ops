@@ -103,6 +103,42 @@ def execution_safety_payload(root: Path) -> dict:
     """Read-only execution authorization telemetry. Never places orders."""
     from robinhood_tools import entry_risk, execution_authorization as ea
 
+    def key_telemetry() -> dict:
+        try:
+            from robinhood_tools import authorization_keys as kmod
+            store = kmod.KeyStore()
+            rows = store.status()
+            active = [r for r in rows if r["status"] == "ACTIVE"]
+            verify_only = [r for r in rows if r["status"] == "VERIFY_ONLY"]
+            return {"health": "ok" if store.verify_store() else "integrity_failure",
+                    "active_kid": active[0]["kid"] if active else None,
+                    "verification_key_count": len(verify_only),
+                    "last_rotation": active[0]["activated_at"] if active else None}
+        except Exception as exc:  # noqa: BLE001 - viewer never fails on telemetry
+            return {"health": "unavailable", "reason": type(exc).__name__}
+
+    def revocation_count() -> int:
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(root / "outputs/paper/execution_authorizations.sqlite"))
+            try:
+                conn.execute("CREATE TABLE IF NOT EXISTS revocations ("
+                             "auth_id TEXT PRIMARY KEY, reason TEXT, revoked_at TEXT)")
+                return int(conn.execute("SELECT COUNT(*) FROM revocations").fetchone()[0])
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def failed_validations() -> int:
+        try:
+            from robinhood_tools.authorization_audit import DEFAULT_AUDIT
+            path = root / DEFAULT_AUDIT
+            text = path.read_text(encoding="utf-8") if path.exists() else ""
+            return text.count('"authorization_rejected"') + text.count('"signature verification failure"')
+        except OSError:
+            return 0
+
     def read_json(path: Path) -> dict:
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
@@ -136,6 +172,12 @@ def execution_safety_payload(root: Path) -> dict:
             "account_id": auth.get("account_id"),
         } if auth else None,
         "authorization_count": len(index),
+        "authorization_service_health": key_telemetry()["health"],
+        "signing_key": {"active_kid": key_telemetry().get("active_kid")},
+        "verification_key_count": key_telemetry().get("verification_key_count", 0),
+        "last_rotation": key_telemetry().get("last_rotation"),
+        "revoked_authorization_count": revocation_count(),
+        "failed_validations": failed_validations(),
         "limitations": "Telemetry only. No live orders, no approval actions from this viewer.",
     }
 

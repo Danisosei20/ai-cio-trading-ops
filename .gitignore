@@ -7,6 +7,11 @@
 outputs/
 *.approval-ledger.json
 *.delivery-log.json
+# Execution authorization key material / keystores (never commit)
+.cio_execution_auth.key
+*.auth_keys.json
+authorization_keys.json
+authorization_audit.jsonl
 
 # Python
 __pycache__/
