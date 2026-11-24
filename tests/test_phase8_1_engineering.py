@@ -297,7 +297,8 @@ class VixEvidenceTests(unittest.TestCase):
         self.assertEqual(ev.value, 27.3)
         self.assertEqual(ev.market_as_of_source, "bar_index")
         self.assertEqual(ev.freshness, "fresh")
-        self.assertEqual(ve.validate_evidence(ev).value, 27.3)
+        self.assertEqual(ve.validate_evidence(
+            ev, now="2026-11-24T16:00:00+00:00").value, 27.3)
 
     def test_missing_as_of_is_rejected(self):
         frame = self._frame(None)
