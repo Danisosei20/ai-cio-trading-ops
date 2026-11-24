@@ -74,7 +74,8 @@ Secret scan clean. Bypass guard PASS. Certification harness **67 PASS / 0 FAIL /
 gate (environment-dependent failures documented previously).
 
 ## K. Git changes
-Dedicated branch `feat/phase7-2-hmac-security`; commit `TBD`; PR `TBD`.
+Dedicated branch `feat/phase7-2-hmac-security`; implementation commit `de0e2cf`;
+PR #71, merged into main as `8e303c0`.
 New modules: authorization_keys, authorization_audit, auth_key_cli. New tests:
 keys, revocation, audit, CLI, dashboard, review fixes. Updated: execution
 authorization, propagation, dashboard, CI, .gitignore, threat model.
