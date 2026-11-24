@@ -924,7 +924,13 @@
         ["Short lineage counts", JSON.stringify(line.counts || {})],
         ["Authorized orders", broker.authorized_orders],
         ["Submitted paper orders", broker.submitted_paper_orders],
-        ["Filled paper orders", broker.filled_paper_orders]
+        ["Filled paper orders", broker.filled_paper_orders],
+        ["Immutable snapshots", ((d.market_evidence || {}).snapshots)],
+        ["Full-graph mode", ((d.market_evidence || {}).full_graph || {}).status],
+        ["Full-graph elapsed (s)", ((d.market_evidence || {}).full_graph || {}).elapsed_seconds],
+        ["Full-graph scope", ((d.market_evidence || {}).full_graph || {}).scope],
+        ["Scout/factory agreement", ((d.scout_vs_factory || {}).counts || {}).agreement],
+        ["Scout/factory defects", ((d.scout_vs_factory || {}).counts || {}).implementation_defect]
       ];
       var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
       for (var i = 0; i < metrics.length; i++) {

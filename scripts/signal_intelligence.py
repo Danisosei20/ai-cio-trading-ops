@@ -6,7 +6,19 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from scripts.opportunity_analysis import _unavailable
+from robinhood_tools.market_snapshot import verify_snapshot  # noqa: E402
+from scripts.opportunity_analysis import _unavailable as _base_unavailable
+
+
+def _unavailable(reason: str) -> dict:
+    return {
+        **_base_unavailable(reason),
+        "market_evidence": {"snapshots": 0, "full_graph": {"status": "not verified"}},
+        "broker_activity": {"authorized_orders": "not verified",
+                            "submitted_paper_orders": "not verified",
+                            "filled_paper_orders": "not verified",
+                            "positions": "not verified"},
+    }
 
 
 def _latest(root: Path, pattern: str) -> Path | None:
@@ -42,7 +54,10 @@ def signal_intelligence_payload(root: Path, *, date: str = "2026-11-24") -> dict
     benchmark = _load(_latest(root, "outputs/reports/research/*research-pipeline-benchmark.json"))
     lineage = _load(_latest(root, "outputs/reports/short/*short-signal-lineage.json"))
     lifecycle = _load(_latest(root, "outputs/reports/daily/*eod-lifecycle.json"))
-    if all(x is None for x in (factory, capability, scoring, benchmark, lineage)):
+    fullgraph = _load(_latest(root, "outputs/shadow/research/fullgraph-*/measurement.json"))
+    scout_compare = _load(_latest(root, "outputs/reports/comparison/*scout-factory*.json"))
+    if all(x is None for x in (factory, capability, scoring, benchmark, lineage,
+                               fullgraph, scout_compare)):
         return _unavailable("no signal-intelligence artifact")
 
     rows = (factory or {}).get("candidates") or []
@@ -112,6 +127,26 @@ def signal_intelligence_payload(root: Path, *, date: str = "2026-11-24") -> dict
             "filled_paper_orders": "not verified",
             "positions": "not verified",
             "note": "This endpoint does not query the broker; see the dashboard Orders panel.",
+        },
+        "market_evidence": {
+            "snapshots": sum(1 for p in
+                             (Path(root) / "outputs/market_snapshots").glob("*/*/*/snapshot.json")
+                             if verify_snapshot(p)[0]),
+            "full_graph": {
+                "status": ("ok" if fullgraph and not fullgraph.get("error") and
+                           isinstance(fullgraph.get("elapsed_seconds"), (int, float))
+                           else "not verified"),
+                "scope": (fullgraph or {}).get("scope"),
+                "elapsed_seconds": (fullgraph or {}).get("elapsed_seconds"),
+                "decision": (fullgraph or {}).get("decision"),
+                "error": (fullgraph or {}).get("error"),
+            },
+        },
+        "scout_vs_factory": {
+            "status": "ok" if scout_compare else "unavailable",
+            "counts": (scout_compare or {}).get("counts") or {},
+            "note": (scout_compare or {}).get("note", "") if scout_compare else
+                    "no comparison artifact",
         },
         "eod_status": {e.get("event"): e.get("status") for e in
                        (lifecycle or {}).get("events", [])},
