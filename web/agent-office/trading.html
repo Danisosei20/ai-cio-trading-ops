@@ -629,7 +629,7 @@
       var a = s.authorization || {};
       node.textContent = "verdict: " + (s.gate_verdict || "—")
         + " | gate run: " + (s.gate_run_id || "—")
-        + " | enforcement: " + (s.enforcement_enabled ? "ON" : "OFF (ADR 0002 not approved)")
+        + " | enforcement: " + (s.enforcement_enabled ? "ON" : "OFF (approval done; rehearsal pending)")
         + " | kill switch: " + (s.kill_switch ? "ENGAGED" : "clear")
         + " | authorization: " + (a.id ? (a.state + " exp " + (a.expires_at || "—")) : "none")
         + " | " + (s.advisor_state || "");

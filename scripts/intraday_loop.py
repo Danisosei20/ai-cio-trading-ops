@@ -288,7 +288,7 @@ def main(argv=None) -> int:
                         sm.transition(trade.id, TradeState.SIGNAL_FOUND, "scout detected setup")
                 allowed, why = desk_verdict(ROOT)
                 if not args.dry_run and allowed:
-                    # ADR 0002 (DRAFT): when enforcement is enabled, a fresh
+                    # ADR 0002 (approved): when enforcement is enabled, a fresh
                     # deterministic authorization is required and consumed here.
                     # With the flag off, legacy scheduling behavior is unchanged.
                     try:

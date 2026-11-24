@@ -125,7 +125,7 @@ def execution_safety_payload(root: Path) -> dict:
         "enforcement_enabled": ea.enforcement_enabled(),
         "kill_switch": entry_risk.kill_switch_engaged(
             root, db_kill=(root / "outputs/paper/KILL_SWITCH").exists()),
-        "advisor_state": "ADR 0002 DRAFT — not approved; unattended entries disabled",
+        "advisor_state": "ADR 0002 approved (2026-11-23); enforcement OFF pending rehearsal",
         "gate_verdict": latest.get("verdict", "unavailable"),
         "gate_run_id": run_id or None,
         "authorization": {

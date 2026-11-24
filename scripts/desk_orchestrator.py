@@ -475,7 +475,7 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
 
     write_run(root, run_id, reports, decision)
 
-    # ADR 0002 (DRAFT): bind a proceeding 09:45 gate to a bounded, expiring
+    # ADR 0002 (approved): bind a proceeding 09:45 gate to a bounded, expiring
     # execution authorization. No-op while enforcement is disabled.
     if slot == "0945" and decision.verdict == "proceed":
         try:

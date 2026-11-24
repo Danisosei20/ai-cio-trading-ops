@@ -97,7 +97,7 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
 
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
-    # ADR 0002 (DRAFT): the real broker boundary. No-op while disabled.
+    # ADR 0002 (approved): the real broker boundary. No-op while disabled.
     auth_ok, auth_reason = require_order_authorization(order, Path(env_path))
     if not auth_ok:
         raise PolicyViolation(f"execution authorization: {auth_reason}")

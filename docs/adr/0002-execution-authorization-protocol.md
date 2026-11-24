@@ -1,6 +1,9 @@
 # ADR 0002 — Deterministic Execution Authorization and Broker Revalidation
 
-**Status: DRAFT — NOT APPROVED. Awaiting explicit owner approval.**
+**Status: APPROVED by owner — 2026-11-23. Scope: design approval only.**
+**Enforcement flag stays OFF** until order-object propagation, key hardening and
+a full 10:20 rehearsal are complete. Approval of this ADR does NOT authorize
+unattended entries or any live trading change.
 **Date:** 2026-11-23
 **Supersedes:** nothing; complements ADR 0001.
 
@@ -99,5 +102,5 @@ broker response, short eligibility failures, exit exemption, no-LLM assertion.
 ## Owner approval requirements
 
 ADR adoption, enabling unattended entries, and any live-trading change each require
-explicit owner approval. This ADR is **not approved** as of 2026-11-23; unattended
+explicit owner approval. This ADR was **approved by the owner on 2026-11-23** (design scope only); unattended
 entry enforcement therefore stays disabled by default.

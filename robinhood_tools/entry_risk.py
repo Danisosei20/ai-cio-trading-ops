@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified, deterministic ENTRY risk interface (ADR 0002, DRAFT).
+"""Unified, deterministic ENTRY risk interface (ADR 0002, approved).
 
 Both existing kill switches are consulted (DB emergency flag via caller and the
 file flag on disk), daily and weekly drawdowns use explicit ET-session baselines,

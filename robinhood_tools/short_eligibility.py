@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Broker-verified short eligibility for new short entries (ADR 0002, DRAFT).
+"""Broker-verified short eligibility for new short entries (ADR 0002, approved).
 
 Uses the account's own Alpaca paper transport and the supported REST fields:
 ``/v2/assets/{symbol}`` (``shortable`` + ``borrow_status``) and ``/v2/account``
