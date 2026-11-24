@@ -4,7 +4,7 @@ Date: 2026-11-23. Baseline: `fd6b54b`. ADR 0001 preserved.
 
 ## A. Executive summary
 Five read-only audits inventoried every order path, risk control, and broker
-short-eligibility interface. ADR 0002 was written as **DRAFT / NOT APPROVED**.
+short-eligibility interface. ADR 0002 was **approved by the owner on 2026-11-23** (design scope only).
 Deterministic authorization, short-eligibility, unified entry-risk, CI bypass
 guard and dashboard telemetry were implemented and independently reviewed. The
 review found two CRITICAL defects and two HIGH gaps; the CRITICAL defects and
@@ -12,7 +12,7 @@ the guard gap were fixed and rerun. Enforcement stays disabled by default.
 Unattended paper trading is **not** certified.
 
 ## B. ADR 0002
-`docs/adr/0002-execution-authorization-protocol.md`. Status: **DRAFT — awaiting
+`docs/adr/0002-execution-authorization-protocol.md`. Status: **APPROVED 2026-11-23 (design scope); enforcement flag OFF**
 explicit owner approval**. Implementation mapping: HMAC-signed deterministic
 authorizations (`robinhood_tools/execution_authorization.py`), 09:45 issue and
 10:20 validate (`scripts/execution_handoff.py`), broker-boundary consumption
@@ -84,7 +84,8 @@ six new modules, nine new test files, CI guard steps, viewer panel, orchestrator
 and paper-flow hooks. Main checkout's staged/untracked files preserved.
 
 ## L. Remaining risks
-1. ADR 0002 unapproved; enforcement flag default off.
+1. ADR 0002 approved for design only; enforcement flag intentionally off until
+   the remaining technical work below is complete.
 2. `authorization_id` not propagated from intraday judge to each order; enabled mode
    would block buys rather than authorize them.
 3. HMAC key has no rotation/key-id and is readable by same-user processes.
@@ -96,6 +97,6 @@ and paper-flow hooks. Main checkout's staged/untracked files preserved.
 
 **PAPER TRADING WITH RESTRICTIONS**
 
-Unattended paper trading is not certified. Required before certification: owner
-approval of ADR 0002, complete order-object authorization propagation, key
-management hardening, and a full 10:20 dry rehearsal with the flag enabled.
+Unattended paper trading is not certified. ADR 0002 is approved (design scope).
+Required before certification: complete order-object authorization propagation,
+key management hardening, and a full 10:20 dry rehearsal with the flag enabled.

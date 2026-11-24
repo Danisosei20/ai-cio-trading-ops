@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Deterministic, integrity-bound execution authorization (ADR 0002, DRAFT).
+"""Deterministic, integrity-bound execution authorization (ADR 0002, approved).
 
 AI research never authorizes an order. This module turns an already-formed
 deterministic gate decision into a bounded, account-bound, replay-resistant
 authorization and atomically consumes it at execution time.
 
 Enforcement is OFF unless ``EXECUTION_AUTHORIZATION_ENABLED=true`` (ADR 0002 is
-not approved). A missing HMAC key is a hard failure, never a bypass.
+approval of unattended entries). A missing HMAC key is a hard failure, never a bypass.
 """
 from __future__ import annotations
 

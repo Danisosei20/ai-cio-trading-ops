@@ -86,7 +86,7 @@ def require_for_run(root: Path, decision: dict) -> tuple[bool, str]:
     """
     ctx = context_for_run(root, decision)
     if not ea.enforcement_enabled():
-        return False, "authorization enforcement flag disabled (ADR 0002 not approved)"
+        return False, "authorization enforcement flag disabled (rehearsal pending)"
     record = load_for_run(root, str(decision.get("run_id", "")))
     if record is None:
         return False, "no execution authorization for this gate run"
@@ -141,7 +141,7 @@ def require_execution_authorization(*, root: Path, run_id: str, decision: dict,
                                     now: datetime | None = None) -> tuple[bool, str]:
     """The 10:20 boundary: no valid authorization means no entry order."""
     if not ea.enforcement_enabled():
-        return False, "authorization enforcement flag disabled (ADR 0002 not approved)"
+        return False, "authorization enforcement flag disabled (rehearsal pending)"
     record = load_for_run(root, run_id)
     if record is None:
         return False, "no execution authorization for this gate run"
