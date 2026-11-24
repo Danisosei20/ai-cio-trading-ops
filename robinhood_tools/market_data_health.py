@@ -113,7 +113,7 @@ def read_only_health_report(results: list[AccessResult], *, note: str = "") -> d
         "track": "alpaca_market_data_health",
         "generated_at": utc_now(),
         "results": [r.as_dict() for r in results],
-        "categories": {r.endpoint: r.category for r in results},
+        "categories": {f"{r.endpoint}:{r.feed}": r.category for r in results},
         "permitted_latest_feeds": sorted({r.feed for r in results
                                           if r.category == "ok" and r.status == 200}),
         "orders_submitted": 0,
