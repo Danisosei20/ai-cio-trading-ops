@@ -60,9 +60,18 @@ def require_order_authorization(order: "SignalOrder", root: Path) -> tuple[bool,
     """
     from .execution_authorization import enforcement_enabled, gateway
 
-    entry_effect = order.position_effect in ("open", "increase")
+    effect = str(getattr(order, "position_effect", "") or "").lower()
+    if effect not in ("open", "increase", "reduce", "close"):
+        return False, f"unsupported position effect: {effect!r}"
+    entry_effect = effect in ("open", "increase")
     if not entry_effect or not enforcement_enabled():
         return True, "not an enforced entry"
+    # A risk-increasing entry needs a durable, verifiable audit trail.
+    from .execution_audit_gate import audit_health, emit_alert
+    audit_ok, audit_reason = audit_health(root)
+    if not audit_ok:
+        emit_alert(root, "entry_blocked_audit_unavailable", audit_reason)
+        return False, f"audit store unavailable: {audit_reason}"
     if not order.authorization_id:
         return False, "entry order has no execution authorization"
     try:
@@ -175,8 +184,19 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     review = service.review_equity_order(request)
     auth = db.create(request, review, window_minutes=settings.approval_window_minutes)
     db.approve(auth.approval_id)
-    placed = service.place_equity_order(request, review_id=review.review_id,
-                                        approval_id=auth.approval_id, confirmed=False)
+    # Durable submission intent: an uncertain broker response must be
+    # reconciled before any retry creates a second exposure.
+    from .execution_audit_gate import mark_submitted, mark_uncertain, open_intent
+    intent_id = order.authorization_id or auth.approval_id
+    open_intent(repo_root, intent_id, symbol, order.side,
+                float(order.quantity), float(order.quantity * order.limit_price))
+    try:
+        placed = service.place_equity_order(request, review_id=review.review_id,
+                                            approval_id=auth.approval_id, confirmed=False)
+        mark_submitted(repo_root, intent_id, placed.id)
+    except Exception:
+        mark_uncertain(repo_root, intent_id)
+        raise
     result = {"action": f"{order.side}_placed", "symbol": symbol,
               "qty": str(order.quantity), "limit": str(request.limit_price),
               "take_profit": str(request.take_profit_price),

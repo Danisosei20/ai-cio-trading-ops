@@ -79,6 +79,9 @@ class ReviewFixTests(unittest.TestCase):
                                      strategy_id="x", now=NOW)
 
     def test_f5_gateway_uses_child_account_not_placeholder(self):
+        from robinhood_tools.authorization_audit import emit as _emit
+        _audit = self.root / "outputs/paper/authorization_audit.jsonl"
+        _emit("authorization_created", path=_audit, authorization_id="seed")
         from robinhood_tools import paper_flow
         from datetime import datetime as _dt, timezone as _tz
         current = _dt.now(_tz.utc)

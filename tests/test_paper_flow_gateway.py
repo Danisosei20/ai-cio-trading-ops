@@ -14,6 +14,14 @@ KEY = "broker-boundary-key"
 class PaperFlowGatewayTests(unittest.TestCase):
     def test_buy_without_authorization_rejected_when_enforced(self):
         with tempfile.TemporaryDirectory() as td:
+            from robinhood_tools.authorization_audit import emit as _emit
+            _audit = Path(td) / "outputs/paper/authorization_audit.jsonl"
+            _audit.parent.mkdir(parents=True, exist_ok=True)
+            with mock.patch.dict(os.environ, dict(os.environ,
+                    CIO_AUTH_ALLOW_EPHEMERAL_KEY="1",
+                    CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED="1",
+                    EXECUTION_AUTH_HMAC_KEY=KEY), clear=True):
+                _emit("authorization_created", path=_audit, authorization_id="seed")
             env = dict(os.environ, EXECUTION_AUTHORIZATION_ENABLED="true",
                        CIO_AUTH_ALLOW_EPHEMERAL_IN_ENFORCED='1', CIO_AUTH_ALLOW_EPHEMERAL_KEY='1', EXECUTION_AUTH_HMAC_KEY=KEY)
             with mock.patch.dict(os.environ, env, clear=True):

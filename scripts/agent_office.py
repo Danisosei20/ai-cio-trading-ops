@@ -99,6 +99,37 @@ def trading_window() -> dict:
     }
 
 
+def _phase7_telemetry(root: Path) -> dict:
+    """Read-only Phase 7.3 rehearsal and audit-health telemetry."""
+    import json as _json
+
+    def read(rel: str) -> dict:
+        try:
+            doc = _json.loads((root / rel).read_text(encoding="utf-8"))
+            return doc if isinstance(doc, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    try:
+        from robinhood_tools.execution_audit_gate import audit_health
+        audit_ok, audit_reason = audit_health(root)
+    except Exception as exc:  # noqa: BLE001
+        audit_ok, audit_reason = False, type(exc).__name__
+    rehearsal = read("outputs/rehearsal/proceed/rehearsal_result.json")
+    return {
+        "audit_chain_health": "OK" if audit_ok else f"DEGRADED: {audit_reason}",
+        "broker_reconciliation": "MOCKED ONLY — no live paper broker call in rehearsal",
+        "latest_rehearsal": rehearsal.get("gate_verdict", "NOT TESTED"),
+        "rehearsal_label": "MOCKED / HISTORICAL REPLAY",
+        "remaining_blockers": [
+            "same-user signer trust domain",
+            "Windows ACL verification NOT TESTED",
+            "no real Alpaca paper broker rehearsal",
+            "owner approval required for unattended execution",
+        ],
+    }
+
+
 def execution_safety_payload(root: Path) -> dict:
     """Read-only execution authorization telemetry. Never places orders."""
     from robinhood_tools import entry_risk, execution_authorization as ea
@@ -178,6 +209,7 @@ def execution_safety_payload(root: Path) -> dict:
         "last_rotation": key_telemetry().get("last_rotation"),
         "revoked_authorization_count": revocation_count(),
         "failed_validations": failed_validations(),
+        "phase7_3": _phase7_telemetry(root),
         "limitations": "Telemetry only. No live orders, no approval actions from this viewer.",
     }
 
