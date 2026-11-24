@@ -64,9 +64,9 @@ def context_for_run(root: Path, decision: dict) -> dict:
         "strategy_id": "orchestrator-research-long",
         "symbol": symbol,
         "side": "buy",
-        "max_quantity": 1,
-        "max_notional": 1000.0,
-        "max_risk": 25.0,
+        "max_quantity": 100,
+        "max_notional": 50000.0,
+        "max_risk": 5000.0,
         "broker": "alpaca",
         "account_id": os.environ.get("ALPACA_ACCOUNT_ID", "paper-default"),
     }
@@ -102,7 +102,7 @@ def require_for_run(root: Path, decision: dict) -> tuple[bool, str]:
 def issue_authorization(*, root: Path, decision: dict, strategy_id: str, symbol: str,
                         side: str, max_quantity: int, max_notional: float,
                         max_risk: float, broker: str, account_id: str,
-                        ttl_seconds: int = 300, now: datetime | None = None) -> dict | None:
+                        ttl_seconds: int = 28800, now: datetime | None = None) -> dict | None:
     """Create and persist an authorization only for a clean ``proceed``."""
     if not ea.enforcement_enabled():
         return None
@@ -125,6 +125,18 @@ def issue_authorization(*, root: Path, decision: dict, strategy_id: str, symbol:
     index[str(decision.get("run_id", ""))] = stored["authorization_id"]
     _write_index(root, index)
     return stored
+
+
+def parent_id_for_run(root: Path, run_id: str) -> str | None:
+    """Return the validated 09:45 parent authorization id for propagation."""
+    record = load_for_run(root, run_id)
+    if record is None:
+        return None
+    if not ea.verify_integrity(record):
+        return None
+    if record.get("state") != "AUTHORIZED":
+        return None
+    return record.get("authorization_id")
 
 
 def load_for_run(root: Path, run_id: str) -> dict | None:

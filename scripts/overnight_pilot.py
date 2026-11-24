@@ -711,7 +711,8 @@ def main(argv=None) -> int:
             result = place_signal_order(
                 settings=settings, snapshot=None,
                 order=SignalOrder(symbol=symbol, side="sell", quantity=held,
-                                  limit_price=mark.quantize(Decimal("0.01"))),
+                                  limit_price=mark.quantize(Decimal("0.01")),
+                                  position_effect="close"),
                 database=db, service=service)
             print(json.dumps({"ticker": symbol, "mode": "exit",
                               "action": "sell_placed",

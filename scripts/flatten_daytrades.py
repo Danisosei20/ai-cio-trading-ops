@@ -120,6 +120,7 @@ def main(argv=None) -> int:
             result = place_signal_order(
                 settings=settings, snapshot=None,
                 order=SignalOrder(symbol=symbol, side="sell",
+                    position_effect="close",
                                   quantity=qty,
                                   limit_price=price.quantize(Decimal("0.01"))),
                 env_path=".env")

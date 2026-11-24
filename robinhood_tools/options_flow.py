@@ -67,7 +67,8 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                       override_reason: str = "",
                        odds_gate: bool = True,
                        odds_sigma: float | None = None,
-                       min_ev_pct: float = DEFAULT_MIN_EV_PCT) -> dict:
+                       min_ev_pct: float = DEFAULT_MIN_EV_PCT,
+                        authorization_id: str | None = None) -> dict:
     """Review → ledger → guarded placement of one long option opener."""
     from .runtime import build_paper_options_service as _build
 
@@ -138,6 +139,41 @@ def place_long_option(*, settings, snapshot: Sp500Snapshot | None,
                                           source_url="https://example.com/unused"),
                          env_path=".env", **extra)
     service.approval_store = db
+
+    # ADR 0002: option openers are risk-increasing and must consume a bounded
+    # child authorization derived from the 09:45 gate authorization.
+    if authorization_id:
+        import json
+        from pathlib import Path as _Path
+        from . import execution_authorization as auth_mod
+        from . import authorization_propagation as prop
+        root = _Path(__file__).resolve().parents[1]
+        if not auth_mod.enforcement_enabled():
+            raise PolicyViolation("option entry enforcement disabled")
+        parent = auth_mod.load_authorization(authorization_id, root)
+        if parent is None or not auth_mod.verify_integrity(parent):
+            raise PolicyViolation("option entry authorization unavailable")
+        try:
+            latest = json.loads((root / "outputs/orchestrator/latest.json").read_text(
+                encoding="utf-8"))
+            decision = json.loads((root / "outputs/orchestrator" / latest["run_id"]
+                                   / "decision.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError) as exc:
+            raise PolicyViolation(f"gate decision unavailable: {exc}") from exc
+        child = prop.derive_and_store(
+            parent=parent, root=root, symbol=contract.option_symbol, side="buy",
+            quantity=float(contracts), notional=float(premium),
+            risk=float(premium) * 0.25, strategy_id="options-long")
+        ok, why = auth_mod.gateway(
+            authorization_id=child["authorization_id"], root=root,
+            decision=decision, artifacts=[], strategy_id="options-long",
+            symbol=contract.option_symbol, side="buy", quantity=float(contracts),
+            notional=float(premium), risk=float(premium) * 0.25,
+            broker="alpaca",
+            account_id=child.get("account_id", "paper-default"), environment="paper")
+        if not ok:
+            raise PolicyViolation(f"option entry authorization: {why}")
+
     leg = OptionLeg(symbol=contract.option_symbol, side="buy", effect="open",
                     option_type=contract.right, expiration_date=contract.expiry,
                     strike_price=contract.strike, quantity=contracts)

@@ -190,6 +190,8 @@ def parse_args(argv=None):
                    help="scout file (default outputs/daytrade/<today ET>.json)")
     p.add_argument("--config", default="config/approval_routes.json")
     p.add_argument("--env-file", default=".env")
+    p.add_argument("--authorization-id", default=None,
+                   help="09:45 deterministic parent authorization for entry orders")
     args = p.parse_args(argv)
     # Desk policy: NVIDIA NIM only; never fall back to an OpenAI model.
     if str(args.provider).strip().lower() == "openai":
@@ -413,7 +415,7 @@ def trade_option_leg(*, ticker: str, sig: str, decision: str, trade_date: str,
     result = place_long_option(
         settings=settings, snapshot=snapshot, quote=quote, contracts=contracts,
         earnings_date=lookup_earnings_date(ticker), premium_cap=args.premium_cap,
-        database=db)
+        database=db, authorization_id=args.authorization_id)
     db.update_candidate_status(candidate_id, "approved")
     rec.update({"action": "buy_placed", "qty": contracts,
                 "premium": result["premium"], "order_id": result["order_id"],
@@ -519,9 +521,40 @@ def _post_buy_rationale(rec: dict, headline: str) -> None:
         log_line(f"[{rec.get('ticker', '?')}] buy rationale post failed: {exc}")
 
 
+def load_parent_authorization(auth_id: str | None, root: Path):
+    """Load and verify the 09:45 parent authorization for child derivation."""
+    if not auth_id:
+        return None
+    from robinhood_tools import execution_authorization as ea
+    record = ea.load_authorization(auth_id, root)
+    if record is None or not ea.verify_integrity(record):
+        return None
+    return record
+
+
+def authorize_entry_order(order, parent, root: Path):
+    """Attach a per-order child authorization to a risk-increasing order."""
+    import dataclasses
+    from robinhood_tools import authorization_propagation as ap
+    from robinhood_tools import execution_authorization as ea
+
+    if parent is None or not ea.enforcement_enabled():
+        return order
+    if order.position_effect not in ("open", "increase"):
+        return order
+    child = ap.derive_and_store(
+        parent=parent, root=root, symbol=order.symbol, side=order.side,
+        quantity=float(order.quantity), notional=float(order.quantity * order.limit_price),
+        risk=float(order.quantity * order.limit_price) * 0.25,
+        strategy_id=order.strategy_id or "research-long")
+    return dataclasses.replace(order, authorization_id=child["authorization_id"])
+
+
 def main(argv=None) -> int:
     _load_llm_env()
     args = parse_args(argv)
+    parent_authorization = load_parent_authorization(
+        args.authorization_id, Path(__file__).resolve().parents[1])
     tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     if args.screen:
         screen_data = json.loads(Path(args.screen).read_text())
@@ -793,14 +826,18 @@ def main(argv=None) -> int:
                                     log_line(f"[{ticker}] broker review: buy {qty} @ {limit}")
                                     if stop_px is not None:
                                         log_line(f"[{ticker}] bracket: stop {stop_px} / target {target_px}")
+                                    entry_order = SignalOrder(symbol=ticker, side="buy",
+                                                              quantity=Decimal(qty), limit_price=limit,
+                                                              earnings_date=earnings,
+                                                              max_order_value=cap,
+                                                              take_profit_price=target_px,
+                                                              bracket_stop_price=stop_px)
+                                    entry_order = authorize_entry_order(
+                                        entry_order, parent_authorization,
+                                        Path(__file__).resolve().parents[1])
                                     result = place_signal_order(
                                         settings=settings, snapshot=snapshot,
-                                        order=SignalOrder(symbol=ticker, side="buy",
-                                                          quantity=Decimal(qty), limit_price=limit,
-                                                          earnings_date=earnings,
-                                                          max_order_value=cap,
-                                                          take_profit_price=target_px,
-                                                          bracket_stop_price=stop_px),
+                                        order=entry_order,
                                         env_path=args.env_file)
                                     set_stage(ticker, "placing", f"approval {result['approval_id']}")
                                     rec.update({"action": "buy_placed", "qty": qty, "limit": str(limit),
@@ -832,7 +869,8 @@ def main(argv=None) -> int:
                                         settings=settings, snapshot=snapshot,
                                         order=SignalOrder(symbol=ticker, side="sell",
                                                           quantity=held,
-                                                          limit_price=price.quantize(Decimal("0.01"))),
+                                                          limit_price=price.quantize(Decimal("0.01")),
+                                                          position_effect="close"),
                                         env_path=args.env_file)
                                     rec.update({"action": "sell_placed", "qty": str(held),
                                             "order_id": result["order_id"], "status": result["status"]})
