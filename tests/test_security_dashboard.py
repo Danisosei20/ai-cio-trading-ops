@@ -25,6 +25,9 @@ class SecurityDashboardTests(unittest.TestCase):
                       "revoked_authorization_count", "failed_validations"):
             self.assertIn(field, p)
         self.assertTrue(p["read_only"])
+        self.assertIn("phase7_3", p)
+        self.assertIn("audit_chain_health", p["phase7_3"])
+        self.assertIn("MOCKED", p["phase7_3"]["rehearsal_label"])
 
     def test_payload_has_no_secret(self):
         with tempfile.TemporaryDirectory() as td:

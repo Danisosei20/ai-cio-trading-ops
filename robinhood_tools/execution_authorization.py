@@ -326,12 +326,16 @@ def store_authorization(record: dict, root: Path) -> dict:
             "CREATE TABLE IF NOT EXISTS authorizations ("
             "id TEXT PRIMARY KEY, state TEXT NOT NULL, body TEXT NOT NULL,"
             " issued_at TEXT NOT NULL, expires_at TEXT NOT NULL)")
-        conn.execute(
-            "INSERT INTO authorizations(id,state,body,issued_at,expires_at)"
-            " VALUES(?,?,?,?,?)",
-            (record["authorization_id"], record["state"],
-             json.dumps(record, sort_keys=True), record["issued_at"],
-             record["expires_at"]))
+        existing = conn.execute(
+            "SELECT body FROM authorizations WHERE id=?",
+            (record["authorization_id"],)).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO authorizations(id,state,body,issued_at,expires_at)"
+                " VALUES(?,?,?,?,?)",
+                (record["authorization_id"], record["state"],
+                 json.dumps(record, sort_keys=True), record["issued_at"],
+                 record["expires_at"]))
         conn.commit()
     finally:
         conn.close()

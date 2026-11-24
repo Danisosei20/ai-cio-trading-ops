@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -46,9 +47,33 @@ def _audit_mac() -> bytes:
 def _event_hash(event: dict, prev_hash: str) -> str:
     body = {k: v for k, v in event.items() if k != "hash"}
     payload = {"prev": prev_hash, **body}
-    return hmac.new(_audit_mac(), json.dumps(
+    mac = b"audit-v3-unkeyed"
+    kid = body.get("kid")
+    if kid:
+        try:
+            from . import authorization_keys as keys
+            key = keys.get_store().verification_key(str(kid))
+            if key:
+                mac = key + b"audit-v3"
+        except Exception:  # noqa: BLE001
+            pass
+    return hmac.new(mac, json.dumps(
         payload, sort_keys=True, separators=(",", ":"),
         ensure_ascii=False, default=str).encode(), hashlib.sha256).hexdigest()
+
+
+def _candidate_macs() -> list[bytes]:
+    macs = [_audit_mac()]
+    try:
+        from . import authorization_keys as keys
+        for row in keys.get_store().status():
+            if row["status"] in {"ACTIVE", "VERIFY_ONLY"}:
+                key = keys.get_store().verification_key(row["kid"])
+                if key:
+                    macs.append(key + b"audit-v3")
+    except Exception:  # noqa: BLE001
+        pass
+    return list(dict.fromkeys(macs))
 
 
 class _AuditLock:
@@ -106,7 +131,14 @@ def emit(event: str, *, path: Path | None = None, **fields: Any) -> dict:
                     prev = str(json.loads(lines[-1]).get("hash", ""))
                 except (ValueError, TypeError):
                     prev = ""
+        try:
+            from . import authorization_keys as keys
+            signing = keys.get_store().signing_key()
+            active_kid = signing[0] if signing else None
+        except Exception:  # noqa: BLE001
+            active_kid = None
         row: dict[str, Any] = {
+            "kid": active_kid,
             "event_id": "evt-" + uuid.uuid4().hex[:16],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": event, **clean, "prev_hash": prev,
@@ -114,6 +146,11 @@ def emit(event: str, *, path: Path | None = None, **fields: Any) -> dict:
         row["hash"] = _event_hash(row, prev)
         with target.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, sort_keys=True, default=str) + "\n")
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:  # noqa: BLE001 - advisory on platforms without fsync
+                pass
     return row
 
 
@@ -129,10 +166,15 @@ def verify_chain(path: Path | None = None) -> bool:
             row = json.loads(line)
             if row.get("prev_hash") != prev:
                 return False
-            expected = _event_hash(row, prev)
-            if row.get("hash") != expected:
+            if row.get("hash") not in {
+                hmac.new(mac, json.dumps(
+                    {"prev": prev, **{k: v for k, v in row.items() if k != "hash"}},
+                    sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=False, default=str).encode(), hashlib.sha256).hexdigest()
+                for mac in _candidate_macs()
+            }:
                 return False
-            prev = expected
+            prev = str(row.get("hash", ""))
     except (OSError, ValueError, TypeError):
         return False
     return True

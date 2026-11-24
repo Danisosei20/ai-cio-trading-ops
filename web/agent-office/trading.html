@@ -638,6 +638,9 @@
         + " | last rotation: " + (s.last_rotation || "—")
         + " | revoked: " + (s.revoked_authorization_count ?? "—")
         + " | failed validations: " + (s.failed_validations ?? "—")
+        + " | audit: " + (((s.phase7_3 || {}).audit_chain_health) || "—")
+        + " | broker: " + (((s.phase7_3 || {}).broker_reconciliation) || "—")
+        + " | rehearsal: " + (((s.phase7_3 || {}).latest_rehearsal) || "—")
         + " | " + (s.advisor_state || "");
     } catch (e) {
       node.textContent = "execution safety telemetry unavailable — " + e.message;
