@@ -292,6 +292,20 @@ class Handler(BaseHTTPRequestHandler):
                            "reason": "no news explanation artifact"}
             body = json.dumps(payload).encode()
             mime = "application/json"
+        elif route == "/api/opportunity-analysis":
+            # Read-only: newest daily review artifact or a fail-closed doc.
+            # Never writes, never calls a broker, never submits an order.
+            try:
+                from scripts.opportunity_analysis import (  # noqa: E402
+                    opportunity_analysis_payload)
+
+                payload = opportunity_analysis_payload(ROOT)
+            except Exception as exc:  # noqa: BLE001 - broken reader fails closed
+                payload = {"status": "unavailable",
+                           "reason": f"{type(exc).__name__}: {exc}",
+                           "orders_submitted": 0, "entry_permission": "none"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"

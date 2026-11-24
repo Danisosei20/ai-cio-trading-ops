@@ -266,6 +266,13 @@
     <div id="scorecard"></div>
   </section>
 
+  <section class="card full" id="opportunity-analysis">
+    <h2>Trading Opportunity Analysis</h2>
+    <div id="opportunity-analysis-status" class="dim">Loading analysis…</div>
+    <div id="opportunity-analysis-body"></div>
+    <div id="opportunity-analysis-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="execution-safety">
     <h2>Execution Safety</h2>
     <div id="execution-safety-body" class="dim">Loading authorization state…</div>
@@ -647,10 +654,83 @@
     }
   }
 
+  async function refreshOpportunityAnalysis() {
+    var statusEl = byId("opportunity-analysis-status");
+    var bodyEl = byId("opportunity-analysis-body");
+    var noteEl = byId("opportunity-analysis-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    function unavailable(reason) {
+      statusEl.textContent = "data unavailable" + (reason ? " — " + reason : "");
+      bodyEl.innerHTML = emptyBox("No opportunity is shown unless its source artifact can be read.");
+      noteEl.textContent = "Missing analysis is not evidence of zero opportunities.";
+    }
+    try {
+      var res = await fetch("/api/opportunity-analysis", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || d.status !== "ok") { unavailable(d && d.reason); return; }
+      statusEl.textContent = "as of " + String(d.as_of || "").replace("T", " ").slice(0, 19)
+        + " · research only · no orders placed"
+        + (d.session_complete ? "" : " · session INCOMPLETE");
+      var s = d.summary || {};
+      var h = d.scanner_health || {};
+      var r = d.risk_summary || {};
+      var metrics = [
+        ["Symbols scanned", s.symbols_scanned],
+        ["Long candidates", s.long_candidates],
+        ["Short candidates", s.short_candidates],
+        ["Qualified setups", s.qualified_setups],
+        ["Risk-blocked", s.risk_blocked],
+        ["Technical failures", s.technical_failures],
+        ["Shadow opportunities", s.shadow_opportunities],
+        ["Actual entries", s.actual_entries],
+        ["Actual fills", s.actual_fills],
+        ["Market regime", d.market_regime || "UNKNOWN"],
+        ["VIX observations", (d.vix || []).join(", ") || "not recorded"],
+        ["Scanner cycles", h.cycles],
+        ["Last completed scan", h.last_completed_scan || "none"],
+        ["Data feed", d.data_feed_health || "unknown"],
+        ["Execution readiness", d.execution_readiness || "unknown"],
+        ["VIX blocks", r.vix_blocks],
+        ["RISK_OFF blocks", r.regime_blocks],
+        ["No short entry path", r.no_short_path],
+        ["Kill switch", r.kill_switch || "not_recorded"],
+        ["Orders submitted", d.orders_submitted]
+      ];
+      var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table></div><div class='side'>";
+      var rows = d.opportunities || [];
+      if (!rows.length) {
+        html += emptyBox("No sourced opportunity rows in the latest report.");
+      } else {
+        html += "<table><thead><tr><th>Symbol</th><th>Bias</th><th>Blocked</th><th>Hypothetical</th><th>Evidence</th></tr></thead><tbody>";
+        for (var j = 0; j < rows.length; j++) {
+          var row = rows[j];
+          var tag = row.classification === "valid_policy_rejection" ? "tag block"
+            : row.classification === "technical_failure" ? "tag err" : "tag";
+          html += "<tr><td>" + esc(row.symbol) + "</td><td>" + esc(row.bias) + "</td>"
+            + "<td><span class='" + tag + "'>" + esc(row.category || row.reason) + "</span></td>"
+            + "<td>" + esc(row.hypothetical) + "</td><td>" + esc(row.data_quality) + "</td></tr>";
+        }
+        html += "</tbody></table>";
+      }
+      html += "</div></div>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = d.note || "Research only; shadow results are not realized profit.";
+    } catch (e) {
+      unavailable(e && e.message);
+    }
+  }
+
   refresh();
   refreshExecutionSafety();
+  refreshOpportunityAnalysis();
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);
+  setInterval(refreshOpportunityAnalysis, REFRESH_MS);
 })();
 </script>
 </body>
