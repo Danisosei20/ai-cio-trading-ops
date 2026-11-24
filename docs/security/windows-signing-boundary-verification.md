@@ -34,14 +34,14 @@ present on this host. The code applies:
 **ACL correctness is NOT TESTED** until an owner initializes the keystore and
 runs `icacls` manually. Linux CI is not evidence of Windows ACL behavior.
 
-## Option A — existing single-user trust model
+## Option B — existing single-user trust model (current)
 Documentation explicitly states same-user compromise is outside the isolation
 boundary. Practical protections: other local users cannot read DPAPI material
 or ACL-restricted files; untrusted research/viewer inputs have no supported
 signing API. Residual: any same-user process can unprotect DPAPI, edit SQLite,
 or call broker APIs directly.
 
-## Option B — separate signing authority (recommended for unattended)
+## Option A — separate signing authority (recommended for unattended)
 A dedicated least-privileged Windows service identity holding an asymmetric
 private key; consumers hold only the public verification key; child derivation
 and CONSUMED re-signing move behind authenticated IPC. This requires explicit
@@ -49,10 +49,10 @@ owner approval to install a service or alter scheduled-task identities — not
 performed here.
 
 ## Required owner actions
-1. Initialize keystore via `python scripts/auth_key_cli.py initialize`.
+1. Initialize keystore via `python scripts/auth_bootstrap.py initialize --root <repo> --admin-confirm INITIALIZE-AUTH-STORE`.
 2. Verify `icacls` shows only owner + SYSTEM.
 3. Confirm no `EXECUTION_AUTH_HMAC_KEY` in process/user/machine env.
-4. Approve Option B before unattended enforcement.
+4. Approve Option A before unattended enforcement.
 
 ## Remaining vulnerabilities
 Same-user process isolation, DPAPI user scope, unverified ACLs, CLI relies on

@@ -52,7 +52,7 @@ def _event_hash(event: dict, prev_hash: str) -> str:
     if kid:
         try:
             from . import authorization_keys as keys
-            key = keys.get_store().verification_key(str(kid))
+            key = keys.get_store().archival_key(str(kid))
             if key:
                 mac = key + b"audit-v3"
         except Exception:  # noqa: BLE001
@@ -67,10 +67,9 @@ def _candidate_macs() -> list[bytes]:
     try:
         from . import authorization_keys as keys
         for row in keys.get_store().status():
-            if row["status"] in {"ACTIVE", "VERIFY_ONLY"}:
-                key = keys.get_store().verification_key(row["kid"])
-                if key:
-                    macs.append(key + b"audit-v3")
+            key = keys.get_store().archival_key(row["kid"])
+            if key:
+                macs.append(key + b"audit-v3")
     except Exception:  # noqa: BLE001
         pass
     return list(dict.fromkeys(macs))
@@ -138,11 +137,12 @@ def emit(event: str, *, path: Path | None = None, **fields: Any) -> dict:
         except Exception:  # noqa: BLE001
             active_kid = None
         row: dict[str, Any] = {
-            "kid": active_kid,
             "event_id": "evt-" + uuid.uuid4().hex[:16],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": event, **clean, "prev_hash": prev,
         }
+        # kid is authoritative; caller-supplied fields cannot override it.
+        row["kid"] = active_kid
         row["hash"] = _event_hash(row, prev)
         with target.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, sort_keys=True, default=str) + "\n")
@@ -159,20 +159,34 @@ def verify_chain(path: Path | None = None) -> bool:
     if not target.exists():
         return False
     prev = ""
+    seen_ids: set[str] = set()
     try:
         for line in target.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             row = json.loads(line)
+            event_id = str(row.get("event_id", ""))
+            if event_id and event_id in seen_ids:
+                return False
+            if event_id:
+                seen_ids.add(event_id)
             if row.get("prev_hash") != prev:
                 return False
-            if row.get("hash") not in {
-                hmac.new(mac, json.dumps(
-                    {"prev": prev, **{k: v for k, v in row.items() if k != "hash"}},
-                    sort_keys=True, separators=(",", ":"),
-                    ensure_ascii=False, default=str).encode(), hashlib.sha256).hexdigest()
-                for mac in _candidate_macs()
-            }:
+            payload = json.dumps(
+                {"prev": prev, **{k: v for k, v in row.items() if k != "hash"}},
+                sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, default=str).encode()
+            row_kid = row.get("kid")
+            if row_kid:
+                from . import authorization_keys as keys
+                key = keys.get_store().archival_key(str(row_kid))
+                macs = [key + b"audit-v3"] if key and key != b"audit-v3-unkeyed" else []
+            else:
+                macs = _candidate_macs()
+            if not macs:
+                return False
+            expected = {hmac.new(m, payload, hashlib.sha256).hexdigest() for m in macs}
+            if row.get("hash") not in expected:
                 return False
             prev = str(row.get("hash", ""))
     except (OSError, ValueError, TypeError):
