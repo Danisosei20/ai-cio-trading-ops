@@ -181,7 +181,14 @@ def _fake_order_modules(raise_on_place: Exception | None):
             return cls()
 
         def request(self, method, path, payload=None):
-            return {"equity": str(EQUITY), "account_number": "PA-FAKE"}
+            if path.startswith("/v2/assets/"):
+                symbol = path.rsplit("/", 1)[-1]
+                return {"symbol": symbol, "status": "active", "tradable": True,
+                        "shortable": True, "borrow_status": "easy_to_borrow"}
+            return {"equity": str(EQUITY), "account_number": "PA-FAKE",
+                    "id": "cert-fake-account", "status": "ACTIVE",
+                    "shorting_enabled": True, "trading_blocked": False,
+                    "account_blocked": False, "trade_suspended_by_user": False}
 
     class AlpacaPaperBackend:
         def __init__(self, transport):

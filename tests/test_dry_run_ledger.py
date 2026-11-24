@@ -183,7 +183,14 @@ def _stub_broker(raise_on_place: Exception | None = None):
             return cls()
 
         def request(self, method, path, payload=None):
-            return {"equity": str(EQUITY), "account_number": "PA-FAKE"}
+            if path.startswith("/v2/assets/"):
+                symbol = path.rsplit("/", 1)[-1]
+                return {"symbol": symbol, "status": "active", "tradable": True,
+                        "shortable": True, "borrow_status": "easy_to_borrow"}
+            return {"equity": str(EQUITY), "account_number": "PA-FAKE", "id": "acct-fake",
+                    "status": "ACTIVE", "shorting_enabled": True,
+                    "trading_blocked": False, "account_blocked": False,
+                    "trade_suspended_by_user": False}
 
     class _Backend:
         def __init__(self, transport):

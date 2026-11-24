@@ -99,6 +99,47 @@ def trading_window() -> dict:
     }
 
 
+def execution_safety_payload(root: Path) -> dict:
+    """Read-only execution authorization telemetry. Never places orders."""
+    from robinhood_tools import entry_risk, execution_authorization as ea
+
+    def read_json(path: Path) -> dict:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            return doc if isinstance(doc, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    latest = read_json(root / "outputs/orchestrator/latest.json")
+    index = read_json(root / "outputs/paper/authorization_index.json")
+    run_id = str(latest.get("run_id", ""))
+    auth = {}
+    if run_id and run_id in index:
+        try:
+            from robinhood_tools.execution_authorization import load_authorization
+            auth = load_authorization(index[run_id], root) or {}
+        except Exception:  # noqa: BLE001 - viewer never fails on a bad artifact
+            auth = {}
+    return {
+        "read_only": True,
+        "enforcement_enabled": ea.enforcement_enabled(),
+        "kill_switch": entry_risk.kill_switch_engaged(
+            root, db_kill=(root / "outputs/paper/KILL_SWITCH").exists()),
+        "advisor_state": "ADR 0002 DRAFT — not approved; unattended entries disabled",
+        "gate_verdict": latest.get("verdict", "unavailable"),
+        "gate_run_id": run_id or None,
+        "authorization": {
+            "id": auth.get("authorization_id"),
+            "state": auth.get("state"),
+            "expires_at": auth.get("expires_at"),
+            "decision_id": auth.get("decision_id"),
+            "account_id": auth.get("account_id"),
+        } if auth else None,
+        "authorization_count": len(index),
+        "limitations": "Telemetry only. No live orders, no approval actions from this viewer.",
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = self.path.split("?", 1)[0]
@@ -108,6 +149,14 @@ class Handler(BaseHTTPRequestHandler):
             mime = "application/json"
         elif route == "/api/safety":
             body = json.dumps(_safety_payload()).encode()
+            mime = "application/json"
+        elif route == "/api/execution-safety":
+            try:
+                payload = execution_safety_payload(ROOT)
+            except Exception as exc:  # noqa: BLE001 - fail closed, viewer keeps working
+                payload = {"read_only": True, "status": "unavailable",
+                           "reason": f"{type(exc).__name__}: {exc}"}
+            body = json.dumps(payload).encode()
             mime = "application/json"
         elif route == "/api/session":
             body = json.dumps(trading_window()).encode()

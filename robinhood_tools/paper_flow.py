@@ -44,6 +44,36 @@ class SignalOrder:
     # Bracket exits for buys (entry limit must sit between stop and target).
     take_profit_price: Decimal | None = None
     bracket_stop_price: Decimal | None = None
+    authorization_id: str | None = None
+
+
+def require_order_authorization(order: "SignalOrder", root: Path) -> tuple[bool, str]:
+    """Broker-boundary gate: buys need a consumed authorization when enabled.
+
+    Exits (sells) are never blocked by an expired entry authorization.
+    """
+    from .execution_authorization import enforcement_enabled, gateway
+
+    if order.side != "buy" or not enforcement_enabled():
+        return True, "not an enforced entry"
+    if not order.authorization_id:
+        return False, "entry order has no execution authorization"
+    try:
+        import json
+        latest = json.loads((root / "outputs/orchestrator/latest.json").read_text(
+            encoding="utf-8"))
+        run_id = str(latest.get("run_id", ""))
+        decision = json.loads((root / "outputs/orchestrator" / run_id / "decision.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return False, f"gate decision unavailable: {type(exc).__name__}: {exc}"
+    notional = float(order.quantity * order.limit_price)
+    return gateway(
+        authorization_id=order.authorization_id, root=root, decision=decision,
+        artifacts=[], strategy_id=str(decision.get("strategy_id", "orchestrator-research-long")),
+        symbol=order.symbol, side=order.side, quantity=float(order.quantity),
+        notional=notional, risk=notional * 0.25,
+        broker="alpaca", account_id=str(latest.get("account_id", "paper-default")))
 
 
 def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: SignalOrder,
@@ -67,6 +97,10 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
 
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
+    # ADR 0002 (DRAFT): the real broker boundary. No-op while disabled.
+    auth_ok, auth_reason = require_order_authorization(order, Path(env_path))
+    if not auth_ok:
+        raise PolicyViolation(f"execution authorization: {auth_reason}")
     db.require_no_symbol_cooldown(order.symbol, today=today.isoformat())
     if order.side == "buy":
         # Per-symbol loss memory: a loser gets a rest before it gets

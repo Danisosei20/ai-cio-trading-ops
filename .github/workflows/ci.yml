@@ -41,5 +41,13 @@ jobs:
       - run: coverage run -m unittest discover -s tests
       - run: coverage report
       - run: python scripts/secret_scan.py
+      # ADR 0002: fail CI on any NEW direct entry-order submission path.
+      - run: python scripts/check_execution_bypass.py
+      # Authorization / short-borrow / entry-risk replay tests are part of
+      # `unittest discover` above; they require no market credentials.
+      - run: python -m unittest discover -s tests -p 'test_execution_authorization.py'
+      - run: python -m unittest discover -s tests -p 'test_execution_handoff.py'
+      - run: python -m unittest discover -s tests -p 'test_short_eligibility.py'
+      - run: python -m unittest discover -s tests -p 'test_entry_risk.py'
       - run: pip-audit -r requirements-dev.lock
       - run: python -m json.tool config/approval_routes.example.json >/dev/null

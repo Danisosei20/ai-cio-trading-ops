@@ -287,6 +287,23 @@ def main(argv=None) -> int:
                             client_order_id=f"{s['ticker']}:{today}:{s['setup']}")
                         sm.transition(trade.id, TradeState.SIGNAL_FOUND, "scout detected setup")
                 allowed, why = desk_verdict(ROOT)
+                if not args.dry_run and allowed:
+                    # ADR 0002 (DRAFT): when enforcement is enabled, a fresh
+                    # deterministic authorization is required and consumed here.
+                    # With the flag off, legacy scheduling behavior is unchanged.
+                    try:
+                        from robinhood_tools.execution_authorization import enforcement_enabled
+                        if enforcement_enabled():
+                            from scripts.desk_orchestrator import read_latest
+                            from scripts.execution_handoff import require_for_run
+                            decision_doc = read_latest(ROOT) or {}
+                            auth_ok, auth_why = require_for_run(ROOT, decision_doc)
+                            if not auth_ok:
+                                allowed = False
+                                why = f"execution authorization: {auth_why}"
+                    except Exception as exc:  # noqa: BLE001 - fail closed when enabled
+                        allowed = False
+                        why = f"execution authorization error: {type(exc).__name__}: {exc}"
                 if not args.dry_run and not allowed:
                     _log(f"order gate blocked ({why}); no orders for {new_tickers}")
                 elif not args.dry_run:

@@ -407,6 +407,24 @@ def _release_position(ticker: str, direction: str, notional: float) -> None:
         _log(f"risk release failed {ticker}: {type(exc).__name__}: {exc}")
 
 
+def require_short_eligibility(plan: dict, transport) -> tuple[bool, str]:
+    """Fail-closed broker eligibility gate for NEW short entries only.
+
+    Sell-to-close / buy-to-cover exits are not short entries and must remain
+    operational. Verification errors always reject the entry.
+    """
+    if plan.get("direction") != "short":
+        return True, "not a short entry"
+    try:
+        from robinhood_tools.short_eligibility import fetch_short_eligibility
+        result = fetch_short_eligibility(plan["ticker"], transport)
+    except Exception as exc:  # noqa: BLE001 - verification failure is not an approval
+        return False, f"short eligibility verification failed: {type(exc).__name__}: {exc}"
+    if not result.get("eligible"):
+        return False, f"short entry rejected: {result.get('reason')}"
+    return True, result["reason"]
+
+
 def _place_order(plan: dict) -> tuple[bool, str, str | None]:
     """Place an Alpaca paper order via place_signal_order.
 
@@ -427,6 +445,12 @@ def _place_order(plan: dict) -> tuple[bool, str, str | None]:
         from robinhood_tools.alpaca_paper import AlpacaPaperBackend, AlpacaPaperHttpTransport
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
         backend.transport.request("GET", "/v2/account")
+
+        # Broker short eligibility must be proven before a new short is opened.
+        short_ok, short_reason = require_short_eligibility(plan, backend.transport)
+        if not short_ok:
+            _log(f"short entry blocked: {short_reason}")
+            return False, short_reason, None
 
         # Build a simple snapshot object
         class _Snap:

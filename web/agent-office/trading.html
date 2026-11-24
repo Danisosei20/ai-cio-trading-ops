@@ -266,6 +266,11 @@
     <div id="scorecard"></div>
   </section>
 
+  <section class="card full" id="execution-safety">
+    <h2>Execution Safety</h2>
+    <div id="execution-safety-body" class="dim">Loading authorization state…</div>
+  </section>
+
   <section class="card full">
     <h2>Recent Decisions</h2>
     <div id="shadows"></div>
@@ -606,6 +611,7 @@
     try { renderStrategyPerf(data.strategy_performance); } catch (e) { showError("performance: " + e.message); }
     try { renderScorecard(data.scorecard); } catch (e) { showError("scorecard: " + e.message); }
     try { renderShadows(data.recent_shadows); } catch (e) { showError("shadows: " + e.message); }
+    try { refreshExecutionSafety(); } catch (e) { showError("execution safety: " + e.message); }
     try {
       var stamp = data.generated_at || new Date().toISOString();
       byId("clock").textContent = stamp.replace("T", " ").slice(0, 19);
@@ -613,8 +619,29 @@
     } catch (e) { /* ignore clock errors */ }
   }
 
+  async function refreshExecutionSafety() {
+    var node = byId("execution-safety-body");
+    if (!node) return;
+    try {
+      var res = await fetch("/api/execution-safety");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var s = await res.json();
+      var a = s.authorization || {};
+      node.textContent = "verdict: " + (s.gate_verdict || "—")
+        + " | gate run: " + (s.gate_run_id || "—")
+        + " | enforcement: " + (s.enforcement_enabled ? "ON" : "OFF (ADR 0002 not approved)")
+        + " | kill switch: " + (s.kill_switch ? "ENGAGED" : "clear")
+        + " | authorization: " + (a.id ? (a.state + " exp " + (a.expires_at || "—")) : "none")
+        + " | " + (s.advisor_state || "");
+    } catch (e) {
+      node.textContent = "execution safety telemetry unavailable — " + e.message;
+    }
+  }
+
   refresh();
+  refreshExecutionSafety();
   setInterval(refresh, REFRESH_MS);
+  setInterval(refreshExecutionSafety, REFRESH_MS);
 })();
 </script>
 </body>
