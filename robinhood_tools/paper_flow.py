@@ -45,16 +45,23 @@ class SignalOrder:
     take_profit_price: Decimal | None = None
     bracket_stop_price: Decimal | None = None
     authorization_id: str | None = None
+    decision_id: str | None = None
+    strategy_id: str | None = None
+    # "open"/"increase" are risk-increasing; "reduce"/"close" are exits.
+    position_effect: str = "open"
 
 
 def require_order_authorization(order: "SignalOrder", root: Path) -> tuple[bool, str]:
-    """Broker-boundary gate: buys need a consumed authorization when enabled.
+    """Broker-boundary gate for risk-increasing orders when enforcement is on.
 
-    Exits (sells) are never blocked by an expired entry authorization.
+    The position effect — not the order side — decides enforcement: short opens
+    (sell/open) are gated, while buy-to-cover (buy/close), stops and flatten
+    (sell/close) remain exempt from a fresh entry authorization.
     """
     from .execution_authorization import enforcement_enabled, gateway
 
-    if order.side != "buy" or not enforcement_enabled():
+    entry_effect = order.position_effect in ("open", "increase")
+    if not entry_effect or not enforcement_enabled():
         return True, "not an enforced entry"
     if not order.authorization_id:
         return False, "entry order has no execution authorization"
@@ -68,12 +75,18 @@ def require_order_authorization(order: "SignalOrder", root: Path) -> tuple[bool,
     except (OSError, ValueError) as exc:
         return False, f"gate decision unavailable: {type(exc).__name__}: {exc}"
     notional = float(order.quantity * order.limit_price)
+    from . import execution_authorization as _ea
+    child_record = _ea.load_authorization(order.authorization_id, root)
+    account_id = (child_record or {}).get("account_id") or str(latest.get("account_id", "paper-default"))
+    strategy_id = (child_record or {}).get("strategy_id") or order.strategy_id or str(
+        decision.get("strategy_id", "orchestrator-research-long"))
     return gateway(
         authorization_id=order.authorization_id, root=root, decision=decision,
-        artifacts=[], strategy_id=str(decision.get("strategy_id", "orchestrator-research-long")),
+        artifacts=[],
+        strategy_id=strategy_id,
         symbol=order.symbol, side=order.side, quantity=float(order.quantity),
         notional=notional, risk=notional * 0.25,
-        broker="alpaca", account_id=str(latest.get("account_id", "paper-default")))
+        broker="alpaca", account_id=account_id, environment="paper")
 
 
 def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: SignalOrder,
@@ -98,7 +111,8 @@ def place_signal_order(*, settings, snapshot: Sp500Snapshot | None, order: Signa
     db = database or CioDatabase(settings.database_path)
     db.require_not_killed()
     # ADR 0002 (approved): the real broker boundary. No-op while disabled.
-    auth_ok, auth_reason = require_order_authorization(order, Path(env_path))
+    repo_root = Path(__file__).resolve().parents[1]
+    auth_ok, auth_reason = require_order_authorization(order, repo_root)
     if not auth_ok:
         raise PolicyViolation(f"execution authorization: {auth_reason}")
     db.require_no_symbol_cooldown(order.symbol, today=today.isoformat())

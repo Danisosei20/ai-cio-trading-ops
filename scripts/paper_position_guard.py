@@ -96,7 +96,8 @@ def main(argv=None) -> int:
                 result = place_signal_order(
                     settings=settings, snapshot=None,
                     order=SignalOrder(symbol=symbol, side="sell", quantity=abs(qty),
-                                      limit_price=mark.quantize(Decimal("0.01"))),
+                                      limit_price=mark.quantize(Decimal("0.01")),
+                                      position_effect="close"),
                     env=env)
                 rec.update({"action": "sell_placed", "order_id": result["order_id"],
                             "status": result["status"]})

@@ -490,6 +490,24 @@ def _place_order(plan: dict) -> tuple[bool, str, str | None]:
             take_profit_price=Decimal(str(plan["target"])) if plan.get("target") else None,
             bracket_stop_price=Decimal(str(plan["stop"])) if plan.get("stop") else None,
         )
+        # Risk-increasing entries (long or short) carry a per-order child
+        # authorization derived from the validated 09:45 parent. Exits never do.
+        if plan.get("authorization_id"):
+            import dataclasses
+            from robinhood_tools import authorization_propagation as ap
+            from robinhood_tools import execution_authorization as ea
+            parent = ea.load_authorization(plan["authorization_id"], Path(__file__).resolve().parents[1])
+            if parent is None or not ea.verify_integrity(parent) or not ea.enforcement_enabled():
+                return False, "entry authorization unavailable", None
+            child = ap.derive_and_store(
+                parent=parent, root=Path(__file__).resolve().parents[1],
+                symbol=plan["ticker"], side=side,
+                quantity=float(plan["qty"]), notional=float(plan["qty"] * plan["entry"]),
+                risk=float(plan["qty"] * plan["entry"]) * 0.25,
+                strategy_id="daytrade")
+            order = dataclasses.replace(
+                order, authorization_id=child["authorization_id"],
+                position_effect="open", strategy_id="daytrade")
         result = place_signal_order(
             settings=settings, snapshot=snapshot,
             order=order, database=db, service=service)
@@ -543,7 +561,8 @@ def _place_order_with_timeout(plan: dict, timeout_sec: int = 30) -> tuple[bool, 
     return box.get("result", (False, "order error: no result", None))
 
 
-def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
+def run_cycle(dry_run: bool = False, tickers: str | None = None,
+            authorization_id: str | None = None) -> dict:
     """Run one intraday trading cycle.
 
     1. Scout setups (long + short)
@@ -634,6 +653,8 @@ def run_cycle(dry_run: bool = False, tickers: str | None = None) -> dict:
 
         # Validate setup (fail-closed, pass open positions for sell-to-close)
         approved, reason, plan = _validate_setup(rec, equity, open_positions)
+        if approved and authorization_id and plan.get("direction") in ("long", "short"):
+            plan["authorization_id"] = authorization_id
         if not approved:
             result["blocks"].append({
                 "ticker": ticker, "direction": direction,
@@ -878,6 +899,7 @@ def _exit_position(trade, current_price: float, reason: str) -> tuple[bool, str,
             max_order_value=qty * Decimal(str(current_price)),
             take_profit_price=None,
             bracket_stop_price=None,
+            position_effect="close",
         )
         result = place_signal_order(
             settings=settings, snapshot=snapshot,
@@ -906,6 +928,21 @@ def plan_from_trade(trade) -> dict:
         "qty": trade.filled_qty or trade.qty,
         "trade_id": trade.id,
     }
+
+
+def _parent_authorization_id() -> str | None:
+    """Return the validated 09:45 parent id when enforcement is enabled."""
+    from robinhood_tools.execution_authorization import enforcement_enabled
+    if not enforcement_enabled():
+        return None
+    try:
+        from scripts.desk_orchestrator import read_latest
+        from scripts.execution_handoff import parent_id_for_run
+        root = Path(__file__).resolve().parents[1]
+        latest = read_latest(root) or {}
+        return parent_id_for_run(root, str(latest.get("run_id", "")))
+    except Exception:  # noqa: BLE001 - fail closed downstream
+        return None
 
 
 def main(argv=None) -> int:
@@ -954,7 +991,8 @@ def main(argv=None) -> int:
 
         # Scan for new entries (unless flatten time or manage-only)
         if not args.manage_only and not _is_flatten_time():
-            cycle_result = run_cycle(dry_run=args.dry_run, tickers=args.tickers)
+            cycle_result = run_cycle(dry_run=args.dry_run, tickers=args.tickers,
+                                     authorization_id=_parent_authorization_id())
             if cycle_result["entries"]:
                 _log(f"entries: {cycle_result['summary']['entries_placed']} placed, "
                      f"{cycle_result['summary']['blocks']} blocked")

@@ -33,7 +33,8 @@ class PaperFlowGatewayTests(unittest.TestCase):
                 ok, reason = paper_flow.require_order_authorization(
                     paper_flow.SignalOrder(symbol="AAPL", side="sell",
                                            quantity=Decimal("1"),
-                                           limit_price=Decimal("100")),
+                                           limit_price=Decimal("100"),
+                                           position_effect="close"),
                     Path(td))
         self.assertTrue(ok, reason)
 

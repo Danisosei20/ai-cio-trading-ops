@@ -160,7 +160,8 @@ def filter_new_setups(scout: dict, traded: list[dict]) -> list[str]:
     return new_tickers
 
 
-def run_judge(tickers: list[str], dry_run: bool = False) -> None:
+def run_judge(tickers: list[str], dry_run: bool = False,
+              authorization_id: str | None = None) -> None:
     """Run paper_auto --day-trade on the given tickers."""
     cmd = [str(TA_PY), str(AUTO_SCRIPT),
            "--day-trade",
@@ -177,6 +178,8 @@ def run_judge(tickers: list[str], dry_run: bool = False) -> None:
            "--quick-model", "nvidia/nemotron-3.5-lightning-30b-a3b",
            "--deep-model", "nvidia/nemotron-3.5-lightning-30b-a3b",
            "--max-notional", "2000"]
+    if authorization_id:
+        cmd += ["--authorization-id", authorization_id]
     if dry_run:
         cmd.append("--dry-run")
     try:
@@ -287,6 +290,7 @@ def main(argv=None) -> int:
                             client_order_id=f"{s['ticker']}:{today}:{s['setup']}")
                         sm.transition(trade.id, TradeState.SIGNAL_FOUND, "scout detected setup")
                 allowed, why = desk_verdict(ROOT)
+                parent_authorization_id = None
                 if not args.dry_run and allowed:
                     # ADR 0002 (approved): when enforcement is enabled, a fresh
                     # deterministic authorization is required and consumed here.
@@ -295,9 +299,15 @@ def main(argv=None) -> int:
                         from robinhood_tools.execution_authorization import enforcement_enabled
                         if enforcement_enabled():
                             from scripts.desk_orchestrator import read_latest
-                            from scripts.execution_handoff import require_for_run
+                            from scripts.execution_handoff import require_for_run, parent_id_for_run
                             decision_doc = read_latest(ROOT) or {}
                             auth_ok, auth_why = require_for_run(ROOT, decision_doc)
+                            if auth_ok:
+                                parent_authorization_id = parent_id_for_run(
+                                    ROOT, str(decision_doc.get("run_id", "")))
+                                if not parent_authorization_id:
+                                    allowed = False
+                                    why = "gate authorization unavailable for propagation"
                             if not auth_ok:
                                 allowed = False
                                 why = f"execution authorization: {auth_why}"
@@ -308,7 +318,7 @@ def main(argv=None) -> int:
                     _log(f"order gate blocked ({why}); no orders for {new_tickers}")
                 elif not args.dry_run:
                     _log(f"order gate open ({why}); judging {new_tickers}")
-                    run_judge(new_tickers)
+                    run_judge(new_tickers, authorization_id=parent_authorization_id)
                     # Record traded setups
                     today = datetime.now(ET).date().isoformat()
                     for s in scout.get("setups", []):

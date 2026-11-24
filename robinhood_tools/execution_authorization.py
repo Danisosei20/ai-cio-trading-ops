@@ -230,6 +230,24 @@ def load_authorization(auth_id: str, root: Path) -> dict | None:
     return json.loads(row[0]) if row else None
 
 
+def children_of(parent_id: str, root: Path) -> list[dict]:
+    """Return all child authorizations derived from a parent, from durable state."""
+    conn = sqlite3.connect(str(_db_path(root)), timeout=10)
+    try:
+        rows = conn.execute("SELECT body FROM authorizations").fetchall()
+    finally:
+        conn.close()
+    out = []
+    for (body,) in rows:
+        try:
+            doc = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if doc.get("parent_authorization_id") == parent_id:
+            out.append(doc)
+    return out
+
+
 def validate_authorization(record: Any, *, root: Path, decision: dict,
                            artifacts: list[Path], strategy_id: str, symbol: str,
                            side: str, quantity: float, notional: float, risk: float,
