@@ -1,0 +1,28 @@
+{
+  "generated_at": "2026-11-24T11:28:10.027859-05:00",
+  "track": "risk_off_short_shadow",
+  "shadow_only": true,
+  "orders_submitted": 0,
+  "entry_permission": "none - policy unchanged; RISK_OFF still blocks new risk desk-wide",
+  "enforcement_enabled": false,
+  "backtest_window_days": 60,
+  "backtest_tickers": [
+    "QQQ",
+    "SPY",
+    "NVDA",
+    "AAPL",
+    "AMD",
+    "TSLA"
+  ],
+  "backtest_caveats": [
+    "Time Machine odds gate stubbed (not replayable historically)",
+    "zone verdict taken at the MIN_BARS bar, not live scout time",
+    "regime judged on SPY closes up to the prior session"
+  ],
+  "risk_off_short_samples": 0,
+  "risk_off_short_net_pnl": 0.0,
+  "per_ticker_risk_off": [],
+  "evidence_sufficiency": "insufficient",
+  "decision": "no policy change proposed - collect more RISK_OFF samples in shadow mode before any review request",
+  "note": "2026-11-24: 60d real-data replay, 6 shorts, all RISK_ON; no RISK_OFF samples."
+}
