@@ -226,6 +226,13 @@ def main(argv=None) -> int:
             else f" | odds: n/a ({odds.get('reason', '')[:50]})"
         print(f"{ticker}: {rec['setup']} - {rec['reason']}{odds_txt}")
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    # Append-only point-in-time snapshot; live routing and gates are unchanged.
+    try:
+        from scripts.setup_archive import archive_setup  # noqa: PLC0415
+
+        archive_setup(out, root=ROOT)
+    except Exception:  # noqa: BLE001 - archiving must never break the scout
+        pass
     live = [r for r in report["setups"] if r["setup"] != "range"]
     print(f"daytrade_scout: {len(live)} live setup(s) -> {out}")
     return 0

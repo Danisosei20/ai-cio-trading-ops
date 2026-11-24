@@ -84,11 +84,30 @@ def _broker_state(root: Path, date: str) -> dict:
         from robinhood_tools.settings import load_env  # noqa: PLC0415
         env = {**load_env(str(root / ".env")), **__import__("os").environ}
         backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
+        positions = backend.list_positions()
+        account = backend.transport.request("GET", "/v2/account")
+        all_orders = backend.list_all_orders(account_id=str(account.get("id", "")))
+        def session_date(order):
+            value = order.get("filled_at") or order.get("updated_at")
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00")) \
+                    .astimezone(ET).date().isoformat()
+            except (ValueError, TypeError):
+                return ""
+        filled = [o for o in all_orders
+                  if str(o.get("status", "")).lower() == "filled" and
+                  session_date(o) == date]
         return {
-            "positions": len(backend.list_positions()),
+            "positions": len(positions),
+            "unrealized_pl_reported": round(sum(
+                float(p.get("unrealized_pl") or 0) for p in positions), 2),
             "open_orders": len(backend.list_open_orders()),
+            "filled_orders_today": len(filled) if isinstance(filled, list) else 0,
+            "account_equity": account.get("equity") if isinstance(account, dict) else None,
+            "account_last_equity": account.get("last_equity") if isinstance(account, dict) else None,
             "clock": backend.market_clock(),
             "source": "read-only Alpaca paper GET",
+            "note": "Broker-reported values only; no inferred or fabricated P/L.",
         }
     except Exception as exc:  # noqa: BLE001 - never fail open
         return {"status": "not_verified", "reason": f"{type(exc).__name__}: {exc}"}
@@ -102,12 +121,22 @@ def build_lifecycle(root: Path, date: str, *, now: str | None = None) -> dict:
         info = tasks.get(task_name) or {}
         art = _artifact_state(root, artifact, date)
         last = str(info.get("Last") or "")
-        if _dated_today(last, date) and str(info.get("Result")) == "0":
+        result = "" if info.get("Result") is None else str(info.get("Result"))
+        if _dated_today(last, date) and result == "0":
             schedule_state = "Completed"
-        elif _dated_today(last, date):
+        elif _dated_today(last, date) and result not in {"", "267009"}:
             schedule_state = "Failed"
         else:
             schedule_state = "Not verified"
+        completed = schedule_state == "Completed" and bool(art.get("dated_today"))
+        if completed:
+            status = "VERIFIED"
+        elif schedule_state == "Failed":
+            status = "FAILED"
+        elif _dated_today(last, date) or schedule_state == "Completed":
+            status = "INCOMPLETE"
+        else:
+            status = "NOT TESTED"
         events.append({
             "event": label,
             "scheduled_state": schedule_state,
@@ -115,8 +144,8 @@ def build_lifecycle(root: Path, date: str, *, now: str | None = None) -> dict:
             "scheduler_result": info.get("Result"),
             "next_run": info.get("Next") or None,
             "artifact": art,
-            "verdict": ("Completed" if schedule_state == "Completed" and
-                        art.get("dated_today") else "Not verified"),
+            "verdict": "Completed" if completed else "Not verified",
+            "status": status,
         })
     return {
         "track": "eod_lifecycle",

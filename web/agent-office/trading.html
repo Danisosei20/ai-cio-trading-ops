@@ -280,6 +280,13 @@
     <div id="intraday-decision-pipeline-note" class="dim"></div>
   </section>
 
+  <section class="card full" id="research-performance">
+    <h2>Research Performance &amp; Short Opportunity Diagnostics</h2>
+    <div id="research-performance-status" class="dim">Loading research metrics…</div>
+    <div id="research-performance-body"></div>
+    <div id="research-performance-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="execution-safety">
     <h2>Execution Safety</h2>
     <div id="execution-safety-body" class="dim">Loading authorization state…</div>
@@ -794,14 +801,83 @@
     }
   }
 
+  async function refreshResearchPerformance() {
+    var statusEl = byId("research-performance-status");
+    var bodyEl = byId("research-performance-body");
+    var noteEl = byId("research-performance-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    function unavailable(reason) {
+      statusEl.textContent = "data unavailable" + (reason ? " — " + reason : "");
+      bodyEl.innerHTML = emptyBox("No research metric is shown without its source artifact.");
+      noteEl.textContent = "Missing metrics are not evidence of zero research.";
+    }
+    try {
+      var res = await fetch("/api/research-performance", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || d.status !== "ok") { unavailable(d && d.reason); return; }
+      statusEl.textContent = d.session_date + " · " + d.comparison_status
+        + " · orders " + d.orders_submitted;
+      var champ = d.champion || {};
+      var chall = d.challenger || {};
+      var shortDiag = d.short_diagnostics || {};
+      var ops = d.operational || {};
+      var metrics = [
+        ["Champion latency median (s)", champ.median_seconds],
+        ["Champion latency P95 (s)", champ.p95_seconds],
+        ["Champion completed", champ.completed],
+        ["Challenger mode", chall.mode || "unavailable"],
+        ["Challenger latency median (s)", chall.median_seconds],
+        ["Challenger latency P95 (s)", chall.p95_seconds],
+        ["Challenger batch wall (s)", chall.batch_wall_seconds],
+        ["Challenger timeouts", chall.timeouts],
+        ["Comparison status", d.comparison_status],
+        ["Bearish decisions received", shortDiag.bearish_decisions],
+        ["Technical evaluations", shortDiag.technical_evaluations],
+        ["Valid shadow setups", shortDiag.valid_shadow_setups],
+        ["Data-quality failures", shortDiag.data_quality_failures],
+        ["Borrow failures", shortDiag.borrow_failures],
+        ["Regime blocks", shortDiag.regime_blocks],
+        ["Model provider", ops.model_provider],
+        ["Broker connection", ops.broker_connection],
+        ["Authorization enforcement", ops.authorization_enforcement],
+        ["Strategy permissions", ops.strategy_permissions],
+        ["Last EOD verification", ops.last_eod_verification]
+      ];
+      var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table></div><div class='side'>";
+      var reasons = shortDiag.rejections_by_reason || {};
+      var keys = Object.keys(reasons);
+      if (!keys.length) {
+        html += emptyBox("No rejection reasons in the latest shadow routing report.");
+      } else {
+        html += "<table><thead><tr><th>Rejection reason</th><th>Count</th></tr></thead><tbody>";
+        for (var j = 0; j < keys.length; j++) {
+          html += "<tr><td>" + esc(keys[j]) + "</td><td>" + esc(reasons[keys[j]]) + "</td></tr>";
+        }
+        html += "</tbody></table>";
+      }
+      html += "</div></div>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = d.note || "Shadow results are not realized profit.";
+    } catch (e) {
+      unavailable(e && e.message);
+    }
+  }
+
   refresh();
   refreshExecutionSafety();
   refreshOpportunityAnalysis();
   refreshIntradayDecisionPipeline();
+  refreshResearchPerformance();
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);
   setInterval(refreshOpportunityAnalysis, REFRESH_MS);
   setInterval(refreshIntradayDecisionPipeline, REFRESH_MS);
+  setInterval(refreshResearchPerformance, REFRESH_MS);
 })();
 </script>
 </body>

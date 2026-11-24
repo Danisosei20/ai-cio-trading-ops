@@ -48,8 +48,11 @@ class LatencyRecorder:
 
     def finish(self, symbol: str, phase: str, *, status: str = "ok",
                reason: str = "") -> PhaseTiming:
-        started, stamp = self._starts.pop((symbol, phase),
-                                          (self._clock(), self._now()))
+        started, stamp = self._starts.pop((symbol, phase), (None, self._now()))
+        if started is None:
+            return PhaseTiming(phase=phase, started_at=stamp, ended_at=stamp,
+                               duration_seconds=0.0, status="unstarted",
+                               reason="finish() called without start()")
         item = PhaseTiming(phase=phase, started_at=stamp, ended_at=self._now(),
                            duration_seconds=round(max(0.0, self._clock() - started), 6),
                            status=status, reason=reason[:300])
