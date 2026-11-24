@@ -842,7 +842,16 @@
         ["Broker connection", ops.broker_connection],
         ["Authorization enforcement", ops.authorization_enforcement],
         ["Strategy permissions", ops.strategy_permissions],
-        ["Last EOD verification", ops.last_eod_verification]
+        ["Last EOD verification", ops.last_eod_verification],
+        ["Real-time SIP entitlement", (d.market_data || {}).categories ? ((d.market_data.categories || {})["snapshot:sip"] || "not tested") : "not tested"],
+        ["Permitted latest feeds", ((d.market_data || {}).permitted_latest_feeds || []).join(", ") || "not tested"],
+        ["Short lineage setup mismatch", ((d.short_lineage || {}).counts || {}).setup_mismatch],
+        ["Short lineage future data", ((d.short_lineage || {}).counts || {}).future_data],
+        ["Short lineage missing setup", ((d.short_lineage || {}).counts || {}).missing_setup],
+        ["NIM benchmark mode", (d.nim_benchmark || {}).mode || "unavailable"],
+        ["NIM live speedup", (d.nim_benchmark || {}).speedup],
+        ["NIM responses / timeouts", (d.nim_benchmark || {}).parallel_responses + " / " + (d.nim_benchmark || {}).parallel_timeouts],
+        ["NIM benchmark at", (d.nim_benchmark || {}).generated_at]
       ];
       var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
       for (var i = 0; i < metrics.length; i++) {

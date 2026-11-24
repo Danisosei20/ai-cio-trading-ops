@@ -61,8 +61,16 @@ class RealtimeStream:
     ) -> None:
         self.api_key = api_key
         self.secret_key = secret_key
-        self.feed = feed
-        self.ws_url = DATA_WS_URL_IEX if feed == "iex" else DATA_WS_URL_SIP
+        normalized = str(feed).strip().lower()
+        if normalized == "iex":
+            self.ws_url = DATA_WS_URL_IEX
+        elif normalized == "sip":
+            self.ws_url = DATA_WS_URL_SIP  # requires paid real-time SIP entitlement
+        elif normalized == "test":
+            self.ws_url = DATA_WS_URL_TEST
+        else:
+            raise ValueError(f"Unsupported real-time feed: {feed!r}")
+        self.feed = normalized
         self.max_reconnect_attempts = max_reconnect_attempts
         self.reconnect_base_delay = reconnect_base_delay
         self.on_reconnect = on_reconnect
