@@ -318,6 +318,19 @@ class Handler(BaseHTTPRequestHandler):
                            "orders_submitted": 0, "entry_permission": "none"}
             body = json.dumps(payload).encode()
             mime = "application/json"
+        elif route == "/api/research-performance":
+            # Read-only research/short diagnostics; fail closed on bad artifacts.
+            try:
+                from scripts.research_performance import (  # noqa: E402
+                    research_performance_payload)
+
+                payload = research_performance_payload(ROOT)
+            except Exception as exc:  # noqa: BLE001
+                payload = {"status": "unavailable",
+                           "reason": f"{type(exc).__name__}: {exc}",
+                           "orders_submitted": 0, "entry_permission": "none"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"

@@ -124,6 +124,7 @@ def route_bearish_candidate(
         "orders_submitted": 0,
         "enforcement_enabled": False,
         "entry_permission": "none - research only; RISK_OFF still blocks new risk desk-wide",
+        "approved": False,
         "decision_class": "rejected",
         "plan": None,
         "eligibility": None,
@@ -145,6 +146,13 @@ def route_bearish_candidate(
     if not setup or not equity:
         record["rejections"].append(rejection("evidence", "missing_setup_or_equity",
                                               "point-in-time setup/equity unavailable"))
+        return record
+    if str(setup.get("setup") or "") != "short_breakdown":
+        # A long-reclaim/range setup must never be fed to the short validator.
+        record["rejections"].append(rejection(
+            "setup", "setup_direction_mismatch",
+            f"bearish research requires an independent short_breakdown setup; "
+            f"got {setup.get('setup')!r}"))
         return record
     if intent.position_effect != "open":
         record["rejections"].append(rejection("position", "not_a_new_short",
@@ -197,7 +205,7 @@ def route_bearish_candidate(
         return finish()
 
     try:
-        risk = as_result(check_risk(plan))
+        risk = as_result(check_risk({**plan, "equity": equity}))
     except Exception as exc:  # noqa: BLE001
         record["rejections"].append(rejection("risk", "risk_check_error", exc))
         return finish()
