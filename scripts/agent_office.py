@@ -306,6 +306,18 @@ class Handler(BaseHTTPRequestHandler):
                            "orders_submitted": 0, "entry_permission": "none"}
             body = json.dumps(payload).encode()
             mime = "application/json"
+        elif route == "/api/intraday-decision-pipeline":
+            # Read-only decision telemetry; fail closed on a broken artifact.
+            try:
+                from scripts.intraday_pipeline import intraday_pipeline_payload  # noqa: E402
+
+                payload = intraday_pipeline_payload(ROOT)
+            except Exception as exc:  # noqa: BLE001
+                payload = {"status": "unavailable",
+                           "reason": f"{type(exc).__name__}: {exc}",
+                           "orders_submitted": 0, "entry_permission": "none"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"

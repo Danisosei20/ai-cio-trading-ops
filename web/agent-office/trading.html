@@ -273,6 +273,13 @@
     <div id="opportunity-analysis-note" class="dim"></div>
   </section>
 
+  <section class="card full" id="intraday-decision-pipeline">
+    <h2>Intraday Decision Pipeline</h2>
+    <div id="intraday-decision-pipeline-status" class="dim">Loading pipeline…</div>
+    <div id="intraday-decision-pipeline-body"></div>
+    <div id="intraday-decision-pipeline-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="execution-safety">
     <h2>Execution Safety</h2>
     <div id="execution-safety-body" class="dim">Loading authorization state…</div>
@@ -725,12 +732,76 @@
     }
   }
 
+  async function refreshIntradayDecisionPipeline() {
+    var statusEl = byId("intraday-decision-pipeline-status");
+    var bodyEl = byId("intraday-decision-pipeline-body");
+    var noteEl = byId("intraday-decision-pipeline-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    function unavailable(reason) {
+      statusEl.textContent = "data unavailable" + (reason ? " — " + reason : "");
+      bodyEl.innerHTML = emptyBox("Pipeline state is unknown; no path is inferred.");
+      noteEl.textContent = "A missing artifact is not evidence of no activity.";
+    }
+    try {
+      var res = await fetch("/api/intraday-decision-pipeline", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || d.status !== "ok") { unavailable(d && d.reason); return; }
+      statusEl.textContent = "as of " + String(d.as_of || "").replace("T", " ").slice(0, 19)
+        + " · " + d.active_scan_cycle + (d.session_complete ? "" : " · session INCOMPLETE");
+      var metrics = [
+        ["Market data", d.market_data_status], ["Active cycle", d.active_scan_cycle],
+        ["Symbols screened", d.symbols_screened], ["Long candidates", d.long_candidates],
+        ["Short candidates", d.short_candidates], ["Technical setups", d.technical_setups],
+        ["AI research completed", d.ai_research_completed], ["Pending research", d.pending_research],
+        ["Research timeouts", d.research_timeout_count],
+        ["Decision latency median (s)", (d.decision_latency || {}).median_seconds],
+        ["Decision latency P95 (s)", (d.decision_latency || {}).p95_seconds],
+        ["Risk approved", d.risk_approved], ["Risk blocked", d.risk_blocked],
+        ["Shadow-only candidates", d.shadow_only_candidates],
+        ["VIX blocks", (d.risk_summary || {}).vix_blocks],
+        ["RISK_OFF blocks", (d.risk_summary || {}).regime_blocks],
+        ["No short path", (d.risk_summary || {}).no_short_path],
+        ["Authorized orders", d.authorized_orders], ["Submitted orders", d.submitted_orders],
+        ["Actual fills", d.actual_fills], ["Current positions", d.current_positions],
+        ["Regime", d.regime]
+      ];
+      var html = "<div class='split'><div class='side'><table><thead><tr><th>Stage metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table></div><div class='side'>";
+      var rows = d.candidates || [];
+      if (!rows.length) {
+        html += emptyBox("No candidate decision paths in the latest report.");
+      } else {
+        html += "<table><thead><tr><th>Symbol</th><th>Decision path</th><th>Status</th><th>Reason</th></tr></thead><tbody>";
+        for (var j = 0; j < rows.length; j++) {
+          var row = rows[j];
+          var tag = row.technical ? "tag err"
+            : row.classification === "valid_policy_rejection" ? "tag block" : "tag";
+          html += "<tr><td>" + esc(row.symbol) + "</td><td>" + esc(row.path) + "</td>"
+            + "<td><span class='" + tag + "'>" + esc(row.classification) + "</span></td>"
+            + "<td>" + esc(row.reason) + "</td></tr>";
+        }
+        html += "</tbody></table>";
+      }
+      html += "</div></div>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = d.note || "";
+    } catch (e) {
+      unavailable(e && e.message);
+    }
+  }
+
   refresh();
   refreshExecutionSafety();
   refreshOpportunityAnalysis();
+  refreshIntradayDecisionPipeline();
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);
   setInterval(refreshOpportunityAnalysis, REFRESH_MS);
+  setInterval(refreshIntradayDecisionPipeline, REFRESH_MS);
 })();
 </script>
 </body>
