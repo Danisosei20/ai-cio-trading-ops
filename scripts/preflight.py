@@ -38,7 +38,6 @@ if str(ROOT) not in sys.path:
 
 REPO_ENV = ROOT / ".env"
 TA_ENV = ROOT.parent / "TradingAgents" / ".env"
-TA_PY = ROOT.parent / "TradingAgents" / ".venv" / "Scripts" / "python.exe"
 TASKS = ("AI-CIO-AutoTrade-0945", "AI-Desk-Watchdog-0950",
          "AI-Desk-ScoreShadows-1630", "AI-Desk-OptionsWatch-1510",
          "AI-Desk-WeeklyReview-1645", "AI-Desk-IntradayLoop",
@@ -298,16 +297,21 @@ def check_nim_judgment() -> None:
 
 
 def check_ta_venv() -> None:
-    if not TA_PY.exists():
-        record("FAIL", "TradingAgents venv", f"{TA_PY} missing")
-        return
-    proc = subprocess.run([str(TA_PY), "-c", "import tradingagents"],
-                          capture_output=True, text=True)
-    if proc.returncode == 0:
-        record("PASS", "TradingAgents venv", "imports tradingagents")
+    # Share the orchestrator's resolver so preflight and the live stages agree
+    # on which interpreter is the TradingAgents runtime (including the
+    # TRADINGAGENTS_VENV_PYTHON override). A missing/unimportable runtime is a
+    # hard FAIL; no silent fallback to the desk interpreter.
+    from scripts.ta_interpreter import (ENV_VAR, find_tradingagents_python,
+                                        ta_python_candidates)
+
+    path, errors = find_tradingagents_python(ROOT)
+    if path:
+        record("PASS", "TradingAgents venv", f"{path} imports tradingagents")
     else:
+        checked = ", ".join(str(p) for p in ta_python_candidates(ROOT))
         record("FAIL", "TradingAgents venv",
-               f"import failed: {(proc.stderr or '?').strip()[-120:]}")
+               f"no interpreter imports tradingagents (checked: {checked}). "
+               f"Set {ENV_VAR}; {'; '.join(errors)}")
 
 
 def check_broker() -> None:

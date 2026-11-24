@@ -7,7 +7,13 @@ REM      for the 15:45 flatten, and posts the buy rationale to Slack.
 REM Registered in Task Scheduler as AI-Desk-DayTrade-1030.
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
 set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
+set TRADINGAGENTS_VENV_PYTHON=%TA_PY%
 if not exist outputs mkdir outputs
+"%TA_PY%" -c "import tradingagents" >nul 2>&1
+if errorlevel 1 (
+  echo FATAL: %TA_PY% cannot import tradingagents; research stages fail closed.>>outputs\daytrade.log
+  exit /b 2
+)
 echo.>>outputs\daytrade.log
 echo === daytrade session %DATE% %TIME% ===>>outputs\daytrade.log
 "%TA_PY%" scripts\daytrade_scout.py>>outputs\daytrade.log 2>&1

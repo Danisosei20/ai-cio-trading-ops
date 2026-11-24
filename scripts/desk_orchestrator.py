@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, replace
@@ -28,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.desk_safety_status import read_env  # noqa: E402
 from scripts.desk_stage_agents import STAGES, StageSpec, StageReport, normalize  # noqa: E402
+from scripts.ta_interpreter import require_tradingagents_python  # noqa: E402
 
 _ET = ZoneInfo("America/New_York")
 _REQUIRED_AGENTS = tuple(spec.agent for spec in STAGES if spec.required)
@@ -368,9 +368,12 @@ def _artifact_mtime(root: Path, path: str) -> float | None:
 class _ExecFailure:
     """Minimal process stand-in when the launcher itself fails."""
 
-    def __init__(self, exc: OSError):
+    def __init__(self, exc: BaseException | str):
         self.returncode = 127
-        self.stderr = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, BaseException):
+            self.stderr = f"{type(exc).__name__}: {exc}"
+        else:
+            self.stderr = str(exc)
 
 
 def _skipped_report(spec: StageSpec, *, verdict: str, now_iso: str) -> StageReport:
@@ -391,7 +394,8 @@ def _skipped_report(spec: StageSpec, *, verdict: str, now_iso: str) -> StageRepo
 
 
 def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
-             now_iso: str | None = None) -> RunDecision:
+             now_iso: str | None = None,
+             _ta_python: str | None = None) -> RunDecision:
     """Execute one desk slot and record exactly one immutable run.
 
     ``0945`` is research-only: OrderAgent is never invoked. ``1020`` runs
@@ -399,45 +403,56 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
     the source of truth and is persisted only through ``write_run``; per-agent
     files are its ``reports/<agent>.json`` projections. ``now_iso`` is
     injectable for deterministic tests and defaults to the ET wall clock.
+    ``_ta_python`` is an explicit opt-out for isolated test environments with
+    mocked launchers; production always resolves and verifies the real venv.
     """
     if slot not in _SLOTS:
         raise ValueError(f"unknown slot {slot!r}; expected one of {_SLOTS}")
     root = Path(root)
     now_iso = now_iso or datetime.now(_ET).isoformat()
     symbol = _bar_symbol(root, run_id)
+    runtime_errors: list[str] = []
 
     def run_stage(spec: StageSpec) -> StageReport:
         argv = [_resolve(arg, run_id=run_id, symbol=symbol) for arg in spec.argv]
-        # The stage argv names .py files. Research stages need the LLM-capable
-        # TradingAgents venv; when it is unavailable the fallback still runs and
-        # any resulting error artifact now fails the stage (see artifact_error).
-        if argv and argv[0].endswith(".py"):
-            interpreter = sys.executable
-            if getattr(spec, "python", "") == "tradingagents":
-                configured = os.environ.get("TRADINGAGENTS_VENV_PYTHON", "")
-                if configured:
-                    candidate = Path(configured)
-                    if not candidate.is_absolute():
-                        candidate = root / candidate
-                else:
-                    ta_venv = root.parent / "TradingAgents" / ".venv"
-                    candidate = ta_venv / ("Scripts/python.exe" if os.name == "nt"
-                                           else "bin/python")
-                if candidate.exists():
-                    interpreter = str(candidate)
-            argv.insert(0, interpreter)
         artifact = _resolve(spec.primary_artifact, run_id=run_id, symbol=symbol)
+        artifacts = {artifact: _read_artifact(root, artifact)}
+        mtime = _artifact_mtime(root, artifact)
+        mtimes = {artifact: mtime} if mtime is not None else None
+
+        if argv and argv[0].endswith(".py"):
+            if getattr(spec, "python", "") == "tradingagents":
+                if _ta_python is not None:
+                    # Explicit isolated-test configuration with a mocked launcher.
+                    interpreter = _ta_python
+                else:
+                    try:
+                        interpreter = require_tradingagents_python(root)
+                    except RuntimeError as exc:
+                        # Fail closed: never fall back to an interpreter that
+                        # cannot import tradingagents. The stage fails and the
+                        # decision gate halts with the resolution error.
+                        runtime_errors.append(f"{spec.agent}: {exc}")
+                        proc = _ExecFailure(exc)
+                        return normalize(
+                            replace(spec, primary_artifact=artifact),
+                            proc=proc, artifacts=artifacts,
+                            now_iso=now_iso, mtimes=mtimes,
+                        )
+            else:
+                interpreter = sys.executable
+            argv.insert(0, interpreter)
+
         try:
             proc = exec_cmd(argv, cwd=root, capture_output=True, text=True)
         except OSError as exc:  # a broken launcher fails this stage, not the run
             proc = _ExecFailure(exc)
-        mtime = _artifact_mtime(root, artifact)
         return normalize(
             replace(spec, primary_artifact=artifact),
             proc=proc,
-            artifacts={artifact: _read_artifact(root, artifact)},
+            artifacts=artifacts,
             now_iso=now_iso,
-            mtimes={artifact: mtime} if mtime is not None else None,
+            mtimes=mtimes,
         )
 
     reports: list[StageReport] = []
@@ -459,6 +474,10 @@ def run_slot(root: Path, run_id: str, *, slot: str, exec_cmd=subprocess.run,
                       overrides=load_overrides(root, now_iso=now_iso))
     # decide() stamps an ET-derived id; the run uses one canonical id everywhere.
     decision = replace(decision, run_id=run_id)
+    if runtime_errors:
+        # Surface the root cause in the decision reasons/log, not only in the
+        # stage's stderr tail, so an operator sees why research could not run.
+        decision = replace(decision, reasons=list(decision.reasons) + runtime_errors)
 
     # The order stage runs only after the verdict is known, so append its report
     # afterwards and rebuild the decision's report list before the single write.

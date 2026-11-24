@@ -14,8 +14,15 @@ REM  Paper only. Never trades live brokers.
 REM ============================================================
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
 set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
+REM Every TradingAgents-dependent stage must use this exact interpreter.
+set TRADINGAGENTS_VENV_PYTHON=%TA_PY%
 set LOG=outputs\auto-trade.log
 if not exist outputs mkdir outputs
+"%TA_PY%" -c "import tradingagents" >nul 2>&1
+if errorlevel 1 (
+  echo FATAL: %TA_PY% cannot import tradingagents; research stages fail closed.>>%LOG%
+  exit /b 2
+)
 echo.>>%LOG%
 echo ==================================================>>%LOG%
 echo === auto trade run started %DATE% %TIME% ===>>%LOG%

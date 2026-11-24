@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,19 @@ OK = {n: rep(n) for n in ("Certifier", "Reconciler", "ExitGuard", "Screener",
 SAFE = {"TRADING_ENABLED": "false", "PAPER_TRADING_ENABLED": "true",
         "TRADING_MODE": "paper_auto"}
 SESSION = {"tradeable": True, "market_clock": "open", "window_open": True}
+
+# Isolated unit tests inject a mocked launcher, so they explicitly opt out of
+# real venv verification (the production path stays fail-closed).
+_TA_PATCH = mock.patch("scripts.desk_orchestrator.require_tradingagents_python",
+                       return_value=sys.executable)
+
+
+def setUpModule():
+    _TA_PATCH.start()
+
+
+def tearDownModule():
+    _TA_PATCH.stop()
 
 
 class DecideTests(unittest.TestCase):
