@@ -481,7 +481,7 @@ def main(argv=None) -> int:
         equity = Decimal("0")
 
     if args.enter:
-        result = {"mode": "enter", "entries": [], "blocks": []}
+        result = {"mode": "enter", "entries": [], "blocks": [], "errors": []}
         now_et = datetime.now(ET).time()
         if not in_window(now_et, ENTER_WINDOW):
             reason = f"outside overnight entry window {ENTER_WINDOW[0]}-{ENTER_WINDOW[1]} ET"
@@ -663,6 +663,7 @@ def main(argv=None) -> int:
                     result["blocks"].append({
                         "ticker": ticker, "direction": "long",
                         "reason": f"order failed: {reason}"})
+                    result["errors"].append(f"{ticker}: {reason}")
                     _log(f"order failed {ticker}: {reason}")
 
         result["summary"] = {
@@ -728,4 +729,9 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # A dict result is a completed dry-run/entry report, not an error code.
+    # Returning it to SystemExit made the scheduler report a false failure.
+    _result = main()
+    if isinstance(_result, dict):
+        raise SystemExit(1 if _result.get("errors") else 0)
+    raise SystemExit(_result)

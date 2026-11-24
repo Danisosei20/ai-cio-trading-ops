@@ -21,6 +21,7 @@ class BarValidation:
     vwap: float | None = None
     volume_basis: str = "unknown"
     gaps: list[str] | None = None
+    freshness: str = "unknown"
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -70,6 +71,9 @@ def validate_bars(bars: list[dict], *, interval_minutes: int = 5,
         stamps.append(ts)
         cleaned.append({"t": ts, "close": close, "high": high,
                         "low": low, "volume": volume})
+    stamps_before = [r["t"] for r in cleaned]
+    if stamps_before != sorted(stamps_before):
+        return BarValidation("rejected", "bars out of chronological order")
     cleaned.sort(key=lambda r: r["t"])
     stamps = [r["t"] for r in cleaned]
     duplicates = [str(ts) for i, ts in enumerate(stamps)
@@ -111,7 +115,22 @@ def validate_bars(bars: list[dict], *, interval_minutes: int = 5,
         opening_range={"high": max(r["high"] for r in opening),
                        "low": min(r["low"] for r in opening),
                        "bars": len(opening)},
-        vwap=vwap, volume_basis=basis, gaps=gaps)
+        vwap=vwap, volume_basis=basis, gaps=gaps, freshness="fresh")
+
+
+def long_reclaim(price: float, *, vwap: float, or_high: float,
+                 or_low: float, relative_to_spy: float | None = None,
+                 min_relative_strength: float = 0.0) -> tuple[bool, str]:
+    """Independent bullish setup: above VWAP and above the opening-range high."""
+    if price <= vwap:
+        return False, "price not above VWAP"
+    if price <= or_high:
+        return False, "price not above opening-range high"
+    if price < or_low:
+        return False, "price below opening-range low"
+    if relative_to_spy is not None and relative_to_spy < min_relative_strength:
+        return False, "relative strength below required threshold"
+    return True, "valid long_reclaim"
 
 
 def short_breakdown(price: float, *, vwap: float, or_high: float,
