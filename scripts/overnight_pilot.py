@@ -55,7 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from robinhood_tools.errors import PolicyViolation  # noqa: E402
-from robinhood_tools.market_prices import market_regime  # noqa: E402
+from robinhood_tools.market_prices import _spy_closes, market_regime  # noqa: E402
 from robinhood_tools.paper_flow import SignalOrder, place_signal_order  # noqa: E402
 from robinhood_tools.runtime import (  # noqa: E402
     build_paper_service_with_session, build_settings)
@@ -462,10 +462,9 @@ def main(argv=None) -> int:
     db = CioDatabase(settings.database_path)
     tickers = _load_universe(args.tickers)
 
-    # Load SPY data for regime and relative strength
-    import yfinance as yf  # noqa: PLC0415 (TradingAgents venv)
-    spy_bars = yf.Ticker("SPY").history(period="60d", interval="1d")
-    spy_closes = [float(v) for v in spy_bars["Close"].dropna()] if spy_bars is not None else []
+    # Load SPY data for regime and relative strength through the desk's
+    # fail-closed helper (returns [] on any fetch/parse failure -> UNKNOWN).
+    spy_closes = _spy_closes()
 
     state = _load_state()
     today = date.today().isoformat()
@@ -492,6 +491,7 @@ def main(argv=None) -> int:
             return result
         # Build candidate pool from all tickers
         candidates = []
+        import yfinance as yf  # noqa: PLC0415 (per-symbol bars)
         for ticker in tickers:
             try:
                 hist = yf.Ticker(ticker).history(period="60d", interval="1d")
@@ -597,6 +597,15 @@ def main(argv=None) -> int:
                     "reason": f"regime {regime}: new risk blocked desk-wide"})
                 continue
 
+            # The overnight setup type is not part of the deterministic
+            # day-trade whitelist. Keep it blocked, but report the real reason
+            # instead of an opaque validator rejection in a healthy regime.
+            if rec.get("setup") not in ("long_reclaim", "short_breakdown"):
+                result["blocks"].append({
+                    "ticker": rec["ticker"], "direction": "long",
+                    "reason": (f"unsupported overnight setup {rec.get('setup')!r}; "
+                               "canonical strategy definition pending validation")})
+                continue
             approved, reason, plan = _validate_setup(rec, equity, open_positions={})
             if not approved:
                 result["blocks"].append({

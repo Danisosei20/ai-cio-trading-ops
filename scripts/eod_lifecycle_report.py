@@ -136,13 +136,33 @@ def build_lifecycle(root: Path, date: str, *, now: str | None = None) -> dict:
             schedule_state = "Failed"
         else:
             schedule_state = "Not verified"
+        from robinhood_tools.workflow_manifest import (  # noqa: PLC0415
+            FAILED as M_FAILED, NO_ACTION_REQUIRED as M_NO_ACTION,
+            read_manifest)
+
+        # Each event reads only its own manifest ids; never let one task's
+        # terminal status leak into a different task's verdict.
+        task_ids = {"AI-Desk-Flatten-1545": ("flatten-verify", "flatten"),
+                    "AI-Desk-OptionsWatch-1510": ("options-watch",),
+                    "AI-Desk-OvernightEnter": ("overnight",),
+                    "AI-Desk-NewsReadout-1610": ("news",),
+                    "AI-Desk-ScoreShadows-1630": ("shadow-scoring",)}
+        candidates = task_ids.get(
+            task_name, (task_name.replace("AI-Desk-", "").lower(),))
+        manifest = next((m for m in (read_manifest(root, tid, date)
+                                     for tid in candidates) if m), None)
+        manifest_status = str((manifest or {}).get("status", ""))
         completed = (schedule_state == "Completed" and
                      bool(art.get("dated_today")) and
                      bool(art.get("mentions_today")))
-        if completed:
-            status = "VERIFIED"
-        elif schedule_state == "Failed":
+        if manifest_status == M_FAILED or schedule_state == "Failed":
             status = "FAILED"
+        elif manifest_status == M_NO_ACTION:
+            status = "NO_ACTION_REQUIRED"
+        elif completed and manifest is not None:
+            status = "VERIFIED"
+        elif completed:
+            status = "INCOMPLETE"  # scheduler success without terminal manifest
         elif _dated_today(last, date) or schedule_state == "Completed":
             status = "INCOMPLETE"
         else:

@@ -18,6 +18,14 @@ if errorlevel 1 (
 )
 echo.>>outputs\intraday.log
 echo === intraday loop started %DATE% %TIME% ===>>outputs\intraday.log
+REM Do not edit this launcher between 09:45 and 16:05 ET; cmd.exe seeks by byte offset.
 "%TA_PY%" scripts\intraday_loop.py --interval 45 --start 10:00 --end 15:30>>outputs\intraday.log 2>&1
-echo === intraday loop done %DATE% %TIME% ===>>outputs\intraday.log
+set LOOP_RC=%ERRORLEVEL%
+echo === intraday loop done rc=%LOOP_RC% %DATE% %TIME% ===>>outputs\intraday.log
 "%TA_PY%" scripts\flatten_daytrades.py>>outputs\intraday.log 2>&1
+set CLOSE_RC=%ERRORLEVEL%
+"%TA_PY%" scripts\flatten_verified.py>>outputs\intraday.log 2>&1
+set FLAT_RC=%ERRORLEVEL%
+if not "%CLOSE_RC%"=="0" set FLAT_RC=%CLOSE_RC%
+if not "%LOOP_RC%"=="0" exit /b %LOOP_RC%
+exit /b %FLAT_RC%
