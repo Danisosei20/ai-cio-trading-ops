@@ -301,6 +301,13 @@
     <div id="operational-reliability-note" class="dim"></div>
   </section>
 
+  <section class="card full" id="session-readiness">
+    <h2>Session Readiness &amp; Research Validity</h2>
+    <div id="session-readiness-status" class="dim">Loading readiness state…</div>
+    <div id="session-readiness-body"></div>
+    <div id="session-readiness-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="deployment-readiness">
     <h2>Deployment &amp; Decision Readiness</h2>
     <div id="deployment-readiness-status" class="dim">Loading deployment state…</div>
@@ -1092,6 +1099,53 @@
   }
 
   refreshDeploymentReadiness();
+  async function refreshSessionReadiness() {
+    var statusEl = byId("session-readiness-status");
+    var bodyEl = byId("session-readiness-body");
+    var noteEl = byId("session-readiness-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    try {
+      var res = await fetch("/api/operational-reliability", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || (d.status !== "ok" && d.status !== "degraded")) {
+        statusEl.textContent = "data unavailable"; return;
+      }
+      var sr = d.session_readiness || {};
+      var exp = sr.signal_expiration || {};
+      var counts = exp.counts || {};
+      var strat = sr.strategy_validation || {};
+      var metrics = [
+        ["Development commit", sr.development_commit],
+        ["Deployment applied", sr.deployment_status],
+        ["Rollback available", sr.rollback_available],
+        ["Scheduler logging", sr.scheduler_logging],
+        ["Signal expiration verdict", exp.verdict || "NOT VERIFIED"],
+        ["Actionable at decision", counts.ACTIONABLE_AT_DECISION],
+        ["Expired before decision", counts.EXPIRED_BEFORE_DECISION],
+        ["Session cutoff exceeded", counts.SESSION_CUTOFF_EXCEEDED],
+        ["Insufficient evidence", counts.INSUFFICIENT_EVIDENCE],
+        ["Spec", strat.spec_version],
+        ["Replay / OOS", esc(strat.replay_status) + " / " + esc(strat.oos_status)],
+        ["Authorization mode", (d.risk_and_broker || {}).authorization_mode],
+        ["Paper pilot", sr.paper_pilot]
+      ];
+      statusEl.textContent = "pilot: " + sr.paper_pilot;
+      var html = "<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = "Simulation and historical replay are never actual broker fills.";
+    } catch (e) {
+      statusEl.textContent = "data unavailable";
+      noteEl.textContent = "A scheduler result alone is not deployment evidence.";
+    }
+  }
+
+  refreshSessionReadiness();
+  setInterval(refreshSessionReadiness, REFRESH_MS);
   setInterval(refreshDeploymentReadiness, REFRESH_MS);
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);

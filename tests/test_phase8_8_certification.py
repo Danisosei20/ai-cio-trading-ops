@@ -81,7 +81,7 @@ class ParityTests(unittest.TestCase):
             before = checkout_parity.sha256(dst / rel)
             with mock.patch.object(deploy, "running_ai_tasks", return_value=[]):
                 result = deploy.apply(src, dst, backup_root=Path(backups),
-                                      owner_authorized=True,
+                                      owner_authorized=True, require_all_sources=False,
                                       now=datetime(2026, 11, 25, 2, 0))
             self.assertTrue(result["applied"])
             self.assertEqual((dst / rel).read_text(encoding="utf-8"),
@@ -100,7 +100,7 @@ class ParityTests(unittest.TestCase):
             (dst / rel).write_text("old")
             with mock.patch.object(deploy, "running_ai_tasks", return_value=[]):
                 result = deploy.apply(src, dst, backup_root=Path(tempfile.gettempdir()),
-                                      owner_authorized=True,
+                                      owner_authorized=True, require_all_sources=False,
                                       now=datetime(2026, 11, 25, 10, 30))
             self.assertFalse(result["applied"])
             self.assertIn("09:45-16:05", result.get("error", ""))
@@ -326,7 +326,7 @@ class DeploymentSafetyTests(unittest.TestCase):
                     mock.patch.object(deploy.os, "replace", side_effect=OSError("boom")):
                 with self.assertRaises(OSError):
                     deploy.apply(src, dst, backup_root=Path(backups),
-                                 owner_authorized=True,
+                                 owner_authorized=True, require_all_sources=False,
                                  now=datetime(2026, 11, 25, 2, 0))
             manifests = list(Path(backups).glob("*/backup-manifest.json"))
             self.assertTrue(manifests)

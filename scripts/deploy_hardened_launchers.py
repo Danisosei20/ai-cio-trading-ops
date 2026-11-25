@@ -48,7 +48,20 @@ def running_ai_tasks() -> list[str]:
         return ["<scheduler query unavailable>"]
 
 
-def plan(source: Path, destination: Path, *, now: datetime | None = None) -> dict:
+CERTIFIED_SOURCE_COMMIT = "1c5dc8c"
+
+
+def source_commit(source: Path) -> str:
+    try:
+        p = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=source,
+                           capture_output=True, text=True, timeout=60)
+        return p.stdout.strip()
+    except Exception:  # noqa: BLE001 - unknown source fails closed
+        return ""
+
+
+def plan(source: Path, destination: Path, *, now: datetime | None = None,
+         require_all_sources: bool = True) -> dict:
     report = compare(source, destination, allowlist=ALLOWLIST)
     actions = []
     for row in report["rows"]:
@@ -59,7 +72,9 @@ def plan(source: Path, destination: Path, *, now: datetime | None = None) -> dic
             actions.append({"component": row["component"], "action": "COPY",
                             "source_sha256": row.get("source_sha256")})
         elif row["classification"] == NOT_VERIFIED:
-            actions.append({"component": row["component"], "action": "BLOCKED",
+            actions.append({"component": row["component"],
+                            "action": ("BLOCKED" if require_all_sources
+                                       else "SKIP_UNAVAILABLE"),
                             "reason": "source unavailable"})
         else:
             actions.append({"component": row["component"], "action": "SKIP",
@@ -78,11 +93,23 @@ def plan(source: Path, destination: Path, *, now: datetime | None = None) -> dic
 
 
 def apply(source: Path, destination: Path, *, backup_root: Path,
-          owner_authorized: bool = False,
+          owner_authorized: bool = False, require_all_sources: bool = True,
+          expected_commit: str | None = None,
           now: datetime | None = None) -> dict:
     if not owner_authorized:
         return {"error": "apply requires owner authorization", "applied": False}
-    result = plan(source, destination, now=now)
+    if expected_commit and source_commit(source) != expected_commit:
+        return {"error": "source commit does not match certified commit",
+                "source_commit": source_commit(source),
+                "expected_commit": expected_commit, "applied": False}
+    result = plan(source, destination, now=now,
+                  require_all_sources=require_all_sources)
+    blocked = [a["component"] for a in result["actions"]
+               if a["action"] == "BLOCKED"]
+    if blocked:
+        result["error"] = f"blocked files: {blocked}"
+        result["applied"] = False
+        return result
     if active_window(now):
         result["error"] = "refuse to replace batch files during 09:45-16:05 ET"
         return result
@@ -127,6 +154,7 @@ def apply(source: Path, destination: Path, *, backup_root: Path,
             manifest["files"].append({"component": rel, "created": True,
                                        "backup_sha256": None,
                                        "pre_deploy_sha256": None})
+        write_manifest()  # persist the backup record before the risky replace
         temp = dst.with_name(dst.name + "." + uuid.uuid4().hex + ".tmp")
         shutil.copyfile(src, temp)
         os.replace(temp, dst)
@@ -203,7 +231,8 @@ def main(argv=None) -> int:
                 return 2
             result = apply(args.source, args.destination,
                            backup_root=args.backup_root or Path(tempfile.gettempdir()),
-                           owner_authorized=args.owner_authorized)
+                           owner_authorized=args.owner_authorized,
+                           expected_commit=CERTIFIED_SOURCE_COMMIT)
     text = json.dumps(result, indent=2) + "\n"
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

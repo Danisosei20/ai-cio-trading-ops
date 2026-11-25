@@ -7,6 +7,7 @@ inventory. Nothing here contacts a broker or submits an order.
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -69,6 +70,35 @@ def _measurements(root: Path) -> dict[str, dict]:
     return out
 
 
+def _dev_commit(root: Path) -> str:
+    try:
+        p = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root,
+                           capture_output=True, text=True, timeout=30)
+        return p.stdout.strip() or "NOT_VERIFIED"
+    except Exception:  # noqa: BLE001
+        return "NOT_VERIFIED"
+
+
+def _rollback_available(root: Path, plan: dict) -> bool:
+    manifest = plan.get("backup_manifest")
+    if not manifest or not Path(manifest).is_file():
+        return False
+    try:
+        doc = json.loads(Path(manifest).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return not bool(doc.get("partial"))
+
+
+def _enforcement_on() -> bool:
+    try:
+        from robinhood_tools.execution_authorization import (  # noqa: PLC0415
+            enforcement_enabled)
+        return bool(enforcement_enabled())
+    except Exception:  # noqa: BLE001 - fail closed
+        return False
+
+
 def _uncertain_intents(root: Path) -> list[dict]:
     """Unconfirmed submission intents; never auto-retried by this service."""
     try:
@@ -89,6 +119,8 @@ def operational_reliability_payload(
                 "workflows": {name: {"status": "NOT TESTED"} for name in WORKFLOWS},
                 "canonical_spec_version": SPEC_VERSION}
     measures = _measurements(root)
+    deployment_plan = _load(root / "docs/certification/"
+                            "phase-8-8-deployment-plan.json") or {}
     reduced = measures.get("reduced") or {}
     champion = measures.get("champion_equivalent") or {}
     signals = _load(_latest(root, "outputs/reports/signals/*signal-factory*.json"))
@@ -163,7 +195,8 @@ def operational_reliability_payload(
             "validation": "shadow only; no promotion or live rule change",
         },
         "risk_and_broker": {
-            "authorization_mode": "enforcement OFF operationally",
+            "authorization_mode": ("enforcement ON" if _enforcement_on()
+                                   else "enforcement OFF operationally"),
             "flatten_status": flatten.get("status", "NOT TESTED"),
             "flatten_scope": (flatten.get("evidence") or {}).get("flat_scope", ""),
             "overnight_execution_mode": (overnight.get("evidence") or {}).get(
@@ -202,6 +235,22 @@ def operational_reliability_payload(
             "replay_status": "NOT VERIFIED - insufficient point-in-time data",
             "oos_status": "NOT VERIFIED - no frozen multi-session archive",
             "promotion": "none",
+        },
+        "session_readiness": {
+            "development_commit": _dev_commit(root),
+            "deployment_status": bool(deployment_plan.get("applied")),
+            "rollback_available": _rollback_available(root, deployment_plan),
+            "scheduler_logging": "unavailable - Operational log disabled",
+            "signal_expiration": _load(root / "docs/certification/"
+                                       "phase-8-9-signal-expiration.json")
+                                 or {"status": "NOT VERIFIED"},
+            "strategy_validation": {
+                "spec_version": SPEC_VERSION,
+                "replay_status": "NOT VERIFIED - insufficient point-in-time data",
+                "oos_status": "NOT VERIFIED - no frozen multi-session archive",
+                "promotion": "none",
+            },
+            "paper_pilot": "NOT AUTHORIZED - readiness package only",
         },
         "evidence_labels": {
             "simulated": "rehearsal fixtures, never broker fills",

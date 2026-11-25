@@ -1,0 +1,343 @@
+{
+  "track": "signal_expiration_analysis",
+  "generated_at": "2026-11-25T07:50:23.738636-05:00",
+  "spec": "intraday-setups/v1.0.0/EXPIRATION.md",
+  "source": "C:\\Users\\Danis Akoto\\OneDrive\\Documents\\AI-trading\\ai-cio-trading-ops\\outputs\\paper\\tradingagents\\live.log",
+  "policy": {
+    "entry_cutoff_et": "15:15",
+    "freshness_seconds": 300,
+    "flatten_et": "15:45"
+  },
+  "observations": [
+    {
+      "symbol": "DLTR",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T14:47:07.881493+00:00",
+      "decision_et": "2026-11-24T09:53:01.098562-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "BBY",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T14:53:01.784022+00:00",
+      "decision_et": "2026-11-24T09:58:15.083138-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "MDT",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T14:58:16.037568+00:00",
+      "decision_et": "2026-11-24T10:03:38.874979-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "A",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:03:38.982362+00:00",
+      "decision_et": "2026-11-24T10:09:03.379018-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "SJM",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:09:03.951642+00:00",
+      "decision_et": "2026-11-24T10:14:07.520797-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "ED",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:14:08.079282+00:00",
+      "decision_et": "2026-11-24T10:18:58.633284-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "APP",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:18:58.740646+00:00",
+      "decision_et": "2026-11-24T10:24:13.575343-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "QQQ",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:45:16.690938+00:00",
+      "decision_et": "2026-11-24T10:52:39.303615-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "SPY",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:52:39.616566+00:00",
+      "decision_et": "2026-11-24T10:59:00.993180-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "NVDA",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T15:59:01.612799+00:00",
+      "decision_et": "2026-11-24T11:05:52.850748-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration"
+      ]
+    },
+    {
+      "symbol": "AAPL",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T16:05:53.435289+00:00",
+      "decision_et": "2026-11-24T11:11:45.277237-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AMD",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T16:11:45.543000+00:00",
+      "decision_et": "2026-11-24T11:16:53.564288-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "MSFT",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T16:16:55.224769+00:00",
+      "decision_et": "2026-11-24T11:20:47.204281-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "TSLA",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T16:20:47.322888+00:00",
+      "decision_et": "2026-11-24T11:26:47.099877-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "META",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T16:26:47.549329+00:00",
+      "decision_et": "2026-11-24T11:33:50.816883-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AMZN",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T16:33:51.235543+00:00",
+      "decision_et": "2026-11-24T11:40:07.989703-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "QQQ",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:25:25.527097+00:00",
+      "decision_et": "2026-11-24T12:30:26.629059-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "SPY",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:30:26.729420+00:00",
+      "decision_et": "2026-11-24T12:35:41.864504-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AAPL",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:35:41.958964+00:00",
+      "decision_et": "2026-11-24T12:39:56.379397-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AMD",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:39:56.490769+00:00",
+      "decision_et": "2026-11-24T12:45:15.417468-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "MSFT",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:45:15.521837+00:00",
+      "decision_et": "2026-11-24T12:50:45.499798-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "TSLA",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:50:46.808266+00:00",
+      "decision_et": "2026-11-24T12:58:14.199915-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "META",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T17:58:14.316126+00:00",
+      "decision_et": "2026-11-24T13:03:39.025963-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AMZN",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T18:03:39.171032+00:00",
+      "decision_et": "2026-11-24T13:08:44.022293-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "QQQ",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T19:39:06.293311+00:00",
+      "decision_et": "2026-11-24T14:43:01.300022-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "SPY",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T19:43:01.409161+00:00",
+      "decision_et": "2026-11-24T14:48:19.728892-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AAPL",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T19:48:19.806908+00:00",
+      "decision_et": "2026-11-24T14:52:06.861845-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AMD",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T19:52:06.958695+00:00",
+      "decision_et": "2026-11-24T14:56:55.763697-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "MSFT",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T19:56:55.866809+00:00",
+      "decision_et": "2026-11-24T15:02:18.382968-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "TSLA",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T20:02:18.534145+00:00",
+      "decision_et": "2026-11-24T15:06:15.589643-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "META",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T20:06:15.701028+00:00",
+      "decision_et": "2026-11-24T15:11:43.081369-05:00",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "missing: setup_formation_time,last_completed_bar_time,signal_detection_time,research_queue_entry,deterministic_gate_time,authorization_time,signal_expiration,source_quote_age_at_decision_s"
+      ]
+    },
+    {
+      "symbol": "AMZN",
+      "date": "2026-11-24",
+      "research_start_utc": "2026-11-24T20:11:43.191132+00:00",
+      "decision_et": "2026-11-24T15:17:31.831322-05:00",
+      "classification": "SESSION_CUTOFF_EXCEEDED",
+      "reasons": [
+        "decision after 15:15 ET entry cutoff"
+      ]
+    }
+  ],
+  "counts": {
+    "ACTIONABLE_AT_DECISION": 0,
+    "EXPIRED_BEFORE_DECISION": 0,
+    "SESSION_CUTOFF_EXCEEDED": 1,
+    "INSUFFICIENT_EVIDENCE": 31,
+    "TECHNICALLY_INELIGIBLE": 0
+  },
+  "actionable_rate": 0.0,
+  "note": "INSUFFICIENT_EVIDENCE is not proof of staleness. Only ACTIONABLE_AT_DECISION may be counted as an actionable opportunity; no entry permission is granted.",
+  "entry_permission": "none - analysis only"
+}

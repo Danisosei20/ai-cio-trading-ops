@@ -10,7 +10,7 @@ import argparse
 import hashlib
 import json
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Exact allowlist of reviewed operational components. Secrets, owner staged
@@ -92,7 +92,7 @@ def compare(source: Path, destination: Path, *, allowlist=ALLOWLIST) -> dict:
         rows.append({"component": rel, "source_sha256": src_hash,
                      "destination_sha256": dst_hash,
                      "last_modified_utc": datetime.fromtimestamp(
-                         dst.stat().st_mtime).isoformat(),
+                         dst.stat().st_mtime, timezone.utc).isoformat(),
                      "classification": classification, "reason": reason})
     counts = {}
     for row in rows:
