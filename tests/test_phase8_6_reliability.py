@@ -160,10 +160,11 @@ class FlattenTests(unittest.TestCase):
                                                  "clock_is_open": False,
                                                  "source": "fake"}):
                 result = flatten_verified.verify(root, DATE)
-            self.assertEqual(result["status"], NO_ACTION_REQUIRED)
+            self.assertEqual(result["status"], VERIFIED)
             self.assertEqual(result["exit_code"], 0)
             doc = read_manifest(root, "flatten-verify", DATE)
-            self.assertEqual(doc["status"], NO_ACTION_REQUIRED)
+            self.assertEqual(doc["status"], VERIFIED)
+            self.assertEqual(doc["evidence"]["flat_scope"], "whole_account")
 
     def test_owned_position_is_reconciliation_required(self):
         with tempfile.TemporaryDirectory() as td:
@@ -182,7 +183,7 @@ class FlattenTests(unittest.TestCase):
             self.assertEqual(result["status"], RECONCILIATION_REQUIRED)
             self.assertEqual(result["exit_code"], 1)
 
-    def test_broker_holding_without_owned_record_never_reports_success(self):
+    def test_broker_holding_without_owned_record_is_reconciliation_required(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             with mock.patch.object(flatten_verified, "broker_state",
@@ -191,10 +192,12 @@ class FlattenTests(unittest.TestCase):
                                        "open_orders": [],
                                        "account_equity": "100",
                                        "clock_is_open": False,
+                                       "queried_at": __import__("time").time(),
                                        "source": "fake"}):
                 result = flatten_verified.verify(root, DATE)
             self.assertEqual(result["status"], RECONCILIATION_REQUIRED)
             self.assertEqual(result["exit_code"], 1)
+            self.assertEqual(result["evidence"]["held_equity_symbols"], ["NVDA"])
 
     def test_overnight_position_is_not_flattened_or_misclassified(self):
         with tempfile.TemporaryDirectory() as td:

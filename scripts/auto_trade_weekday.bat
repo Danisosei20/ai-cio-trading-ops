@@ -13,6 +13,7 @@ REM  Everything logged to outputs\auto-trade.log.
 REM  Paper only. Never trades live brokers.
 REM ============================================================
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
+if errorlevel 1 exit /b 2
 set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
 REM Every TradingAgents-dependent stage must use this exact interpreter.
 set TRADINGAGENTS_VENV_PYTHON=%TA_PY%
@@ -31,7 +32,11 @@ echo === auto trade run started %DATE% %TIME% ===>>%LOG%
 REM Stages 1-9 now run inside the orchestrator as named agents. It records
 REM one immutable decision.json per run and never places an order at 09:45.
 "%TA_PY%" scripts\desk_orchestrator.py --slot 0945>>%LOG% 2>&1
+set ORCH_RC=%ERRORLEVEL%
 
 echo === auto trade run finished %DATE% %TIME% ===>>%LOG%
-"%TA_PY%" -c "import json,pathlib,datetime,zoneinfo; p=pathlib.Path('outputs/auto-trade-run.json'); d=json.loads(p.read_text()) if p.exists() else {}; d['finished_at']=datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York')).isoformat(); d['status']='finished'; p.write_text(json.dumps(d))"
+"%TA_PY%" -c "import json,pathlib,datetime,zoneinfo; p=pathlib.Path('outputs/auto-trade-run.json'); d=json.loads(p.read_text()) if p.exists() else {}; d['finished_at']=datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York')).isoformat(); d['status']=('finished' if %ORCH_RC%==0 else 'failed'); p.write_text(json.dumps(d))"
 ".venv\Scripts\python.exe" scripts\run_summary.py>>%LOG% 2>&1
+set SUMMARY_RC=%ERRORLEVEL%
+if not "%ORCH_RC%"=="0" exit /b %ORCH_RC%
+exit /b %SUMMARY_RC%

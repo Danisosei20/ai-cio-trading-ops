@@ -6,6 +6,7 @@ REM  every 45 min from 10:00 to 15:30 ET, judges new setups, and
 REM  flattens at 15:45. Registered as AI-Desk-IntradayLoop.
 REM ============================================================
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
+if errorlevel 1 exit /b 2
 set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
 REM Every TradingAgents-dependent stage must use this exact interpreter.
 set TRADINGAGENTS_VENV_PYTHON=%TA_PY%

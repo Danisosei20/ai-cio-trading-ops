@@ -980,12 +980,31 @@
       statusEl.textContent = d.session_date + " · last failed: "
         + ((d.last_failed || []).join(", ") || "none");
       var graph = d.research_graph || {};
+      var research = d.research || {};
+      var champ = research.champion_equivalent || {};
+      var sched = d.scheduler || {};
+      var risk = d.risk_and_broker || {};
+      var labels = d.evidence_labels || {};
       var metrics = [
-        ["Full-graph status", graph.status], ["Full-graph scope", graph.scope],
-        ["Full-graph elapsed (s)", graph.elapsed_seconds],
-        ["Graph stage", graph.stage], ["Graph error", graph.error],
+        ["Reduced full-graph status", graph.status],
+        ["Reduced elapsed (s)", graph.elapsed_seconds],
+        ["Champion-equivalent status", champ.status],
+        ["Champion-equivalent elapsed (s)", champ.elapsed_seconds],
+        ["Champion config digest", champ.config_digest],
+        ["Champion config match", champ.config_match],
+        ["Champion evidence complete", champ.evidence_complete],
+        ["Provider errors / tool calls", String(champ.provider_errors || 0) + " / " + String(champ.tool_calls || 0)],
+        ["Graph stage", graph.stage], ["Graph error", graph.error || champ.error],
+        ["Scheduler logging", sched.logging_coverage],
+        ["Scheduler deployment", sched.deployment_warning],
+        ["Authorization mode", risk.authorization_mode],
+        ["Flatten status / scope", esc(risk.flatten_status) + " / " + esc(risk.flatten_scope)],
+        ["Overnight execution mode", risk.overnight_execution_mode],
         ["Signal factory", (d.signal_integrity || {}).factory_status],
+        ["Canonical spec", (d.signal_integrity || {}).canonical_spec_version],
         ["Scout/factory counts", JSON.stringify((d.signal_integrity || {}).scout_factory || {})],
+        ["Label: simulated", labels.simulated],
+        ["Label: paper vs live", esc(labels.paper) + " / " + esc(labels.live)],
         ["Broker verification", (d.broker_verification || {}).source]
       ];
       var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";

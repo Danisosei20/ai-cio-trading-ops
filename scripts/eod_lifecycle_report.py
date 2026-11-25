@@ -138,7 +138,8 @@ def build_lifecycle(root: Path, date: str, *, now: str | None = None) -> dict:
             schedule_state = "Not verified"
         from robinhood_tools.workflow_manifest import (  # noqa: PLC0415
             FAILED as M_FAILED, NO_ACTION_REQUIRED as M_NO_ACTION,
-            read_manifest)
+            RECONCILIATION_REQUIRED as M_RECON,
+            SKIPPED as M_SKIPPED, read_manifest)
 
         # Each event reads only its own manifest ids; never let one task's
         # terminal status leak into a different task's verdict.
@@ -157,6 +158,10 @@ def build_lifecycle(root: Path, date: str, *, now: str | None = None) -> dict:
                      bool(art.get("mentions_today")))
         if manifest_status == M_FAILED or schedule_state == "Failed":
             status = "FAILED"
+        elif manifest_status == M_RECON:
+            status = "RECONCILIATION_REQUIRED"
+        elif manifest_status == M_SKIPPED:
+            status = "SKIPPED"
         elif manifest_status == M_NO_ACTION:
             status = "NO_ACTION_REQUIRED"
         elif completed and manifest is not None:

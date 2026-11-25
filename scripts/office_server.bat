@@ -12,6 +12,7 @@ REM   1. an agent_office python process already exists -> stop
 REM   2. something already listens on 8766 -> stop
 REM Output is appended to outputs\office.log so a crash leaves a trace.
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
+if errorlevel 1 exit /b 2
 if not exist outputs mkdir outputs
 tasklist /fi "imagename eq python.exe" /fo csv 2>nul | findstr /i "agent_office" >nul
 if %errorlevel%==0 (

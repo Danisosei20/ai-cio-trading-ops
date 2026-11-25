@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
+import uuid
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,37 +24,69 @@ from robinhood_tools.workflow_manifest import (FAILED, VERIFIED,
 ET = ZoneInfo("America/New_York")
 KV_REDACT = re.compile(
     r"(?i)(api[_-]?key|secret|token|password|bearer)\s*[:=]\s*\S+")
+AUTH_REDACT = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)\S+")
 TOKEN_REDACT = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{12,}"
-                          r"|\bnvidia_[a-z0-9_]{20,}\b")
+                          r"|\bnvidia_[a-z0-9_]{20,}\b"
+                          r"|\bxox[baprs]-[A-Za-z0-9-]{10,}\b")
 
 
 def redact(text: str) -> str:
     value = KV_REDACT.sub(
         lambda m: m.group(0).split(":", 1)[0].split("=", 1)[0] + "=<redacted>",
         str(text or ""))
+    value = AUTH_REDACT.sub(lambda m: m.group(1) + "<redacted>", value)
     return TOKEN_REDACT.sub("<redacted>", value)[:4000]
 
 
 def run_stage(root: Path, *, task: str, date: str, mode: str,
               command: list[str], timeout: float | None,
               expect_artifact: str | None,
-              require_artifact: bool = True) -> dict:
+              require_artifact: bool = True,
+              expected_python: str | None = None) -> dict:
     started = datetime.now(timezone.utc).isoformat()
     start_epoch = time.time()
-    run_id = f"{task}-{datetime.now(ET).strftime('%H%M%S')}"
+    run_id = (f"{task}-{datetime.now(ET).strftime('%H%M%S%f')}"
+              f"-{uuid.uuid4().hex[:6]}")
     log_dir = root / "outputs" / "runs" / date
     log_dir.mkdir(parents=True, exist_ok=True)
     rc: int | None = None
     error = ""
+    python_path = Path(command[0])
+    interpreter_ok = python_path.is_file()
+    if expected_python:
+        try:
+            interpreter_ok = interpreter_ok and (python_path.resolve() ==
+                                                  Path(expected_python).resolve())
+        except OSError:
+            interpreter_ok = False
     try:
-        proc = subprocess.run(command, cwd=root, capture_output=True, text=True,
-                              timeout=timeout, encoding="utf-8", errors="replace")
+        if not interpreter_ok:
+            raise FileNotFoundError(
+                f"interpreter missing or not the expected venv: {command[0]}")
+        proc = subprocess.Popen(
+            command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+            encoding="utf-8", errors="replace")
+        out, err = proc.communicate(timeout=timeout)
         rc = proc.returncode
-        text = f"STDOUT:\n{redact(proc.stdout)}\nSTDERR:\n{redact(proc.stderr)}"
+        text = f"STDOUT:\n{redact(out)}\nSTDERR:\n{redact(err)}"
     except subprocess.TimeoutExpired as exc:
         rc = 124
         error = f"timeout after {timeout}s"
-        text = f"TIMEOUT\n{redact(exc.stdout or '')}\n{redact(exc.stderr or '')}"
+        cleanup = ""
+        if os.name == "nt":
+            try:
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               capture_output=True, timeout=20)
+                cleanup = "child tree terminated"
+            except Exception as exc2:  # noqa: BLE001
+                cleanup = f"cleanup failed: {exc2}"
+        else:
+            proc.terminate()
+            cleanup = "child terminated"
+        error += f"; {cleanup}"
+        text = (f"TIMEOUT\n{redact(exc.stdout or '')}\n"
+                f"{redact(exc.stderr or '')}\ncleanup={cleanup}")
     except Exception as exc:  # noqa: BLE001 - structured failure, never silent
         rc = 127
         error = f"{type(exc).__name__}: {exc}"
@@ -70,10 +104,12 @@ def run_stage(root: Path, *, task: str, date: str, mode: str,
         except OSError:
             modified, size = 0.0, 0
         # An artifact written by an earlier session is not proof of this run.
-        artifact_ok = size > 0 and modified >= start_epoch - 1.0
+        artifact_ok = (size > 0 and start_epoch - 1.0 <= modified
+                       <= time.time() + 5.0)
         if not artifact_ok:
-            error = (error + "; " if error else "") + \
-                f"postcondition artifact missing, empty or stale: {expect_artifact}"
+            error = ((error + "; " if error else "") +
+                     f"postcondition artifact missing, empty, stale or "
+                     f"future-dated: {expect_artifact}")
     status = VERIFIED if (rc == 0 and artifact_ok and not error) else FAILED
     if status == FAILED and not rc:
         rc = 1
@@ -84,7 +120,10 @@ def run_stage(root: Path, *, task: str, date: str, mode: str,
         evidence={"command": [redact(c) for c in command],
                   "log": str(Path("outputs/runs") / date / f"{task}.log"),
                   "artifact": expect_artifact or "",
-                  "artifact_ok": artifact_ok},
+                  "artifact_ok": artifact_ok,
+                  "interpreter": command[0],
+                  "interpreter_ok": interpreter_ok,
+                  "run_id": run_id},
         error=error)
     print(json.dumps({"task": task, "status": status, "exit_code": rc,
                       "manifest": result}))
@@ -103,6 +142,7 @@ def main(argv=None) -> int:
     ap.add_argument("--expect-artifact", default=None)
     ap.add_argument("--require-artifact", action=argparse.BooleanOptionalAction,
                     default=True)
+    ap.add_argument("--expected-python", default=None)
     ap.add_argument("--root", type=Path,
                     default=Path(__file__).resolve().parents[1])
     args = ap.parse_args(argv)
@@ -110,7 +150,8 @@ def main(argv=None) -> int:
         Path(args.root), task=args.task, date=args.date, mode=args.mode,
         command=[args.python, args.script, *args.arg],
         timeout=args.timeout, expect_artifact=args.expect_artifact,
-        require_artifact=args.require_artifact)
+        require_artifact=args.require_artifact,
+        expected_python=args.expected_python)
     return 0 if result["status"] == VERIFIED else int(result["exit_code"] or 1)
 
 
