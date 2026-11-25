@@ -344,6 +344,18 @@ class Handler(BaseHTTPRequestHandler):
                            "orders_submitted": 0, "entry_permission": "none"}
             body = json.dumps(payload).encode()
             mime = "application/json"
+        elif route == "/api/operational-reliability":
+            try:
+                from scripts.operational_reliability import (  # noqa: E402
+                    operational_reliability_payload)
+
+                payload = operational_reliability_payload(ROOT)
+            except Exception as exc:  # noqa: BLE001 - fail closed
+                payload = {"status": "unavailable",
+                           "reason": f"{type(exc).__name__}: {exc}",
+                           "orders_submitted": 0, "entry_permission": "none"}
+            body = json.dumps(payload).encode()
+            mime = "application/json"
         elif route == "/trading":
             body = (ROOT / "web/agent-office" / "trading.html").read_bytes()
             mime = "text/html"

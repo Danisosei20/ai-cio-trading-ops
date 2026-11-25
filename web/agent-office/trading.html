@@ -294,6 +294,13 @@
     <div id="signal-intelligence-note" class="dim"></div>
   </section>
 
+  <section class="card full" id="operational-reliability">
+    <h2>Operational Reliability</h2>
+    <div id="operational-reliability-status" class="dim">Loading workflow state…</div>
+    <div id="operational-reliability-body"></div>
+    <div id="operational-reliability-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="execution-safety">
     <h2>Execution Safety</h2>
     <div id="execution-safety-body" class="dim">Loading authorization state…</div>
@@ -955,18 +962,69 @@
     }
   }
 
+  async function refreshOperationalReliability() {
+    var statusEl = byId("operational-reliability-status");
+    var bodyEl = byId("operational-reliability-body");
+    var noteEl = byId("operational-reliability-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    function unavailable(reason) {
+      statusEl.textContent = "data unavailable" + (reason ? " — " + reason : "");
+      bodyEl.innerHTML = emptyBox("No workflow status is shown without its manifest.");
+      noteEl.textContent = "A scheduler result alone is not execution evidence.";
+    }
+    try {
+      var res = await fetch("/api/operational-reliability", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || d.status !== "ok") { unavailable(d && d.reason); return; }
+      statusEl.textContent = d.session_date + " · last failed: "
+        + ((d.last_failed || []).join(", ") || "none");
+      var graph = d.research_graph || {};
+      var metrics = [
+        ["Full-graph status", graph.status], ["Full-graph scope", graph.scope],
+        ["Full-graph elapsed (s)", graph.elapsed_seconds],
+        ["Graph stage", graph.stage], ["Graph error", graph.error],
+        ["Signal factory", (d.signal_integrity || {}).factory_status],
+        ["Scout/factory counts", JSON.stringify((d.signal_integrity || {}).scout_factory || {})],
+        ["Broker verification", (d.broker_verification || {}).source]
+      ];
+      var html = "<div class='split'><div class='side'><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table></div><div class='side'>";
+      html += "<table><thead><tr><th>Workflow</th><th>Status</th><th>Exit</th><th>Finished</th></tr></thead><tbody>";
+      var rows = d.workflows || [];
+      for (var j = 0; j < rows.length; j++) {
+        var row = rows[j];
+        var tag = row.status === "FAILED" ? "tag err"
+          : row.status === "VERIFIED" || row.status === "NO_ACTION_REQUIRED" ? "tag ok" : "tag block";
+        html += "<tr><td>" + esc(row.task) + "</td><td><span class='" + tag + "'>"
+          + esc(row.status) + "</span></td><td>" + esc(row.exit_code)
+          + "</td><td>" + esc(row.finished_at) + "</td></tr>";
+      }
+      html += "</tbody></table></div></div>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = d.note || "";
+    } catch (e) {
+      unavailable(e && e.message);
+    }
+  }
+
   refresh();
   refreshExecutionSafety();
   refreshOpportunityAnalysis();
   refreshIntradayDecisionPipeline();
   refreshResearchPerformance();
   refreshSignalIntelligence();
+  refreshOperationalReliability();
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);
   setInterval(refreshOpportunityAnalysis, REFRESH_MS);
   setInterval(refreshIntradayDecisionPipeline, REFRESH_MS);
   setInterval(refreshResearchPerformance, REFRESH_MS);
   setInterval(refreshSignalIntelligence, REFRESH_MS);
+  setInterval(refreshOperationalReliability, REFRESH_MS);
 })();
 </script>
 </body>
