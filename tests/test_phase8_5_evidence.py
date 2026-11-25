@@ -138,12 +138,13 @@ class FreshnessTests(unittest.TestCase):
 
 
 class ComparisonTests(unittest.TestCase):
-    def test_short_rule_discrepancy_is_defect(self):
-        # price below VWAP but only below OR high, not OR low.
+    def test_short_rule_discrepancy_is_intentional_difference(self):
+        # price below VWAP but only below OR high, not OR low: the canonical
+        # rule deliberately requires the stronger OR-low boundary.
         row = cmp.compare(symbol="QQQ", price=100, vwap=101, or_high=105,
                           or_low=100, bars=12, now=NOW)
         self.assertEqual(row.scout_setup, "short_breakdown")
-        self.assertEqual(row.classification, "implementation_defect")
+        self.assertEqual(row.classification, "intentional_strategy_difference")
         self.assertIn("opening-range low", row.reason)
 
     def test_agreement_when_both_rules_accept(self):

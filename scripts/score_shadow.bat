@@ -4,6 +4,7 @@ REM benchmark + LLM reflections for future debates), then grade the shadow
 REM track record (1/5/20 trading days vs S&P 500).
 REM Registered in Task Scheduler as AI-Desk-ScoreShadows-1630.
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
+if errorlevel 1 exit /b 2
 set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
 set TRADINGAGENTS_VENV_PYTHON=%TA_PY%
 if not exist outputs mkdir outputs
@@ -13,4 +14,8 @@ if errorlevel 1 (
   exit /b 2
 )
 "%TA_PY%" scripts\settle_memory.py>>outputs\settle-memory.log 2>&1
+set SETTLE_RC=%ERRORLEVEL%
 ".venv\Scripts\python.exe" scripts\score_shadow.py>>outputs\score-shadow.log 2>&1
+set SCORE_RC=%ERRORLEVEL%
+if not "%SETTLE_RC%"=="0" exit /b %SETTLE_RC%
+exit /b %SCORE_RC%

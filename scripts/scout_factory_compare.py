@@ -64,9 +64,18 @@ def compare(*, symbol: str, price: float, vwap: float, or_high: float,
 
     if scout_setup == factory_setup:
         classification, reason = "agreement", "both rules agree"
+    elif (canonical_reason in {"price not above opening-range high",
+                               "price not below opening-range low"} and
+          scout_setup in {"long_reclaim", "short_breakdown"}):
+        # Documented definitional difference: scout uses the opposite OR
+        # boundary as a confluence filter. Both rules implement their own
+        # specification; this is not a coding defect.
+        classification = "intentional_strategy_difference"
+        reason = (f"canonical requires the stronger opening-range boundary: "
+                  f"{canonical_reason}; scout uses the looser boundary")
     elif scout_setup in {"short_breakdown", "long_reclaim"} and not canonical_ok:
         classification = "implementation_defect"
-        reason = f"canonical rule rejects: {canonical_reason}"
+        reason = f"canonical rule rejects for an unexplained reason: {canonical_reason}"
     elif scout_setup == "range" and factory_setup != "range":
         classification = "implementation_defect"
         reason = "canonical rule accepts a setup the live scout labels range"
@@ -81,6 +90,7 @@ def compare(*, symbol: str, price: float, vwap: float, or_high: float,
 def comparison_report(rows: list[ComparisonRow], *, note: str = "") -> dict:
     return {
         "track": "scout_vs_factory",
+        "canonical_spec_version": "intraday-setups/v1.0.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "rows": [r.as_dict() for r in rows],
         "counts": {
@@ -91,7 +101,8 @@ def comparison_report(rows: list[ComparisonRow], *, note: str = "") -> dict:
                 r.classification == "intentional_strategy_difference" for r in rows),
         },
         "scope": ("setup-rule comparison only; excludes bar validation, freshness, "
-                  "odds and risk gates"),
+                  "odds and risk gates; source snapshots are post-close and "
+                  "must not be represented as live-eligible signals"),
         "shadow_only": True,
         "orders_submitted": 0,
         "entry_permission": "none - comparison only",

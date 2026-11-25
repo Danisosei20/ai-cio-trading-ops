@@ -104,4 +104,6 @@ def read_manifest(root: Path, task: str, date: str) -> dict | None:
     actual = _digest({k: v for k, v in doc.items() if k != "sha256"})
     if not isinstance(expected, str) or not hmac.compare_digest(expected, actual):
         return None
+    if doc.get("task") != task or doc.get("trading_date") != date:
+        return None  # valid tag, wrong identity: replay/cross-date rejection
     return doc

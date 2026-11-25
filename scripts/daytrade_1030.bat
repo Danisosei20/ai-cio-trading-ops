@@ -6,6 +6,7 @@ REM      (desk cross-check + regime + zones), places day-trade entries tagged
 REM      for the 15:45 flatten, and posts the buy rationale to Slack.
 REM Registered in Task Scheduler as AI-Desk-DayTrade-1030.
 cd /d C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\ai-cio-trading-ops
+if errorlevel 1 exit /b 2
 set TA_PY=C:\Users\Danis Akoto\OneDrive\Documents\AI-trading\TradingAgents\.venv\Scripts\python.exe
 set TRADINGAGENTS_VENV_PYTHON=%TA_PY%
 if not exist outputs mkdir outputs
@@ -17,5 +18,9 @@ if errorlevel 1 (
 echo.>>outputs\daytrade.log
 echo === daytrade session %DATE% %TIME% ===>>outputs\daytrade.log
 "%TA_PY%" scripts\daytrade_scout.py>>outputs\daytrade.log 2>&1
+set SCOUT_RC=%ERRORLEVEL%
 "%TA_PY%" scripts\tradingagents_paper_auto.py --day-trade --quick-model nvidia/nemotron-3.5-lightning-30b-a3b --deep-model nvidia/nemotron-3.5-lightning-30b-a3b --max-notional 2000>>outputs\daytrade.log 2>&1
-echo === daytrade session done %DATE% %TIME% ===>>outputs\daytrade.log
+set JUDGE_RC=%ERRORLEVEL%
+echo === daytrade session done rc=%SCOUT_RC%/%JUDGE_RC% %DATE% %TIME% ===>>outputs\daytrade.log
+if not "%SCOUT_RC%"=="0" exit /b %SCOUT_RC%
+exit /b %JUDGE_RC%

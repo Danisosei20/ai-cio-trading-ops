@@ -480,7 +480,9 @@ def main(argv=None) -> int:
         equity = Decimal("0")
 
     if args.enter:
-        result = {"mode": "enter", "entries": [], "blocks": [], "errors": []}
+        result = {"mode": "enter", "entries": [], "blocks": [], "errors": [],
+                  "execution_mode": ("paper_dry_run" if args.dry_run
+                                     else "paper_order_path_authorization_off")}
         now_et = datetime.now(ET).time()
         if not in_window(now_et, ENTER_WINDOW):
             reason = f"outside overnight entry window {ENTER_WINDOW[0]}-{ENTER_WINDOW[1]} ET"
@@ -496,10 +498,28 @@ def main(argv=None) -> int:
             try:
                 hist = yf.Ticker(ticker).history(period="60d", interval="1d")
                 if hist is None or len(hist) < 60:
+                    result["blocks"].append({
+                        "ticker": ticker, "direction": "long",
+                        "reason": "missing or insufficient daily bars (<60)"})
+                    continue
+                # Stale or future-dated evidence must never qualify.
+                try:
+                    last_bar = hist.index[-1]
+                    bar_day = last_bar.date() if hasattr(last_bar, "date") else None
+                    bar_age = (date.today() - bar_day).days if bar_day else 999
+                except Exception:  # noqa: BLE001 - malformed index fails closed
+                    bar_age = 999
+                if bar_age > 4 or bar_age < 0:
+                    result["blocks"].append({
+                        "ticker": ticker, "direction": "long",
+                        "reason": f"stale or future-dated bars (age {bar_age}d)"})
                     continue
                 closes = [float(v) for v in hist["Close"].dropna()]
                 [float(v) for v in hist["Volume"].dropna()]
                 if len(closes) < 60:
+                    result["blocks"].append({
+                        "ticker": ticker, "direction": "long",
+                        "reason": "missing close prices (<60)"})
                     continue
 
                 entry_price = float(closes[-1])
@@ -682,6 +702,9 @@ def main(argv=None) -> int:
             "blocks": len(result["blocks"]),
             "scanned": len(candidates),
             "selected": len([e for e in result["entries"] if not e.get("dry_run")]),
+            "execution_mode": result["execution_mode"],
+            "orders_submitted": open_count if not args.dry_run else 0,
+            "orders_requested": len(selected) if not args.dry_run else 0,
         }
         # Persist entries so the 09:35 exit can find what this run recorded.
         _save_state(entries_state(result, today, _load_state()))
@@ -698,6 +721,9 @@ def main(argv=None) -> int:
         earliest_entry_et=EXIT_WINDOW[0], latest_entry_et=EXIT_WINDOW[1])
     state = _load_state()
     remaining = []
+    exit_orders_submitted = 0
+    print(json.dumps({"mode": "exit", "execution_mode": "paper_exit_path",
+                      "dry_run": bool(args.dry_run)}))
     for entry in state.get("entries", []):
         symbol = entry["symbol"]
         try:
@@ -724,6 +750,7 @@ def main(argv=None) -> int:
                                   limit_price=mark.quantize(Decimal("0.01")),
                                   position_effect="close"),
                 database=db, service=service)
+            exit_orders_submitted += 1
             print(json.dumps({"ticker": symbol, "mode": "exit",
                               "action": "sell_placed",
                               "qty": str(held), "order_id": result["order_id"],

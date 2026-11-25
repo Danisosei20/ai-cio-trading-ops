@@ -61,12 +61,27 @@ def owned_quantity(rec: dict) -> Decimal | None:
 
 
 def sellable_quantity(rec: dict, held: Decimal) -> Decimal:
-    """Never sell more than the trade's own recorded quantity at the broker."""
+    """Never close more than the trade's own recorded broker quantity."""
+    owned = owned_quantity(rec)
+    if owned is None or held == 0:
+        return Decimal("0")
+    return min(owned, abs(held))
+
+
+def close_plan(rec: dict, held: Decimal, working: set[str]) -> tuple[Decimal, str, str]:
+    """Return (quantity, side, reason). A non-empty reason is a refusal."""
+    symbol = str(rec.get("ticker", "")).upper()
+    if held == 0:
+        return Decimal("0"), "", "already flat"
+    if symbol in working:
+        return Decimal("0"), "", "a close order is already working"
     owned = owned_quantity(rec)
     if owned is None:
-        return Decimal("0")
-    return min(owned, held) if held > 0 else Decimal("0")
-
+        return Decimal("0"), "", "no owned quantity recorded"
+    qty = sellable_quantity(rec, held)
+    if qty <= 0:
+        return Decimal("0"), "", "no owned quantity at broker"
+    return qty, ("sell" if held > 0 else "buy"), ""
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Flatten day-trade positions before the close.")
@@ -77,6 +92,7 @@ def main(argv=None) -> int:
     today = args.date or datetime.now(ET).date().isoformat()
     records = [r for r in _today_records(today)
                if str(r.get("action", "")).endswith("_placed")]
+    failures: list[str] = []
     if not records:
         print(f"flatten_daytrades: no day-trade placements for {today}")
         return 0
@@ -91,27 +107,26 @@ def main(argv=None) -> int:
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
     positions = {str(p.get("symbol", "")).upper(): Decimal(str(p.get("qty", "0")))
                  for p in backend.list_positions()}
+    working = {str(o.get("symbol", "")).upper()
+               for o in backend.list_open_orders()
+               if str(o.get("position_effect", "")).lower() == "close"}
 
     for rec in records:
         symbol = str(rec.get("ticker", "")).upper()
         held = positions.get(symbol, Decimal("0"))
-        if held <= 0:
-            print(f"flatten_daytrades: {symbol} already flat")
+        qty, side, reason = close_plan(rec, held, working)
+        if reason:
+            if reason == "already flat":
+                print(f"flatten_daytrades: {symbol} already flat")
+            else:
+                failures.append(f"{symbol}: {reason}")
+                print(f"flatten_daytrades: {symbol} close refused: {reason}")
             continue
-        owned = owned_quantity(rec)
-        if owned is None:
-            print(f"flatten_daytrades: {symbol} no owned quantity recorded — "
-                  f"refusing to sell the whole broker position")
-            continue
-        qty = sellable_quantity(rec, held)
-        if qty <= 0:
-            print(f"flatten_daytrades: {symbol} no owned quantity available at broker")
-            continue
-        if qty < held:
+        if qty < abs(held):
             print(f"flatten_daytrades: {symbol} broker holds {held}, this trade owns {qty}; "
-                  f"leaving {held - qty} for its owning strategy")
+                  f"leaving {abs(held) - qty} for its owning strategy")
         if args.check:
-            print(f"flatten_daytrades: {symbol} still held {held} -> would flatten")
+            print(f"flatten_daytrades: {symbol} still held {held} -> would {side} to close")
             continue
         try:
             from robinhood_tools.market_prices import get_quote
@@ -119,13 +134,15 @@ def main(argv=None) -> int:
             price = get_quote(symbol).price
             result = place_signal_order(
                 settings=settings, snapshot=None,
-                order=SignalOrder(symbol=symbol, side="sell",
+                order=SignalOrder(symbol=symbol, side=side,
                     position_effect="close",
                                   quantity=qty,
                                   limit_price=price.quantize(Decimal("0.01"))),
                 env_path=".env")
-            print(f"flatten_daytrades: {symbol} sell {qty} @ {price} -> "
+            print(f"flatten_daytrades: {symbol} {side} {qty} @ {price} -> "
                   f"{result['status']} (order {result['order_id']})")
+            if str(result.get("status", "")).lower() in {"rejected", "failed", "error"}:
+                failures.append(f"{symbol}: broker rejected close")
             # The Slack alert is best-effort; its outcome is now recorded by
             # place_signal_order. A flatten the operator cannot see is a
             # flatten they cannot audit, so say so plainly when it happens.
@@ -134,6 +151,9 @@ def main(argv=None) -> int:
                       f"is in the ledger and at the broker, but no Slack "
                       f"message was delivered")
         except Exception as exc:  # noqa: BLE001 - one failure must not strand the rest
+            failures.append(f"{symbol}: {type(exc).__name__}: {exc}")
             print(f"flatten_daytrades: {symbol} flatten FAILED "
                   f"({type(exc).__name__}: {exc})")
-    return 0
+    for failure in failures:
+        print(f"flatten_daytrades: UNRESOLVED {failure}")
+    return 1 if failures else 0

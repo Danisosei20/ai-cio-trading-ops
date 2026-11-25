@@ -35,6 +35,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from robinhood_tools.trade_state import TradeStateMachine, TradeState
+from robinhood_tools.workflow_manifest import (FAILED, VERIFIED,
+                                               write_manifest)
 
 ET = ZoneInfo("America/New_York")
 LOG_FILE = ROOT / "outputs" / "intraday.log"
@@ -160,6 +162,23 @@ def filter_new_setups(scout: dict, traded: list[dict]) -> list[str]:
     return new_tickers
 
 
+def _research_manifest(*, status: str, rc: int | None, reason: str,
+                       tickers: list[str]) -> None:
+    """Persist terminal research evidence so a timeout is never silent."""
+    now = datetime.now(ET)
+    try:
+        write_manifest(
+            ROOT, task="research", date=now.date().isoformat(), status=status,
+            run_id=f"research-{now.strftime('%H%M%S')}",
+            started_at=now.isoformat(), finished_at=now.isoformat(),
+            exit_code=rc, mode="paper_research",
+            evidence={"tickers": tickers, "judge_timeout_seconds": 3600,
+                      "orders_submitted": 0},
+            error=reason)
+    except Exception as exc:  # noqa: BLE001 - manifest failure must not hide rc
+        _log(f"research manifest FAILED: {type(exc).__name__}: {exc}")
+
+
 def run_judge(tickers: list[str], dry_run: bool = False,
               authorization_id: str | None = None) -> None:
     """Run paper_auto --day-trade on the given tickers."""
@@ -195,11 +214,26 @@ def run_judge(tickers: list[str], dry_run: bool = False,
                            timeout=3600,
                            cwd=str(ROOT))
         if r.returncode != 0:
-            _log(f"judge failed (rc={r.returncode}): {r.stderr[:300]}")
-        else:
-            _log(f"judge completed for {tickers}")
+            reason = f"judge failed rc={r.returncode}: {r.stderr[:300]}"
+            _log(reason)
+            _research_manifest(status=FAILED, rc=r.returncode or 1,
+                               reason=reason, tickers=tickers)
+            return False
+        _log(f"judge completed for {tickers}")
+        _research_manifest(status=VERIFIED, rc=0, reason="", tickers=tickers)
+        return True
+    except subprocess.TimeoutExpired as exc:
+        reason = f"judge timeout after 3600s: {exc}"
+        _log(reason)
+        _research_manifest(status=FAILED, rc=124, reason=reason[:400],
+                           tickers=tickers)
+        return False
     except Exception as exc:
-        _log(f"judge error: {type(exc).__name__}: {exc}")
+        reason = f"judge error: {type(exc).__name__}: {exc}"
+        _log(reason)
+        _research_manifest(status=FAILED, rc=127, reason=reason[:400],
+                           tickers=tickers)
+        return False
 
 
 def run_flatten() -> None:
@@ -254,6 +288,7 @@ def main(argv=None) -> int:
         time.sleep(wait)
 
     cycle = 0
+    judge_failures: list[str] = []
     while True:
         now = datetime.now(ET)
         # --once means "run one cycle now": a rehearsal after hours must
@@ -318,7 +353,8 @@ def main(argv=None) -> int:
                     _log(f"order gate blocked ({why}); no orders for {new_tickers}")
                 elif not args.dry_run:
                     _log(f"order gate open ({why}); judging {new_tickers}")
-                    run_judge(new_tickers, authorization_id=parent_authorization_id)
+                    if not run_judge(new_tickers, authorization_id=parent_authorization_id):
+                        judge_failures.append(",".join(new_tickers))
                     # Record traded setups
                     today = datetime.now(ET).date().isoformat()
                     for s in scout.get("setups", []):
@@ -353,6 +389,9 @@ def main(argv=None) -> int:
         run_flatten()
 
     _log("intraday loop done")
+    if judge_failures:
+        _log(f"research failures: {judge_failures}")
+        return 1
     return 0
 
 
