@@ -14,7 +14,7 @@ class StrategyOwnershipTests(unittest.TestCase):
     def test_overnight_trades_excluded_from_day_trade_flatten(self):
         self.assertFalse(daytrade_engine._flatten_eligible(OwnedTrade("overnight")))
         self.assertTrue(daytrade_engine._flatten_eligible(OwnedTrade("intraday")))
-        self.assertTrue(daytrade_engine._flatten_eligible(OwnedTrade(None)))
+        self.assertFalse(daytrade_engine._flatten_eligible(OwnedTrade(None)))
 
     def test_flatten_requires_explicit_owned_quantity(self):
         self.assertEqual(flatten_daytrades.owned_quantity({"ticker": "AAPL"}), None)

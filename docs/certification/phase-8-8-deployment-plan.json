@@ -1,0 +1,146 @@
+{
+  "track": "hardened_launcher_deployment",
+  "mode": "dry_run",
+  "source": "C:\\Users\\Danis Akoto\\.local\\share\\opencode\\worktree\\a2740b\\phase8-8-parity",
+  "destination": "C:\\Users\\Danis Akoto\\OneDrive\\Documents\\AI-trading\\ai-cio-trading-ops",
+  "planned_at": "2026-11-24T22:05:21.289153-05:00",
+  "owner_authorized": false,
+  "applied": false,
+  "active_window": false,
+  "running_tasks": [],
+  "actions": [
+    {
+      "component": "scripts/intraday_loop.bat",
+      "action": "COPY",
+      "source_sha256": "5996816b7eac4189385ca51ded1bb923675068e99aa5bf9d54889eb78eb11dcd"
+    },
+    {
+      "component": "scripts/auto_trade_weekday.bat",
+      "action": "COPY",
+      "source_sha256": "08e8bd8abccf65f24d98689f27d2b14d4f69ff25c03847c2248c51fcbe8af0d7"
+    },
+    {
+      "component": "scripts/flatten_1545.bat",
+      "action": "COPY",
+      "source_sha256": "7e798f145f355807fd68edc6e60c3f6ec55b3a14343793c98efb0ec5d3ce7706"
+    },
+    {
+      "component": "scripts/overnight_enter.bat",
+      "action": "COPY",
+      "source_sha256": "2249eeeda7cd84db914f36e3647896174703c283676ac2b67e2aa3a5ed516b81"
+    },
+    {
+      "component": "scripts/overnight_exit.bat",
+      "action": "COPY",
+      "source_sha256": "327a4c33135f08426674f27b09de2152ac5e7af9a4117928c520ae7754ba0c05"
+    },
+    {
+      "component": "scripts/options_watch.bat",
+      "action": "COPY",
+      "source_sha256": "a43cee50fb9ed43d6955fd0bb1b6ac902b09d1d6457c2e93a62961584a7f5169"
+    },
+    {
+      "component": "scripts/news_daily.bat",
+      "action": "COPY",
+      "source_sha256": "61e5200b2bf9f5e03022572d69bc61338aa4cab4564fbcd57a98e79ba851c65c"
+    },
+    {
+      "component": "scripts/score_shadow.bat",
+      "action": "COPY",
+      "source_sha256": "1dd6b95bef261222c54a2b5c59afcd17826789fa1106edd53e794e2dae96dff6"
+    },
+    {
+      "component": "scripts/watchdog_windows.bat",
+      "action": "COPY",
+      "source_sha256": "706fd890b25c9d695e1c3ccb2ad5ae8778ea2a0b6ba41fbc4be24217bcf36e97"
+    },
+    {
+      "component": "scripts/weekly_review.bat",
+      "action": "COPY",
+      "source_sha256": "d15dac459fd2523789402124c008b1c06efd85c870c5ed748bb64fdda237ebe5"
+    },
+    {
+      "component": "scripts/daytrade_1030.bat",
+      "action": "COPY",
+      "source_sha256": "7f245d59c5653596eef51cf15648ff026f45c2c8b196003e498898f46f37135d"
+    },
+    {
+      "component": "scripts/office_server.bat",
+      "action": "COPY",
+      "source_sha256": "d3914d46f74c2087b78867132310258b236311a1aee32a802a785d70819fb430"
+    },
+    {
+      "component": "scripts/workflow_runner.py",
+      "action": "COPY",
+      "source_sha256": "9606e68b6286e727b3ebe1dab62c674ad2eab30e2c91cea18b092e7a67c4f82c"
+    },
+    {
+      "component": "scripts/flatten_verified.py",
+      "action": "COPY",
+      "source_sha256": "53a19a507b9047faca5c2954238b8d5d90308b14dcfd2cd495869a2e6ca29729"
+    },
+    {
+      "component": "scripts/flatten_daytrades.py",
+      "action": "COPY",
+      "source_sha256": "15f99c0e2064f695a49414696bbeeb452c4e39bd34236e40987070bb124f411a"
+    },
+    {
+      "component": "scripts/intraday_loop.py",
+      "action": "COPY",
+      "source_sha256": "1cd74c79f3dfd7ecad79c459bbb2e486ff65c346cefa5365f44921202e642328"
+    },
+    {
+      "component": "scripts/overnight_pilot.py",
+      "action": "COPY",
+      "source_sha256": "d1524d2d2f8a989432548e974abf41df4c5753a9e6f36c3562543ec000152988"
+    },
+    {
+      "component": "scripts/operational_reliability.py",
+      "action": "COPY",
+      "source_sha256": "347c91e84f5d4e40bdb86fbfa02399a2975e61946c266d0b149185c070edcda5"
+    },
+    {
+      "component": "scripts/daily_reliability_rehearsal.py",
+      "action": "COPY",
+      "source_sha256": "c3b6a08d95fb2d61ff288d425e256e8efd1fcffd8438aeebf02a900b5bc7e716"
+    },
+    {
+      "component": "scripts/champion_equiv_benchmark.py",
+      "action": "COPY",
+      "source_sha256": "714b65e97edf1b713e3a9dfa817fa754f110bf889aa3bfa5eba4d055a26af398"
+    },
+    {
+      "component": "scripts/agent_office.py",
+      "action": "COPY",
+      "source_sha256": "c5f8b88222e53b91e39fb22d8d1a44cf6052aae13a0a028e7acd2ead79a78984"
+    },
+    {
+      "component": "robinhood_tools/workflow_manifest.py",
+      "action": "COPY",
+      "source_sha256": "8b145aba19c42550334ce6693fdd39f08ca931f3e6e21460fbe51f411d8a290d"
+    },
+    {
+      "component": "web/agent-office/trading.html",
+      "action": "COPY",
+      "source_sha256": "6d772fb94895ece3a2bcdab0a6ba53cae16cb0d2b38396d8ba7ce2f7b33e23ff"
+    },
+    {
+      "component": "docs/specs/intraday-setups/v1.0.0/SPEC.md",
+      "action": "COPY",
+      "source_sha256": "68f55225eec0917c724afe876bf87511b5ccd4e107b3ecea424d5010b18b7dd8"
+    },
+    {
+      "component": "docs/adr/0001-deterministic-gate-ai-research-only.md",
+      "action": "SKIP",
+      "reason": "already matching"
+    },
+    {
+      "component": "docs/adr/0002-execution-authorization-protocol.md",
+      "action": "SKIP",
+      "reason": "already matching"
+    }
+  ],
+  "secrets_touched": false,
+  "scheduler_modified": false,
+  "rollback": "Use --rollback <backup-manifest.json> with --owner-authorized"
+}

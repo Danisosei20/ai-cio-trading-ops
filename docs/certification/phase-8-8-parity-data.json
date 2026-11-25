@@ -1,0 +1,215 @@
+{
+  "track": "checkout_parity",
+  "generated_at": "2026-11-24T22:05:19.939198",
+  "source": "C:\\Users\\Danis Akoto\\.local\\share\\opencode\\worktree\\a2740b\\phase8-8-parity",
+  "destination": "C:\\Users\\Danis Akoto\\OneDrive\\Documents\\AI-trading\\ai-cio-trading-ops",
+  "counts": {
+    "DEPLOYMENT_REQUIRED": 24,
+    "MATCH": 2
+  },
+  "rows": [
+    {
+      "component": "scripts/intraday_loop.bat",
+      "source_sha256": "5996816b7eac4189385ca51ded1bb923675068e99aa5bf9d54889eb78eb11dcd",
+      "destination_sha256": "288986510933149cbeb35079c0d1ca7a2a010273f566cb07d8aedcc0d599535c",
+      "last_modified_utc": "2026-11-24T11:31:42.065778",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/auto_trade_weekday.bat",
+      "source_sha256": "08e8bd8abccf65f24d98689f27d2b14d4f69ff25c03847c2248c51fcbe8af0d7",
+      "destination_sha256": "e6bb4616a2671d5fd6e2f3e68d4d464f95d643b3da2631d885d04327d60d2f56",
+      "last_modified_utc": "2026-11-24T11:31:42.061867",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/flatten_1545.bat",
+      "source_sha256": "7e798f145f355807fd68edc6e60c3f6ec55b3a14343793c98efb0ec5d3ce7706",
+      "destination_sha256": "0c0cba72c3865c27c44216de7239da76c00b262ecf2023b25793f78d6fc6f4f4",
+      "last_modified_utc": "2026-10-30T12:00:09.360176",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/overnight_enter.bat",
+      "source_sha256": "2249eeeda7cd84db914f36e3647896174703c283676ac2b67e2aa3a5ed516b81",
+      "destination_sha256": "7931efeb68d51d0c17a83727a0e64ff73193122e27d064004bd33cfb412af410",
+      "last_modified_utc": "2026-11-16T19:48:14.712330",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/overnight_exit.bat",
+      "source_sha256": "327a4c33135f08426674f27b09de2152ac5e7af9a4117928c520ae7754ba0c05",
+      "destination_sha256": "a8c046b991b9889b6e86d4abdcda5c9e0aae145bbcf8eac920f62940d3fc128c",
+      "last_modified_utc": "2026-11-04T14:48:35.601797",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/options_watch.bat",
+      "source_sha256": "a43cee50fb9ed43d6955fd0bb1b6ac902b09d1d6457c2e93a62961584a7f5169",
+      "destination_sha256": "ea0c85efd9dcc85567aa04a5095bc33b821e5dd446aa209d9588de690cec8c86",
+      "last_modified_utc": "2026-11-16T19:12:43.576436",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/news_daily.bat",
+      "source_sha256": "61e5200b2bf9f5e03022572d69bc61338aa4cab4564fbcd57a98e79ba851c65c",
+      "destination_sha256": "8f1b0aa838a22b029fc68d66623c71af546d738aeec231758191d5a5c7fa685d",
+      "last_modified_utc": "2026-11-22T21:54:47.261393",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/score_shadow.bat",
+      "source_sha256": "1dd6b95bef261222c54a2b5c59afcd17826789fa1106edd53e794e2dae96dff6",
+      "destination_sha256": "3e1556a710fa6c1d68b43d1909c9f69462ec6b7a9cb85d7a023aedece5cc74e2",
+      "last_modified_utc": "2026-11-24T11:31:42.069704",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/watchdog_windows.bat",
+      "source_sha256": "706fd890b25c9d695e1c3ccb2ad5ae8778ea2a0b6ba41fbc4be24217bcf36e97",
+      "destination_sha256": "8802805be45e3a151800adb6ecbb846ac268f94cc59cedafe2fd0b58bf25e7a2",
+      "last_modified_utc": "2026-10-25T21:14:40.344976",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/weekly_review.bat",
+      "source_sha256": "d15dac459fd2523789402124c008b1c06efd85c870c5ed748bb64fdda237ebe5",
+      "destination_sha256": "c9eb15e9ff25d7bc4a80826bfa71f4503e543607acfe022951c31df8724a94d4",
+      "last_modified_utc": "2026-10-26T20:10:30.737387",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/daytrade_1030.bat",
+      "source_sha256": "7f245d59c5653596eef51cf15648ff026f45c2c8b196003e498898f46f37135d",
+      "destination_sha256": "0a5fd351c0d02fc37ca860efdead6fe81d6f311c612b864d1f020558691c35aa",
+      "last_modified_utc": "2026-11-24T11:31:42.062761",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/office_server.bat",
+      "source_sha256": "d3914d46f74c2087b78867132310258b236311a1aee32a802a785d70819fb430",
+      "destination_sha256": "02403c0d80aa5a3b36d36cc4758a7db3b08da27ea96e61bd7aed6ed67f5a0b06",
+      "last_modified_utc": "2026-11-17T13:18:08.618419",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/workflow_runner.py",
+      "source_sha256": "9606e68b6286e727b3ebe1dab62c674ad2eab30e2c91cea18b092e7a67c4f82c",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "scripts/flatten_verified.py",
+      "source_sha256": "53a19a507b9047faca5c2954238b8d5d90308b14dcfd2cd495869a2e6ca29729",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "scripts/flatten_daytrades.py",
+      "source_sha256": "15f99c0e2064f695a49414696bbeeb452c4e39bd34236e40987070bb124f411a",
+      "destination_sha256": "719e1faf2dc69558a069f648ab2a4203112f2ad0ed0b51e0923475073b541734",
+      "last_modified_utc": "2026-11-23T21:06:20.950772",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/intraday_loop.py",
+      "source_sha256": "1cd74c79f3dfd7ecad79c459bbb2e486ff65c346cefa5365f44921202e642328",
+      "destination_sha256": "8457ed7a40ad2bdb79d9a2d296a875530fcb7dc4cd223def7378845f3fc2ee91",
+      "last_modified_utc": "2026-11-23T21:06:20.951771",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/overnight_pilot.py",
+      "source_sha256": "d1524d2d2f8a989432548e974abf41df4c5753a9e6f36c3562543ec000152988",
+      "destination_sha256": "e689807d0a08190c9b8bbe88c8a6605936f695e59b3bcbb9a13a80542227448e",
+      "last_modified_utc": "2026-11-24T16:46:53.121664",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "scripts/operational_reliability.py",
+      "source_sha256": "347c91e84f5d4e40bdb86fbfa02399a2975e61946c266d0b149185c070edcda5",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "scripts/daily_reliability_rehearsal.py",
+      "source_sha256": "c3b6a08d95fb2d61ff288d425e256e8efd1fcffd8438aeebf02a900b5bc7e716",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "scripts/champion_equiv_benchmark.py",
+      "source_sha256": "714b65e97edf1b713e3a9dfa817fa754f110bf889aa3bfa5eba4d055a26af398",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "scripts/agent_office.py",
+      "source_sha256": "c5f8b88222e53b91e39fb22d8d1a44cf6052aae13a0a028e7acd2ead79a78984",
+      "destination_sha256": "54e9082512dec23dcad6c707fceeb411c185db5ee779ebddb6b53371710a9198",
+      "last_modified_utc": "2026-11-24T16:46:53.121664",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "robinhood_tools/workflow_manifest.py",
+      "source_sha256": "8b145aba19c42550334ce6693fdd39f08ca931f3e6e21460fbe51f411d8a290d",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "web/agent-office/trading.html",
+      "source_sha256": "6d772fb94895ece3a2bcdab0a6ba53cae16cb0d2b38396d8ba7ce2f7b33e23ff",
+      "destination_sha256": "60517ead388ab4f7cf535f856069e8abba892a9cf87f301194262db31fe6ede3",
+      "last_modified_utc": "2026-11-24T18:31:46.924151",
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "hash differs; reviewed source is newer"
+    },
+    {
+      "component": "docs/specs/intraday-setups/v1.0.0/SPEC.md",
+      "source_sha256": "68f55225eec0917c724afe876bf87511b5ccd4e107b3ecea424d5010b18b7dd8",
+      "destination_sha256": null,
+      "classification": "DEPLOYMENT_REQUIRED",
+      "reason": "destination missing"
+    },
+    {
+      "component": "docs/adr/0001-deterministic-gate-ai-research-only.md",
+      "source_sha256": "bc6ff8ccdbbce7703e63960195b69589c90553dffbd7589dbfb097f816178cf1",
+      "destination_sha256": "bc6ff8ccdbbce7703e63960195b69589c90553dffbd7589dbfb097f816178cf1",
+      "last_modified_utc": "2026-11-22T21:13:33.985711",
+      "classification": "MATCH",
+      "reason": "hash identical"
+    },
+    {
+      "component": "docs/adr/0002-execution-authorization-protocol.md",
+      "source_sha256": "d02079fad23377a1d42ade06c7d39f2782351171e6c99825cf13b7e5dc8cd70f",
+      "destination_sha256": "d02079fad23377a1d42ade06c7d39f2782351171e6c99825cf13b7e5dc8cd70f",
+      "last_modified_utc": "2026-11-23T20:11:28.005307",
+      "classification": "MATCH",
+      "reason": "hash identical"
+    }
+  ],
+  "secret_policy": "names and hashes only; no secret files opened or copied",
+  "scheduler_policy": "no registered task modified"
+}

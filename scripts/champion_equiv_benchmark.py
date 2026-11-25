@@ -48,11 +48,18 @@ CONFIG_DIGEST = hashlib.sha256(json.dumps(
     CHAMPION_CONFIG, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 CHILD = r'''
-import json, os, time, hashlib
+import json, os, time, hashlib, re
 from pathlib import Path
+def _scrub(text):
+    return re.sub(r"(?i)(api[_-]?key|secret|token|password|bearer)\s*[:=]\s*\S+",
+                  lambda m: m.group(1) + "=<redacted>", str(text))[:500]
 run = Path(os.environ["CE_RUN"])
 progress = run / "progress.json"
-counts = {"llm_calls": 0, "tool_calls": 0, "llm_errors": 0, "retries": 0}
+counts = {"llm_calls": 0, "tool_calls": 0, "llm_errors": 0,
+          "tool_errors": 0, "retries": 0}
+events_file = run / "tool-events.jsonl"
+if events_file.exists():
+    events_file.unlink()  # never append telemetry across reused run ids
 def flush(stage, status, **extra):
     doc = {"stage": stage, "status": status, "at": time.time(), "counts": dict(counts), **extra}
     progress.write_text(json.dumps(doc, default=str), encoding="utf-8")
@@ -82,6 +89,7 @@ cfg.update({
     "checkpoint_enabled": False,
     "max_debate_rounds": 1, "max_risk_discuss_rounds": 1,
     "max_tool_rounds": 4, "llm_max_retries": 1, "timeout": 90.0,
+    "checkpoint_enabled": False, "max_recur_limit": 100,
 })
 actual = {k: cfg.get(k) for k in (
     "llm_provider", "quick_think_llm", "deep_think_llm", "max_tool_rounds",
@@ -94,29 +102,90 @@ config_match = all(cfg.get(k) == expected[k] for k in keys)
 flush("config_frozen", "ok" if config_match else "mismatch",
       digest=digest, actual=actual, config_match=config_match)
 from langchain_core.callbacks import BaseCallbackHandler
+ALLOWED_TOOL_KEYS = {"symbol", "date", "ticker", "indicator", "look_back_days",
+                     "limit", "period", "interval"}
+def safe_args(value):
+    if not isinstance(value, dict):
+        return {}
+    return {k: str(value[k])[:80] for k in value if k in ALLOWED_TOOL_KEYS}
 class Counter(BaseCallbackHandler):
-    def on_llm_start(self, *a, **kw):
+    def __init__(self):
+        self.active = {}
+    def emit(self, event):
+        try:
+            with events_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, default=str) + "\n")
+        except Exception:
+            pass
+    def on_llm_start(self, serialized, prompts, *, run_id=None, parent_run_id=None, **kw):
         counts["llm_calls"] += 1
-    def on_llm_end(self, *a, **kw):
-        pass
+        self.emit({"event": "model_request", "run_id": str(run_id),
+                   "parent_run_id": str(parent_run_id),
+                   "start_utc": __import__("datetime").datetime.now(
+                       __import__("datetime").timezone.utc).isoformat(),
+                   "monotonic_ns": time.perf_counter_ns()})
     def on_llm_error(self, *a, **kw):
         counts["llm_errors"] += 1
-    def on_tool_start(self, *a, **kw):
+    def on_tool_start(self, serialized, input_str, *, run_id=None,
+                      parent_run_id=None, **kw):
         counts["tool_calls"] += 1
-    def on_tool_end(self, *a, **kw):
-        pass
-    def on_tool_error(self, *a, **kw):
-        counts["llm_errors"] += 1
+        name = str((serialized or {}).get("name", "unknown"))[:60]
+        record = {"schema_version": "agent-tool-telemetry-v1",
+                  "event": "tool_start", "tool_invocation_id": str(run_id),
+                  "model_request_id": str(parent_run_id), "tool_name": name,
+                  "tool_category": ("market_data" if "market" in name.lower()
+                                    else "news" if "news" in name.lower()
+                                    else "snapshot" if "snapshot" in name.lower()
+                                    else "other"),
+                  "safe_args": safe_args(input_str),
+                  "start_monotonic_ns": time.perf_counter_ns(),
+                  "start_utc": __import__("datetime").datetime.now(
+                      __import__("datetime").timezone.utc).isoformat(),
+                  "status": "started", "cache_hit": None, "retry_attempt": 0}
+        self.active[str(run_id)] = record
+        self.emit(record)
+    def on_tool_end(self, output, *, run_id=None, **kw):
+        record = self.active.pop(str(run_id), None)
+        if record is not None:
+            record.update({"event": "tool_end", "status": "ok",
+                           "end_monotonic_ns": time.perf_counter_ns(),
+                           "duration_ms": round(
+                               (time.perf_counter_ns() -
+                                record["start_monotonic_ns"]) / 1e6, 3),
+                           "evidence_ref": "result not recorded (no secrets)"})
+            self.emit(record)
+    def on_tool_error(self, error, *, run_id=None, **kw):
+        counts["tool_errors"] += 1
+        record = self.active.pop(str(run_id), None)
+        if record is not None:
+            record.update({"event": "tool_error", "status": "error",
+                           "error_class": type(error).__name__,
+                           "end_monotonic_ns": time.perf_counter_ns()})
+            self.emit(record)
+handler = Counter()
 graph = TradingAgentsGraph(
     selected_analysts=["market", "news"], debug=False, config=cfg,
-    callbacks=[Counter()])
+    callbacks=[handler])
+# TradingAgentsGraph only forwards callbacks to LLM constructors. ToolNode
+# callbacks must be injected into the graph invoke config; wrap the existing
+# getter so the same handler observes real tool executions.
+_original_args = graph.propagator.get_graph_args
+def _patched_args(*a, **kw):
+    args = _original_args(*a, **kw)
+    config = args.setdefault("config", {})
+    existing = list(config.get("callbacks") or [])
+    if not any(c is handler for c in existing):
+        existing.append(handler)
+    config["callbacks"] = existing
+    return args
+graph.propagator.get_graph_args = _patched_args
 flush("graph_started", "ok")
 t0 = time.perf_counter()
 decision, error, state = "UNKNOWN", "", {}
 try:
     state, decision = graph.propagate(os.environ["CE_SYMBOL"], os.environ["CE_DATE"])
 except Exception as exc:
-    error = f"{type(exc).__name__}: {exc}"[:500]
+    error = _scrub(f"{type(exc).__name__}: {exc}".split("\n")[0])
 elapsed = time.perf_counter() - t0
 reports = {k: bool(state.get(k)) for k in ("market_report", "news_report")}
 rating = ""
@@ -131,9 +200,27 @@ flush("graph_finished", "error" if error else "ok", elapsed_seconds=elapsed,
     "elapsed_seconds": round(elapsed, 3), "graph_seconds": round(elapsed, 3),
     "decision": decision, "error": error, "reports": reports,
     "rating": rating, "counts": counts, "config_digest": digest,
+    "tool_event_count": counts["tool_calls"],
     "config_actual": actual, "config_match": config_match},
     default=str), encoding="utf-8")
 '''
+
+
+def summarize_tool_events(events: list[dict]) -> dict:
+    """Count real tool dispatch events; never trust a zero without validation."""
+    starts = [e for e in events if e.get("event") == "tool_start"]
+    ends = [e for e in events if e.get("event") == "tool_end"]
+    errors = [e for e in events if e.get("event") == "tool_error"]
+    return {
+        "attempted": len(starts),
+        "completed": len(ends),
+        "failed": len(errors),
+        "unique_invocations": len({e.get("tool_invocation_id") for e in starts}),
+        "categories": sorted({e.get("tool_category", "other") for e in starts}),
+        "secrets_recorded": any(
+            key in str(e).lower() for e in events
+            for key in ("api" + "_key", "bear" + "er ", "pass" + "word=")),
+    }
 
 
 def _guard(root: Path, run_id: str) -> Path:
@@ -168,13 +255,16 @@ def measure(*, ta_python: Path, ta_root: Path, run_id: str, root: Path,
             symbol: str, date: str, deadline: float) -> dict:
     run = _guard(root, run_id)
     run.mkdir(parents=True, exist_ok=True)
+    stale_events = run / "tool-events.jsonl"
+    if stale_events.exists():
+        stale_events.unlink()
     env = dict(os.environ)
     env.update({"CE_RUN": str(run), "CE_TA": str(ta_root), "CE_MODEL": MODEL,
                 "CE_SYMBOL": symbol, "CE_DATE": date,
                 "CE_CONFIG": json.dumps(CHAMPION_CONFIG, sort_keys=True,
                                         separators=(",", ":"))})
     started = time.perf_counter()
-    status, error, cleanup = "ok", "", ""
+    status, error, cleanup, err = "ok", "", "", ""
     proc = None
     try:
         proc = subprocess.Popen(
@@ -213,11 +303,25 @@ def measure(*, ta_python: Path, ta_root: Path, run_id: str, root: Path,
     evidence_complete = bool(reports.get("market_report") and
                              reports.get("news_report")) and status == "ok"
     if status == "ok" and child.get("error"):
-        status, error = "error", f"child graph error: {child['error']}"[:600]
+        status, error = "error", redact(
+            f"child graph error: {child['error']}")[:600]
     if status == "ok" and not child.get("config_match", False):
         status, error = "error", "frozen champion config did not match runtime config"
     if status == "ok" and not evidence_complete:
         status, error = "error", "evidence incomplete: missing analyst reports"
+    if status == "ok" and child.get("counts", {}).get("tool_calls", 0) == 0:
+        status, error = ("error", "tool-call telemetry NOT VERIFIED: "
+                         "no tool execution events observed")
+    tool_events = ([json.loads(line) for line in
+                   (run / "tool-events.jsonl").read_text(
+                       encoding="utf-8").splitlines() if line.strip()]
+                  if (run / "tool-events.jsonl").exists() else [])
+    tool_summary = summarize_tool_events(tool_events)
+    if status == "ok" and tool_summary["attempted"] != (
+            child.get("counts", {}).get("tool_calls", 0)):
+        status, error = "error", "tool telemetry counts do not match dispatch events"
+    if tool_summary["secrets_recorded"]:
+        status, error = "error", "telemetry record contains a secret pattern"
     if status != "ok":
         evidence_complete = False
     report = {
@@ -241,6 +345,7 @@ def measure(*, ta_python: Path, ta_root: Path, run_id: str, root: Path,
         "rating": child.get("rating", ""),
         "status": status, "error": error, "cleanup": cleanup,
         "counts": child.get("counts") or progress.get("counts") or {},
+        "tool_events": tool_events, "tool_summary": tool_summary,
         "evidence_complete": evidence_complete, "reports": reports,
         "stage": progress.get("stage", ""), "progress": progress,
         "child": child, "stderr_redacted": redact(err or "")[:600],

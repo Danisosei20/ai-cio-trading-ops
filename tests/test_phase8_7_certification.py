@@ -251,7 +251,7 @@ class FlattenContractTests(unittest.TestCase):
 
     def test_close_order_side_follows_position_direction(self):
         source = Path(flatten_daytrades.__file__).read_text(encoding="utf-8")
-        self.assertIn('return qty, ("sell" if held > 0 else "buy"), ""', source)
+        self.assertIn('side = "sell" if held > 0 else "buy"', source)
         self.assertIn("return 1 if failures else 0", source)
 
     def test_verifier_still_read_only(self):
@@ -359,7 +359,7 @@ class AdversarialFixTests(unittest.TestCase):
         self.assertEqual((qty, side, reason),
                          (Decimal("0"), "", "no owned quantity recorded"))
         qty, side, reason = flatten_daytrades.close_plan(
-            {"ticker": "QQQ", "quantity": 3}, Decimal("5"), {"QQQ"})
+            {"ticker": "QQQ", "quantity": 3}, Decimal("5"), {("QQQ", "sell")})
         self.assertEqual(reason, "a close order is already working")
         qty, side, reason = flatten_daytrades.close_plan(
             {"ticker": "QQQ", "quantity": 3}, Decimal("-5"), set())

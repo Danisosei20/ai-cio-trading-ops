@@ -69,6 +69,16 @@ def _measurements(root: Path) -> dict[str, dict]:
     return out
 
 
+def _uncertain_intents(root: Path) -> list[dict]:
+    """Unconfirmed submission intents; never auto-retried by this service."""
+    try:
+        from robinhood_tools.execution_audit_gate import (  # noqa: PLC0415
+            pending_reconciliation)
+        return [dict(item) for item in pending_reconciliation(root)][:20]
+    except Exception:  # noqa: BLE001 - diagnostics fail closed
+        return [{"status": "unavailable"}]
+
+
 def operational_reliability_payload(
         root: Path, *, date: str | None = None) -> dict:
     date = date or datetime.now(ET).date().isoformat()
@@ -116,7 +126,8 @@ def operational_reliability_payload(
                 "error": doc.get("error", ""),
             }
     return {
-        "status": "ok",
+        "status": ("degraded" if any(r["status"] == "FAILED" for r in rows)
+                   else "ok"),
         "generated_at": datetime.now(ET).isoformat(),
         "session_date": date,
         "read_only": True,
@@ -159,12 +170,38 @@ def operational_reliability_payload(
                 "execution_mode", "not recorded"),
             "unresolved_orders": len((flatten.get("evidence") or {}).get(
                 "open_order_statuses", {})),
+            "uncertain_intents": _uncertain_intents(root),
             "source": "manifest evidence only; not a broker query",
         },
         "broker_verification": {
             "source": "not queried by this endpoint",
             "positions": "see dashboard Positions panel",
             "orders": "see dashboard Working Orders panel",
+        },
+        "deployment_readiness": {
+            "parity": _load(root / "docs/certification/phase-8-8-parity-data.json")
+                      or {"counts": {}},
+            "plan": _load(root / "docs/certification/phase-8-8-deployment-plan.json")
+                    or {"mode": "unavailable", "applied": False},
+            "owner_authorization": "required - no live checkout changes in this phase",
+        },
+        "research_observability": {
+            "measurements": {k: {"status": v.get("status"),
+                                 "tool_counts": v.get("counts"),
+                                 "tool_events": len(v.get("tool_events") or []),
+                                 "evidence_complete": v.get("evidence_complete"),
+                                 "wall_seconds": v.get("wall_seconds")}
+                             for k, v in measures.items()},
+            "telemetry_policy": ("model requests, tool starts/ends/errors only; "
+                                 "no prompts, secrets or tool outputs recorded"),
+        },
+        "latency": _load(root / "docs/certification/phase-8-8-signal-latency.json")
+                    or {"status": "NOT VERIFIED"},
+        "strategy_validation": {
+            "spec_version": SPEC_VERSION,
+            "replay_status": "NOT VERIFIED - insufficient point-in-time data",
+            "oos_status": "NOT VERIFIED - no frozen multi-session archive",
+            "promotion": "none",
         },
         "evidence_labels": {
             "simulated": "rehearsal fixtures, never broker fills",
