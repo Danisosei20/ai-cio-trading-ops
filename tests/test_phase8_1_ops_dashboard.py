@@ -1,6 +1,8 @@
 """Phase 8.1 operations and dashboard: lifecycle, data consistency, safety."""
 import json
+import os
 import tempfile
+from datetime import datetime
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -76,6 +78,8 @@ class LifecycleTests(unittest.TestCase):
             artifact = root / "outputs/options-watch.log"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_text(DATE + " options watch done", encoding="utf-8")
+            stamp = datetime(2026, 11, 24, 15, 10).timestamp()
+            os.utime(artifact, (stamp, stamp))
             tasks = {"AI-Desk-OptionsWatch-1510": {
                 "Last": "11/24/2026 3:10:00 PM", "Result": 0}}
             with mock.patch.object(lifecycle, "_task_info", return_value=tasks), \

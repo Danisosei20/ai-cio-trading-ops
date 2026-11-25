@@ -55,14 +55,22 @@ def _scrub(text):
                   lambda m: m.group(1) + "=<redacted>", str(text))[:500]
 run = Path(os.environ["CE_RUN"])
 progress = run / "progress.json"
-counts = {"llm_calls": 0, "tool_calls": 0, "llm_errors": 0,
-          "tool_errors": 0, "retries": 0}
+counts = {"llm_calls": 0, "llm_completions": 0, "tool_calls": 0,
+          "llm_errors": 0, "tool_errors": 0, "retries": 0}
 events_file = run / "tool-events.jsonl"
 if events_file.exists():
     events_file.unlink()  # never append telemetry across reused run ids
+_last_stage = {"name": None, "at": None}
 def flush(stage, status, **extra):
-    doc = {"stage": stage, "status": status, "at": time.time(), "counts": dict(counts), **extra}
+    now = time.time()
+    duration = None if _last_stage["at"] is None else round(
+        (now - _last_stage["at"]) * 1000, 3)
+    doc = {"stage": stage, "status": status, "at": now,
+           "stage_duration_ms": duration,
+           "previous_stage": _last_stage["name"],
+           "counts": dict(counts), **extra}
     progress.write_text(json.dumps(doc, default=str), encoding="utf-8")
+    _last_stage.update({"name": stage, "at": now})
 flush("child_start", "ok")
 ta = Path(os.environ["CE_TA"])
 for line in (ta / ".env").read_text(encoding="utf-8", errors="replace").splitlines():
@@ -111,6 +119,7 @@ def safe_args(value):
 class Counter(BaseCallbackHandler):
     def __init__(self):
         self.active = {}
+        self.first_model_ns = None
     def emit(self, event):
         try:
             with events_file.open("a", encoding="utf-8") as fh:
@@ -119,13 +128,30 @@ class Counter(BaseCallbackHandler):
             pass
     def on_llm_start(self, serialized, prompts, *, run_id=None, parent_run_id=None, **kw):
         counts["llm_calls"] += 1
+        if self.first_model_ns is None:
+            self.first_model_ns = time.perf_counter_ns()
         self.emit({"event": "model_request", "run_id": str(run_id),
                    "parent_run_id": str(parent_run_id),
                    "start_utc": __import__("datetime").datetime.now(
                        __import__("datetime").timezone.utc).isoformat(),
                    "monotonic_ns": time.perf_counter_ns()})
-    def on_llm_error(self, *a, **kw):
+    def on_llm_end(self, *a, **kw):
+        counts["llm_completions"] += 1
+        self.emit({"event": "model_completion", "status": "ok",
+                   "at_utc": __import__("datetime").datetime.now(
+                       __import__("datetime").timezone.utc).isoformat(),
+                   "monotonic_ns": time.perf_counter_ns()})
+    def on_llm_error(self, error, *a, **kw):
         counts["llm_errors"] += 1
+        self.emit({"event": "model_error", "status": "error",
+                   "error_class": type(error).__name__,
+                   "at_utc": __import__("datetime").datetime.now(
+                       __import__("datetime").timezone.utc).isoformat()})
+    def on_llm_retry(self, *a, **kw):
+        counts["retries"] += 1
+        self.emit({"event": "provider_retry", "status": "retry",
+                   "at_utc": __import__("datetime").datetime.now(
+                       __import__("datetime").timezone.utc).isoformat()})
     def on_tool_start(self, serialized, input_str, *, run_id=None,
                       parent_run_id=None, **kw):
         counts["tool_calls"] += 1
@@ -179,6 +205,7 @@ def _patched_args(*a, **kw):
     config["callbacks"] = existing
     return args
 graph.propagator.get_graph_args = _patched_args
+graph_started_ns = time.perf_counter_ns()
 flush("graph_started", "ok")
 t0 = time.perf_counter()
 decision, error, state = "UNKNOWN", "", {}
@@ -188,6 +215,14 @@ except Exception as exc:
     error = _scrub(f"{type(exc).__name__}: {exc}".split("\n")[0])
 elapsed = time.perf_counter() - t0
 reports = {k: bool(state.get(k)) for k in ("market_report", "news_report")}
+as_of = (state.get("market_as_of") or state.get("price_as_of") or
+         state.get("as_of") or state.get("retrieved_at"))
+freshness_at_decision = ({"status": "NOT_VERIFIED",
+                          "reason": "no market_as_of/price_as_of in graph state"}
+                         if not as_of else
+                         {"status": "RECORDED", "market_as_of": str(as_of)[:80]})
+queue_delay_ms = (None if handler.first_model_ns is None else round(
+    (handler.first_model_ns - graph_started_ns) / 1e6, 3))
 rating = ""
 try:
     from tradingagents.agents.rating import run_rating
@@ -201,6 +236,8 @@ flush("graph_finished", "error" if error else "ok", elapsed_seconds=elapsed,
     "decision": decision, "error": error, "reports": reports,
     "rating": rating, "counts": counts, "config_digest": digest,
     "tool_event_count": counts["tool_calls"],
+    "freshness_at_decision": freshness_at_decision,
+    "queue_delay_ms": queue_delay_ms,
     "config_actual": actual, "config_match": config_match},
     default=str), encoding="utf-8")
 '''
@@ -346,6 +383,17 @@ def measure(*, ta_python: Path, ta_root: Path, run_id: str, root: Path,
         "status": status, "error": error, "cleanup": cleanup,
         "counts": child.get("counts") or progress.get("counts") or {},
         "tool_events": tool_events, "tool_summary": tool_summary,
+        "model_requests": (child.get("counts") or {}).get("llm_calls"),
+        "model_completions": (child.get("counts") or {}).get("llm_completions"),
+        "provider_retries": (child.get("counts") or {}).get("retries"),
+        "cache_hits": None,
+        "cache_hit_note": "NOT VERIFIED - vendor cache not observable via callbacks",
+        "queue_delay_ms": child.get("queue_delay_ms"),
+        "stage_durations_ms": [{"stage": p.get("stage"),
+                                "duration_ms": p.get("stage_duration_ms")}
+                               for p in [progress]],
+        "freshness_at_decision": child.get("freshness_at_decision") or {
+            "status": "NOT_VERIFIED", "reason": "no as-of field in child result"},
         "evidence_complete": evidence_complete, "reports": reports,
         "stage": progress.get("stage", ""), "progress": progress,
         "child": child, "stderr_redacted": redact(err or "")[:600],
