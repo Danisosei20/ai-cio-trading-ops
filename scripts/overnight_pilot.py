@@ -18,7 +18,7 @@ Ranked overnight scoring (observational, not yet validated for most symbols):
   * Historical overnight performance (if available): 10 points
 
 Eligibility tiers:
-  * NVDA: validated (backtested overnight50, OOS +23.7%, Sharpe 1.74)
+  * NVDA: historical claim in older notes; NOT VERIFIED in this phase
   * Other tickers: experimental - eligible for limited-size paper-trading only,
     not yet validated
 
@@ -722,10 +722,22 @@ def main(argv=None) -> int:
     state = _load_state()
     remaining = []
     exit_orders_submitted = 0
+    exit_failures: list[str] = []
+    seen_exit_symbols: set[str] = set()
+    working_orders = {(str(o.get("symbol", "")).upper(),
+                       str(o.get("side", "")).lower())
+                      for o in backend.list_open_orders()}
     print(json.dumps({"mode": "exit", "execution_mode": "paper_exit_path",
                       "dry_run": bool(args.dry_run)}))
     for entry in state.get("entries", []):
-        symbol = entry["symbol"]
+        symbol = str(entry["symbol"]).upper()
+        if symbol in seen_exit_symbols:
+            exit_failures.append(f"{symbol}: duplicate exit entry")
+            continue
+        seen_exit_symbols.add(symbol)
+        if (symbol, "sell") in working_orders:
+            exit_failures.append(f"{symbol}: close already working")
+            continue
         try:
             held = sum(Decimal(str(p.get("qty", "0"))) for p in backend.list_positions()
                        if str(p.get("symbol", "")).upper() == symbol)
@@ -756,11 +768,16 @@ def main(argv=None) -> int:
                               "qty": str(held), "order_id": result["order_id"],
                               "status": result["status"]}))
         except (PolicyViolation, InvalidOperation, KeyError) as exc:
+            exit_failures.append(f"{symbol}: {type(exc).__name__}")
             remaining.append(entry)
             print(json.dumps({"ticker": symbol, "mode": "exit", "action": "skip",
                               "reason": f"{type(exc).__name__}: {exc}"}))
     state["entries"] = remaining
     _save_state(state)
+    if exit_failures:
+        print(json.dumps({"mode": "exit", "result": "FAILED",
+                          "failures": exit_failures}))
+        return 1
     return 0
 
 

@@ -96,6 +96,7 @@ def require_order_authorization(order: "SignalOrder", root: Path) -> tuple[bool,
         strategy_id=strategy_id,
         symbol=order.symbol, side=order.side, quantity=float(order.quantity),
         notional=notional, risk=notional * 0.25,
+        position_effect=effect,
         broker="alpaca", account_id=account_id, environment="paper")
 
 

@@ -758,7 +758,7 @@ def _flatten_eligible(trade) -> bool:
     Overnight positions have their own 09:35 exit and must never be liquidated
     by the day-trade engine's end-of-day flatten.
     """
-    return str(getattr(trade, "strategy", "") or "").lower() != "overnight"
+    return str(getattr(trade, "strategy", "") or "").lower() == "intraday"
 
 
 def manage_exits(dry_run: bool = False) -> dict:

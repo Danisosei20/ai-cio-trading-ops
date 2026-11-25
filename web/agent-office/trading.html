@@ -301,6 +301,13 @@
     <div id="operational-reliability-note" class="dim"></div>
   </section>
 
+  <section class="card full" id="deployment-readiness">
+    <h2>Deployment &amp; Decision Readiness</h2>
+    <div id="deployment-readiness-status" class="dim">Loading deployment state…</div>
+    <div id="deployment-readiness-body"></div>
+    <div id="deployment-readiness-note" class="dim"></div>
+  </section>
+
   <section class="card full" id="execution-safety">
     <h2>Execution Safety</h2>
     <div id="execution-safety-body" class="dim">Loading authorization state…</div>
@@ -1037,6 +1044,55 @@
   refreshResearchPerformance();
   refreshSignalIntelligence();
   refreshOperationalReliability();
+  async function refreshDeploymentReadiness() {
+    var statusEl = byId("deployment-readiness-status");
+    var bodyEl = byId("deployment-readiness-body");
+    var noteEl = byId("deployment-readiness-note");
+    if (!statusEl || !bodyEl || !noteEl) return;
+    try {
+      var res = await fetch("/api/operational-reliability", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      if (!d || d.status !== "ok") { statusEl.textContent = "data unavailable"; return; }
+      var dep = d.deployment_readiness || {};
+      var obs = d.research_observability || {};
+      var lat = d.latency || {};
+      var strat = d.strategy_validation || {};
+      var counts = (dep.parity || {}).counts || {};
+      var plan = dep.plan || {};
+      var champ = (obs.measurements || {}).champion_equivalent || {};
+      var metrics = [
+        ["Parity: deployment required", counts.DEPLOYMENT_REQUIRED],
+        ["Parity: match", counts.MATCH],
+        ["Deployment applied", plan.applied],
+        ["Deployment authorization", dep.owner_authorization],
+        ["Champion tool calls attempted", (champ.tool_counts || {}).tool_calls],
+        ["Tool events recorded", champ.tool_events],
+        ["Tool telemetry policy", obs.telemetry_policy],
+        ["Observed research runs", (lat.counts || {}).observations],
+        ["Median research duration (s)", ((lat.research_duration_s || {}).median)],
+        ["Decisions before 15:15", (lat.counts || {}).before_cutoff],
+        ["Quote age within 300 s", (lat.counts || {}).quote_age_within_300s],
+        ["Canonical spec", strat.spec_version],
+        ["Replay / OOS status", esc(strat.replay_status) + " / " + esc(strat.oos_status)],
+        ["Uncertain intents", JSON.stringify((d.risk_and_broker || {}).uncertain_intents || [])]
+      ];
+      statusEl.textContent = "deployment applied: " + plan.applied;
+      var html = "<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+      for (var i = 0; i < metrics.length; i++) {
+        html += "<tr><td>" + esc(metrics[i][0]) + "</td><td>" + esc(metrics[i][1]) + "</td></tr>";
+      }
+      html += "</tbody></table>";
+      bodyEl.innerHTML = html;
+      noteEl.textContent = "Simulated and shadow results are never actual broker fills or realized profit.";
+    } catch (e) {
+      statusEl.textContent = "data unavailable";
+      noteEl.textContent = "A scheduler result alone is not deployment evidence.";
+    }
+  }
+
+  refreshDeploymentReadiness();
+  setInterval(refreshDeploymentReadiness, REFRESH_MS);
   setInterval(refresh, REFRESH_MS);
   setInterval(refreshExecutionSafety, REFRESH_MS);
   setInterval(refreshOpportunityAnalysis, REFRESH_MS);

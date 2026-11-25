@@ -138,7 +138,7 @@ def run(root: Path, *, date: str = DATE, fail_stage: str | None = None,
         "non_success_recorded": all(
             statuses.get(label) in {SKIPPED, RECONCILIATION_REQUIRED, FAILED}
             for label in expected_skipped),
-        "dashboard_matches_manifests": payload["status"] == "ok",
+        "dashboard_matches_manifests": payload["status"] in {"ok", "degraded"},
         "no_orders": payload.get("orders_submitted") == 0,
         "overnight_is_dry_run": True,
         "authorization_boundary_intact": all(

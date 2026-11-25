@@ -521,11 +521,17 @@ def gateway(*, authorization_id: str, root: Path, decision: dict,
             artifacts: list[Path], strategy_id: str, symbol: str, side: str,
             quantity: float, notional: float, risk: float, broker: str,
             account_id: str, environment: str,
+            position_effect: str | None = None,
             now: datetime | None = None) -> tuple[bool, str]:
     """Validate then atomically consume. This is the single execution boundary."""
     record = load_authorization(authorization_id, root)
     if record is None:
         return False, "authorization not found"
+    if position_effect is not None:
+        signed = str(record.get("position_effect") or "").lower()
+        if not signed or signed != str(position_effect).lower():
+            return (False, "position_effect mismatch: signed=" + signed +
+                    " submitted=" + str(position_effect).lower())
     ok, reason = validate_authorization(
         record, root=root, decision=decision, artifacts=artifacts,
         strategy_id=strategy_id, symbol=symbol, side=side, quantity=quantity,

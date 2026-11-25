@@ -68,12 +68,14 @@ def sellable_quantity(rec: dict, held: Decimal) -> Decimal:
     return min(owned, abs(held))
 
 
-def close_plan(rec: dict, held: Decimal, working: set[str]) -> tuple[Decimal, str, str]:
+def close_plan(rec: dict, held: Decimal,
+               working: set[tuple[str, str]]) -> tuple[Decimal, str, str]:
     """Return (quantity, side, reason). A non-empty reason is a refusal."""
     symbol = str(rec.get("ticker", "")).upper()
     if held == 0:
         return Decimal("0"), "", "already flat"
-    if symbol in working:
+    side = "sell" if held > 0 else "buy"
+    if (symbol, side) in working:
         return Decimal("0"), "", "a close order is already working"
     owned = owned_quantity(rec)
     if owned is None:
@@ -81,7 +83,7 @@ def close_plan(rec: dict, held: Decimal, working: set[str]) -> tuple[Decimal, st
     qty = sellable_quantity(rec, held)
     if qty <= 0:
         return Decimal("0"), "", "no owned quantity at broker"
-    return qty, ("sell" if held > 0 else "buy"), ""
+    return qty, side, ""
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Flatten day-trade positions before the close.")
@@ -107,9 +109,12 @@ def main(argv=None) -> int:
     backend = AlpacaPaperBackend(AlpacaPaperHttpTransport.from_values(env))
     positions = {str(p.get("symbol", "")).upper(): Decimal(str(p.get("qty", "0")))
                  for p in backend.list_positions()}
-    working = {str(o.get("symbol", "")).upper()
+    # Alpaca orders do not carry position_effect; a working sell against a
+    # long or a working buy against a short is a potential duplicate close.
+    working = {(str(o.get("symbol", "")).upper(),
+                str(o.get("side", "")).lower())
                for o in backend.list_open_orders()
-               if str(o.get("position_effect", "")).lower() == "close"}
+               if str(o.get("side", "")).lower() in {"sell", "buy"}}
 
     for rec in records:
         symbol = str(rec.get("ticker", "")).upper()
@@ -143,6 +148,11 @@ def main(argv=None) -> int:
                   f"{result['status']} (order {result['order_id']})")
             if str(result.get("status", "")).lower() in {"rejected", "failed", "error"}:
                 failures.append(f"{symbol}: broker rejected close")
+            else:
+                # Refresh the local broker view so a second record for the same
+                # symbol cannot sell the same exposure twice and flip it short.
+                positions[symbol] = held - qty
+                working.add((symbol, side))
             # The Slack alert is best-effort; its outcome is now recorded by
             # place_signal_order. A flatten the operator cannot see is a
             # flatten they cannot audit, so say so plainly when it happens.
